@@ -1,0 +1,7 @@
+.devdb
+DEMO-LOGINS.md
+.env*
+dist
+test
+.claude
+node_modules
