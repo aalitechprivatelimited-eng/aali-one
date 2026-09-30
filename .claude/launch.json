@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "aali-one-local", "runtimeExecutable": "node", "runtimeArgs": ["server/dev.js", "3107"], "port": 3107 }
+  ]
+}

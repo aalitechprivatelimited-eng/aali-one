@@ -1,0 +1,104 @@
+// End-to-end API tests against an in-process PGlite database.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
+import { handle } from '../server/app.js';
+import { getDb } from '../server/db.js';
+import { hashPassword } from '../server/auth.js';
+
+process.env.PGLITE_DIR = 'memory://';
+function call(method, path, body, cookie = '') {
+  const req = Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []);
+  Object.assign(req, { method, url: '/api' + path, headers: { cookie, 'content-type': 'application/json' } });
+  return new Promise((resolve) => {
+    const res = { status: 0, headers: {}, writeHead(s, h) { this.status = s; this.headers = h; }, end(b) {
+      const txt = Buffer.isBuffer(b) ? b.toString() : b; let json; try { json = JSON.parse(txt); } catch { json = txt; }
+      resolve({ status: this.status, body: json, cookie: (this.headers['set-cookie'] || '').split(';')[0] }); } };
+    handle(req, res);
+  });
+}
+const add = async (c, type, data) => { const r = await call('POST', '/records', { type, data }, c); if (r.status !== 200) throw new Error(r.body.error); return r.body; };
+const patch = (c, id, data) => call('PATCH', '/records/' + id, { data }, c);
+
+let admin, bde1, bde2;
+test('setup and logins', async () => {
+  const s = await call('POST', '/setup', { name: 'Nikhil', email: 'ops@test.in', password: 'password123' });
+  assert.equal(s.status, 200); admin = s.cookie;
+  const db = await getDb();
+  for (const [id, email, title] of [['u_b1', 'b1@test.in', 'bde'], ['u_b2', 'b2@test.in', 'bde'], ['u_it', 'it@test.in', 'itmgr']])
+    await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', [id, email, email, title, title === 'bde' ? 'sales' : 'it', hashPassword('password123')]);
+  bde1 = (await call('POST', '/auth/login', { email: 'b1@test.in', password: 'password123' })).cookie;
+  bde2 = (await call('POST', '/auth/login', { email: 'b2@test.in', password: 'password123' })).cookie;
+  assert.equal((await call('POST', '/auth/login', { email: 'b1@test.in', password: 'wrong' })).status, 401);
+  assert.equal((await call('GET', '/bootstrap')).status, 401);
+});
+
+test('leads: round-robin, duplicate mobile+service merges, new service keeps BDE', async () => {
+  const a = await add(admin, 'lead', { name: 'Ravi', mobile: '98765 43210', service: 'Website – 5 pages', source: 'Walk-in' });
+  const b = await add(admin, 'lead', { name: 'Sita', mobile: '9000000001', service: 'Mobile app (Android + iOS)', source: 'Referral' });
+  assert.notEqual(a.record.owner, b.record.owner, 'turns alternate between BDEs');
+  const again = await call('POST', '/public/enquiry', { name: 'Ravi K', mobile: '+91 98765-43210', service: 'Website – 5 pages', message: 'Still interested' });
+  assert.equal(again.body.merged, true);
+  const other = await add(admin, 'lead', { name: 'Ravi', mobile: '9876543210', service: 'SEO & digital marketing' });
+  assert.equal(other.record.owner, a.record.owner); assert.equal(other.record.existingClient, true);
+  const bad = await call('POST', '/records', { type: 'lead', data: { name: 'X', mobile: '123', service: 'Website – 5 pages' } }, admin);
+  assert.equal(bad.status, 400);
+});
+
+test('quotes: numbering, discount approval, deal value follows', async () => {
+  const deal = (await add(bde1, 'deal', { title: 'Website – Sunrise', phone: '9876543210', value: 0 })).record;
+  const q1 = (await add(bde1, 'quote', { dealId: deal.id, date: '2026-09-30', items: [{ desc: 'Site', qty: 1, rate: 40000 }], taxMode: 'intra', taxRate: 18, discountType: 'percent', discountValue: 20 })).record;
+  const q2 = (await add(bde1, 'quote', { date: '2026-09-30', items: [{ desc: 'App', qty: 1, rate: 1000 }], taxMode: 'none' })).record;
+  assert.equal(q1.number, 'AC/2026-27/001'); assert.equal(q2.number, 'AC/2026-27/002');
+  assert.equal(q1.status, 'needs approval'); assert.equal(q1.totals.total, 37760);
+  const boot = (await call('GET', '/bootstrap', null, admin)).body;
+  const appr = boot.records.find((r) => r.type === 'approval' && r.relId === q1.id); assert.ok(appr);
+  assert.equal((await patch(bde1, appr.id, { status: 'approved' })).status, 403);
+  assert.equal((await patch(admin, appr.id, { status: 'approved' })).status, 200);
+  const d = (await call('GET', '/bootstrap', null, admin)).body.records.find((r) => r.id === deal.id);
+  assert.equal(d.value, 37760); assert.equal(d.quoteNo, 'AC/2026-27/001');
+  const del = await call('DELETE', '/records/' + q2.id, { reason: 'no' }, bde1); assert.equal(del.status, 400);
+  assert.equal((await call('DELETE', '/records/' + q2.id, { reason: 'Made by mistake' }, bde1)).status, 200);
+  const q3 = (await add(bde1, 'quote', { date: '2026-09-30', items: [{ desc: 'x', qty: 1, rate: 1 }], taxMode: 'none' })).record;
+  assert.equal(q3.number, 'AC/2026-27/003', 'deleted numbers are never reused');
+});
+
+test('advance gate, receipt unlocks project, sign-off makes it live', async () => {
+  const deal = (await add(bde1, 'deal', { title: 'App – Kaveri', stage: 'won', handoff: { advance: false } })).record;
+  const proj = (await add(bde1, 'project', { name: 'App – Kaveri', dealId: deal.id, stage: 'awaiting', deadline: '2026-11-30' })).record;
+  const blocked = await patch(bde1, proj.id, { stage: 'planning' }); assert.equal(blocked.status, 400); assert.match(blocked.body.error, /No advance/);
+  const pay = (await add(bde1, 'payment', { title: 'Advance', kind: 'advance', dealId: deal.id, amount: 50000, due: '2026-10-02' })).record;
+  const rc = (await add(bde1, 'receipt', { date: '2026-09-30', paymentId: pay.id, items: [{ desc: 'Advance', amount: 50000, incl: true }], taxMode: 'intra', taxRate: 18 })).record;
+  assert.match(rc.number, /^ACY-300926\/001$/);
+  const all = (await call('GET', '/bootstrap', null, admin)).body.records;
+  assert.equal(all.find((r) => r.id === proj.id).stage, 'planning');
+  assert.equal(all.find((r) => r.id === pay.id).status, 'paid');
+  assert.equal((await patch(bde1, rc.id, { date: '2026-10-01' })).status, 400, 'receipt date is frozen');
+  assert.equal((await patch(bde1, proj.id, { deadline: '2026-11-15' })).status, 400, 'deadline change needs a reason');
+  assert.equal((await patch(bde1, proj.id, { deadline: '2026-11-15', _reason: 'Client launch event' })).status, 200);
+  assert.equal((await patch(bde1, proj.id, { stage: 'live' })).status, 400, 'live needs sign-off');
+  const so = (await add(bde1, 'signoff', { projectId: proj.id, signerName: 'Suresh', signature: 'data:image/png;base64,AA', confirmed: true, rating: 5 })).record;
+  assert.match(so.certNo, /^DAC-\d{8}-001$/);
+  const p2 = (await call('GET', '/bootstrap', null, admin)).body.records.find((r) => r.id === proj.id);
+  assert.equal(p2.stage, 'live'); assert.equal(p2.signoffId, so.id);
+  const pub = await call('GET', '/public/progress/' + p2.progressToken); assert.equal(pub.status, 200); assert.equal(pub.body.stage, 'live');
+});
+
+test('recurring task makes the next one; mentions notify', async () => {
+  const t1 = (await add(admin, 'task', { title: 'Backup sites', due: '2026-10-05', recurrence: 'weekly', owner: 'u_b1' })).record;
+  await patch(admin, t1.id, { status: 'done' });
+  const recs = (await call('GET', '/bootstrap', null, admin)).body.records;
+  assert.ok(recs.some((r) => r.type === 'task' && r.title === 'Backup sites' && r.due === '2026-10-12' && r.status === 'todo'));
+  await add(admin, 'comment', { relType: 'task', relId: t1.id, text: '@b1 check this', mentions: ['u_b1'] });
+  const mine = (await call('GET', '/bootstrap', null, bde1)).body.records.filter((r) => r.type === 'notice' && r.to === 'u_b1');
+  assert.ok(mine.some((n) => /mentioned you/.test(n.text)));
+});
+
+test('changes feed and admin-only actions', async () => {
+  const since = new Date(Date.now() - 60e3).toISOString();
+  const ch = await call('GET', '/changes?since=' + encodeURIComponent(since), null, bde1);
+  assert.equal(ch.status, 200); assert.ok(ch.body.records.length > 0);
+  assert.equal((await call('PUT', '/settings/business', { value: { name: 'X' } }, bde1)).status, 403);
+  assert.equal((await call('GET', '/trash', null, admin)).status, 200);
+  assert.equal((await call('POST', '/users', { name: 'New', email: 'n@test.in', password: 'password123', title: 'bde' }, admin)).status, 200);
+});
