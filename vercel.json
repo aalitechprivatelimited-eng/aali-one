@@ -2,9 +2,22 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "vite build",
   "outputDirectory": "dist",
-  "functions": { "api/[...path].js": { "maxDuration": 30 } },
+  "functions": {
+    "api/[...path].js": {
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/[...path]" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/[...path]"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "regions": [
+    "sin1"
   ]
 }
