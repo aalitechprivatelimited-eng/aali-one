@@ -77,7 +77,7 @@ function People() {
     if (r) { upsertUser(r.user); setMade({ ...r.user, password: add.password }); setAdd(null); }
   }
   async function saveEdit() {
-    setBusy(true); const ok = await patch(edit.u, { title: edit.title, company: edit.company, designation: edit.designation, ...(adm && edit.u.id !== me.id ? { isAdmin: edit.isAdmin } : {}) }, 'Access changed.'); setBusy(false); if (ok) setEdit(null);
+    setBusy(true); const ok = await patch(edit.u, { title: edit.title, company: edit.company, designation: edit.designation, firstName: edit.firstName, surname: edit.surname, ...(adm && edit.u.id !== me.id ? { isAdmin: edit.isAdmin } : {}) }, 'Access changed.'); setBusy(false); if (ok) setEdit(null);
   }
   const loginText = (u) => `Hi ${u.name.split(' ')[0]}, your Aali One login:\n${location.origin}\nEmail: ${u.email}\nPassword: ${u.password}\nPlease change the password after you sign in (Settings → My profile).`;
   return <div className="stack gap16">
@@ -86,20 +86,22 @@ function People() {
       return <section key={team} className="stack" style={{ gap: 8 }}>
         <div className="row between"><div><h2 style={{ margin: 0 }}>{label} team <span className="small muted">{us.filter((u) => u.active).length} active</span></h2><span className="small muted">{TEAM_NOTE[team]}</span></div>
           <button className="btn primary" type="button" onClick={() => setAdd({ team, title: rolesFor(team).at(-1), password: newPassword(), company: team === 'management' ? GROUP : me.team === 'management' ? '' : me.company })}>+ Add {label} member</button></div>
-        {us.length ? <div className="tbl"><table><thead><tr><th>Person</th><th>Designation</th><th>What they can see and do</th><th>Active</th><th /></tr></thead><tbody>
+        {us.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Surname</th><th>Designation</th><th>What they can see and do</th><th>Active</th><th /></tr></thead><tbody>
           {us.map((u) => <tr key={u.id} style={{ opacity: u.active ? 1 : 0.55 }}>
-            <td><b>{u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}<div className="small"><Pill>{u.company}</Pill></div><div className="small muted">{u.email}</div><div className="small muted num">{u.phone || 'No mobile'}</div></td>
+            <td><b>{u.firstName || u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}<div className="small"><Pill>{u.company}</Pill></div><div className="small muted">{u.email}</div><div className="small muted num">{u.phone || 'No mobile'}</div></td>
+            <td><b>{u.surname || '—'}</b></td>
             <td><b>{desig(u)}</b><div className="small muted">Access: {LEVEL[u.title] || u.title}</div>{u.isAdmin && <Pill k="info">Admin</Pill>}</td>
             <td><ul className="access">{accessOf(u).map((x) => <li key={x}>{x}</li>)}</ul></td>
             <td><input type="checkbox" aria-label={`${u.name} can sign in`} checked={u.active} disabled={!can(u) || u.id === me.id} onChange={(e) => patch(u, { active: e.target.checked }, e.target.checked ? 'Switched on.' : 'Switched off. They can no longer sign in.')} /></td>
-            <td>{can(u) && <div className="row" style={{ justifyContent: 'flex-end' }}>{<button className="btn sm" type="button" onClick={() => setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '' })}>Edit</button>}
+            <td>{can(u) && <div className="row" style={{ justifyContent: 'flex-end' }}>{<button className="btn sm" type="button" onClick={() => setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '', firstName: u.firstName || u.name, surname: u.surname || '' })}>Edit</button>}
               <button className="btn sm" type="button" onClick={() => setPw({ ...u, p: newPassword() })}>Set password</button></div>}</td></tr>)}</tbody></table></div>
           : <Empty>No one in the {label} team yet.</Empty>}
       </section>; })}
     {add && <Modal wide title={`Add ${TEAMS[add.team]} member`} onClose={() => setAdd(null)} footer={<><button className="btn" type="button" onClick={() => setAdd(null)}>Cancel</button>
-      <button className="btn primary" type="button" disabled={busy || !add.name?.trim() || !add.email?.trim() || (add.password || '').length < 8 || !add.designation?.trim() || (add.team !== 'management' && !COMPANIES.includes(add.company))} onClick={save}>{busy ? 'Adding…' : 'Add member'}</button></>}>
+      <button className="btn primary" type="button" disabled={busy || !add.firstName?.trim() || !add.surname?.trim() || !add.email?.trim() || (add.password || '').length < 8 || !add.designation?.trim() || (add.team !== 'management' && !COMPANIES.includes(add.company))} onClick={save}>{busy ? 'Adding…' : 'Add member'}</button></>}>
       <div className="form">
-        <Field label="Full name"><In value={add.name || ''} onChange={(e) => setAdd({ ...add, name: e.target.value })} autoFocus /></Field>
+        <Field label="Name"><In value={add.firstName || ''} maxLength={60} onChange={(e) => setAdd({ ...add, firstName: e.target.value })} autoFocus /></Field>
+        <Field label="Surname"><In value={add.surname || ''} maxLength={60} onChange={(e) => setAdd({ ...add, surname: e.target.value })} /></Field>
         <Field label="Mobile (for WhatsApp)"><In value={add.phone || ''} inputMode="tel" onChange={(e) => setAdd({ ...add, phone: e.target.value })} /></Field>
         <Field label="Email (this is their login)" full><In type="email" value={add.email || ''} onChange={(e) => setAdd({ ...add, email: e.target.value })} autoComplete="off" /></Field>
         <Field label="First password (8+ characters)" full hint="They can change it after signing in."><div className="row"><In className="in grow" value={add.password || ''} onChange={(e) => setAdd({ ...add, password: e.target.value })} autoComplete="new-password" />
@@ -108,9 +110,11 @@ function People() {
         <Field label="Company" full><CompanyPicker team={add.team} value={add.company} onChange={(v) => setAdd({ ...add, company: v })} /></Field>
         <Field label="Access level – what this person should be able to see and do" full><RolePicker roles={rolesFor(add.team)} value={add.title} onChange={(v) => setAdd({ ...add, title: v })} /></Field>
         {adm && add.team === 'management' && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> <span><b>Also make them an admin</b><br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
-    {edit && <Modal wide title={`Designation, company and access for ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Cancel</button>
-      <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin && edit.company === edit.u.company && edit.designation === (edit.u.designation || '')) || (TITLE_TEAM[edit.title] !== 'management' && !COMPANIES.includes(edit.company))} onClick={saveEdit}>Save access</button></>}>
-      <div className="stack"><Field label="Designation" hint="Leave empty to show the access level's name."><In value={edit.designation} maxLength={80} autoComplete="off" onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
+    {edit && <Modal wide title={`Edit ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Cancel</button>
+      <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin && edit.company === edit.u.company && edit.designation === (edit.u.designation || '') && edit.firstName === (edit.u.firstName || edit.u.name) && edit.surname === (edit.u.surname || '')) || !edit.firstName.trim() || !edit.surname.trim() || (TITLE_TEAM[edit.title] !== 'management' && !COMPANIES.includes(edit.company))} onClick={saveEdit}>Save access</button></>}>
+      <div className="stack"><div className="form"><Field label="Name"><In value={edit.firstName} maxLength={60} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></Field>
+        <Field label="Surname"><In value={edit.surname} maxLength={60} onChange={(e) => setEdit({ ...edit, surname: e.target.value })} /></Field></div>
+        <Field label="Designation" hint="Leave empty to show the access level's name."><In value={edit.designation} maxLength={80} autoComplete="off" onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
         <div><span className="lbl">Company</span><CompanyPicker team={TITLE_TEAM[edit.title]} value={edit.company} onChange={(v) => setEdit({ ...edit, company: v })} /></div>
         {(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">Access level · {TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
         {TITLE_TEAM[edit.title] !== edit.u.team && <div className="banner">This moves {edit.u.name.split(' ')[0]} from the {TEAMS[edit.u.team]} team to the {TEAMS[TITLE_TEAM[edit.title]]} team.</div>}

@@ -198,7 +198,9 @@ export async function handle(req, res) {
     }
     if (path === '/users' && method === 'POST') {
       const b = await readBody(req), email = String(b.email || '').trim().toLowerCase();
-      if (!b.name || !email || String(b.password || '').length < 8) throw new Rule('Enter name, email and a password of at least 8 characters.');
+      const surname = String(b.surname || '').trim().slice(0, 60), fullName = b.firstName !== undefined ? [String(b.firstName).trim().slice(0, 60), surname].filter(Boolean).join(' ') : String(b.name || '').trim();
+      if (b.firstName !== undefined && (!String(b.firstName).trim() || !surname)) throw new Rule('Enter both the name and the surname.');
+      if (!fullName || !email || String(b.password || '').length < 8) throw new Rule('Enter name, email and a password of at least 8 characters.');
       if (b.title && !TITLE_TEAM[b.title]) throw new Rule('Choose a role from the list.');
       if (!admin && !(juniors.includes(b.title) && !b.isAdmin)) throw new Rule(juniors.length ? 'You can add members to your own team only.' : 'Only an admin or a department manager can add people.', 403);
       const team = TITLE_TEAM[b.title] || 'sales', company = team === 'management' ? GROUP : b.company;
@@ -206,8 +208,8 @@ export async function handle(req, res) {
       const designation = String(b.designation || '').trim().slice(0, 80);
       if (!designation) throw new Rule('Enter the designation.');
       const id = newId('u_');
-      try { await db.query('insert into users (id, email, name, title, team, phone, is_admin, pass_hash, company, designation) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-        [id, email, b.name.trim(), b.title || 'bde', team, b.phone || '', !!b.isAdmin, hashPassword(b.password), company, designation]); }
+      try { await db.query('insert into users (id, email, name, title, team, phone, is_admin, pass_hash, company, designation, surname) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+        [id, email, fullName, b.title || 'bde', team, b.phone || '', !!b.isAdmin, hashPassword(b.password), company, designation, b.firstName !== undefined ? surname : '']); }
       catch (e) { if (String(e.message).includes('unique') || e.code === '23505') throw new Rule('Someone already uses that email.'); throw e; }
       await audit(db, user, null, 'user', `Added ${email}`);
       return send(res, 200, { user: publicUser((await db.query('select * from users where id = $1', [id])).rows[0]) });
@@ -219,13 +221,16 @@ export async function handle(req, res) {
       const lead = !admin && !self && juniors.includes(u.title) && !u.is_admin; // a manager looking after their own team member
       if (!admin && !self && !lead) throw new Rule('You can change members of your own team only.', 403);
       if (lead && b.title && !juniors.includes(b.title)) throw new Rule('You can give roles of your own team only.', 403);
+      let nSurname = u.surname || '';
+      if (b.firstName !== undefined && (admin || lead || self)) { const fn = String(b.firstName).trim().slice(0, 60); nSurname = String(b.surname || '').trim().slice(0, 60);
+        if (!fn || !nSurname) throw new Rule('Enter both the name and the surname.'); b.name = `${fn} ${nSurname}`; }
       const next = { name: b.name ?? u.name, phone: b.phone ?? u.phone, title: admin || lead ? (b.title ?? u.title) : u.title, active: admin || lead ? (b.active ?? u.active) : u.active, is_admin: admin ? (b.isAdmin ?? u.is_admin) : u.is_admin };
       if (self && next.active === false) throw new Rule("You can't switch off your own account.");
       if (b.company !== undefined && (admin || lead) && !COMPANIES.includes(b.company) && (TITLE_TEAM[next.title] || u.team) !== 'management') throw new Rule('Choose a company from the list.');
       const nTeam = TITLE_TEAM[next.title] || u.team, nCompany = nTeam === 'management' ? GROUP : (admin || lead) && COMPANIES.includes(b.company) ? b.company : COMPANIES.includes(u.company) ? u.company : COMPANIES[0];
       const nDesig = (admin || lead) && b.designation !== undefined ? String(b.designation).trim().slice(0, 80) : u.designation || '';
-      await db.query('update users set name=$2, phone=$3, title=$4, team=$5, active=$6, is_admin=$7, company=$8, designation=$9, updated_at=now() where id=$1',
-        [u.id, next.name, next.phone, next.title, nTeam, next.active, next.is_admin, nCompany, nDesig]);
+      await db.query('update users set name=$2, phone=$3, title=$4, team=$5, active=$6, is_admin=$7, company=$8, designation=$9, surname=$10, updated_at=now() where id=$1',
+        [u.id, next.name, next.phone, next.title, nTeam, next.active, next.is_admin, nCompany, nDesig, nSurname]);
       if (b.password) {
         if (String(b.password).length < 8) throw new Rule('Password must be at least 8 characters.');
         if (self && !admin && !checkPassword(String(b.currentPassword || ''), u.pass_hash)) throw new Rule('Your current password is not right.');

@@ -77,9 +77,11 @@ async function leadIntake(t, data, user, sample) {
   }
   const known = matches.find((r) => r.data.owner);
   if (known) { data.owner = data.owner || known.data.owner; data.existingClient = true; data.clientId = known.type === 'client' ? known.id : known.data.clientId || ''; }
-  else if (!data.owner) data.owner = await roundRobin(t);
+  // The sales team finds its own potential clients: a lead a salesperson enters is theirs. Only enquiries that come from outside
+  // (the website form, or entered by management) are shared out in turns.
+  else if (!data.owner) data.owner = user && user.team === 'sales' ? user.id : await roundRobin(t);
   data.status ||= 'new'; data.score ||= ''; data.enquiries = [enquiry]; data.followUp ||= today();
-  log(data, user?.id || null, known ? `Existing client asked about ${data.service}; given to their BDE` : `New enquiry (${enquiry.source}); auto-assigned`);
+  log(data, user?.id || null, known ? `Existing client asked about ${data.service}; given to their BDE` : data.owner === user?.id ? `New potential client (${enquiry.source}); found by ${user.name}` : `New enquiry (${enquiry.source}); auto-assigned`);
   return { merged: false };
 }
 async function roundRobin(t) {

@@ -211,3 +211,15 @@ test('company on staff; collaborations are for management only; task timing', as
   assert.equal((await patch(bde2, r.id, { calls: [] })).status, 400, 'the call sheet is locked after submit');
   assert.equal(fin.status, 200); assert.ok(fin.body.record.dayEnd, 'the day ends at submit');
 });
+
+test('name and surname; a salesperson keeps the leads they find', async () => {
+  const u = await call('POST', '/users', { firstName: 'Sana', surname: 'Sai', email: 'sana@test.in', password: 'password123', title: 'bde', company: 'Aali Conssultancy', designation: 'BDE - Sales' }, admin);
+  assert.equal(u.status, 200); assert.equal(u.body.user.name, 'Sana Sai'); assert.equal(u.body.user.firstName, 'Sana'); assert.equal(u.body.user.surname, 'Sai');
+  assert.equal((await call('POST', '/users', { firstName: 'Only', surname: '', email: 'only@test.in', password: 'password123', title: 'bde', company: 'AaliTech', designation: 'BDE' }, admin)).status, 400);
+  const e = await call('PATCH', '/users/' + u.body.user.id, { firstName: 'Sana', surname: 'Shaik' }, admin);
+  assert.equal(e.body.user.name, 'Sana Shaik'); assert.equal(e.body.user.surname, 'Shaik');
+  const mine = await add(bde1, 'lead', { name: 'Elite Glam Studio', mobile: '7013644335', service: 'Website – 5 pages', source: 'Phone call' });
+  assert.equal(mine.record.owner, 'u_b1', 'not passed to another BDE');
+  const two = await add(bde1, 'lead', { name: 'Lotus Saloon', mobile: '9000120405', service: 'Website – 5 pages', source: 'Phone call' });
+  assert.equal(two.record.owner, 'u_b1');
+});
