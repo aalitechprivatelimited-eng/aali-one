@@ -127,6 +127,10 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 .kc .t{font-weight:600;overflow-wrap:anywhere}
 .bar{height:6px;background:var(--line);border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:var(--gold)}
 
+.pwbox{position:relative}.pwbox input.in{padding-right:42px}
+.eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);border:none;background:none;padding:6px;border-radius:6px;color:var(--ink-soft);display:grid;place-items:center}
+.eye:hover,.eye[aria-pressed="true"]{color:var(--gold-strong)}
+
 /* calendar + project progress */
 .calhead{padding:6px 8px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--line);background:var(--gold-50)}
 .calday{min-height:108px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:5px;cursor:pointer;overflow:hidden}

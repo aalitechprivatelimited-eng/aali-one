@@ -56,8 +56,10 @@ function Login({ setup }) {
         {setup && <div className="banner info">First time here. Create the administrator account.</div>}
         {setup && <Field label="Your name"><In value={f.name} onChange={up('name')} required autoComplete="name" /></Field>}
         <Field label="Email"><In type="email" value={f.email} onChange={up('email')} required autoComplete="username" /></Field>
-        <Field label="Password" hint={setup ? 'At least 8 characters.' : ''}><div className="row" style={{ flexWrap: 'nowrap' }}><In className="in grow" type={show ? 'text' : 'password'} value={f.password} onChange={up('password')} required autoComplete={setup ? 'new-password' : 'current-password'} />
-          <button className="btn" type="button" aria-pressed={show} aria-label={show ? 'Hide password' : 'Show password'} onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></div></Field>
+        <Field label="Password" hint={setup ? 'At least 8 characters.' : ''}><div className="pwbox"><In type={show ? 'text' : 'password'} value={f.password} onChange={up('password')} required autoComplete={setup ? 'new-password' : 'current-password'} />
+          <button type="button" className="eye" aria-pressed={show} aria-label={show ? 'Hide password' : 'Show password'} title={show ? 'Hide password' : 'Show password'} onClick={() => setShow(!show)}>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" />{show && <path d="M4 4l16 16" />}</svg></button></div></Field>
         <button className="btn primary" disabled={busy} type="submit">{busy ? 'Please wait…' : setup ? 'Create account' : 'Sign in'}</button>
         {!setup && <p className="small muted" style={{ margin: 0 }}>Forgot your password? Ask the admin to set a new one.</p>}
       </form>
