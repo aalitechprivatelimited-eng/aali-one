@@ -159,6 +159,18 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 [data-theme="dark"] .chip.on{color:#191305}
 .timerow{display:grid;grid-template-columns:minmax(120px,1.2fr) minmax(60px,1fr) auto minmax(52px,auto);gap:10px;align-items:center;font-size:13px}
 
+.confetti{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:70}
+.confetti i{position:absolute;top:-20px;display:block;opacity:0;animation:confetti-fall linear forwards}
+@keyframes confetti-fall{0%{opacity:1;transform:translate3d(0,0,0) rotate(0)}85%{opacity:1}100%{opacity:0;transform:translate3d(var(--drift),105vh,0) rotate(var(--turn))}}
+.welcome{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:6px 0 2px}
+.welcome-badge{width:64px;height:64px;border-radius:50%;background:var(--ok);color:#fff;display:grid;place-items:center;animation:badge-pop .55s cubic-bezier(.2,1.6,.4,1) both;box-shadow:0 0 0 0 var(--ok);}
+.welcome-badge svg path{stroke-dasharray:24;stroke-dashoffset:24;animation:badge-tick .4s .35s ease-out forwards}
+.welcome h2{animation:welcome-up .45s .2s ease-out both} .welcome .muted{animation:welcome-up .45s .3s ease-out both}
+@keyframes badge-pop{0%{transform:scale(0)}100%{transform:scale(1)}}
+@keyframes badge-tick{to{stroke-dashoffset:0}}
+@keyframes welcome-up{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.confetti{display:none}.welcome-badge,.welcome-badge svg path,.welcome h2,.welcome .muted{animation:none;stroke-dashoffset:0}}
+
 /* calendar + project progress */
 .calhead{padding:6px 8px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--line);background:var(--gold-50)}
 .calday{min-height:108px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:5px;cursor:pointer;overflow:hidden}

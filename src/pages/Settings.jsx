@@ -59,6 +59,13 @@ function CompanyPicker({ team, value, onChange }) {
   if (team === 'management') return <div className="row"><span className="chip on">{GROUP}</span><span className="small muted">Management looks after every company in the group.</span></div>;
   return <div className="row">{COMPANIES.map((c) => <button key={c} type="button" className={'chip' + (value === c ? ' on' : '')} aria-pressed={value === c} onClick={() => onChange(c)}>{c}</button>)}</div>;
 }
+// A short burst of confetti when someone joins the team.
+const CONFETTI = ['#b87400', '#f2bd52', '#2f7d54', '#2f5fa8', '#b23a32', '#8a4fa8'];
+function Confetti() {
+  const bits = useState(() => [...Array(70)].map((_, i) => ({ left: Math.random() * 100, delay: Math.random() * 0.5, time: 1.8 + Math.random() * 1.6, size: 6 + Math.random() * 7, turn: (Math.random() * 720 - 360) | 0, drift: (Math.random() * 160 - 80) | 0, color: CONFETTI[i % CONFETTI.length], round: i % 3 === 0 })))[0];
+  return <div className="confetti" aria-hidden="true">{bits.map((b, i) => <i key={i} style={{ left: b.left + '%', width: b.size, height: b.round ? b.size : b.size * 0.45, borderRadius: b.round ? '50%' : 2, background: b.color,
+    animationDelay: b.delay + 's', animationDuration: b.time + 's', '--turn': b.turn + 'deg', '--drift': b.drift + 'px' }} />)}</div>;
+}
 // Pick a role by reading what it can do, instead of a bare dropdown.
 function RolePicker({ roles, value, onChange }) {
   return <div className="roles" role="radiogroup" aria-label="Access level">{roles.map((k) => <label key={k} className={'rolecard' + (value === k ? ' on' : '')}>
@@ -119,8 +126,12 @@ function People() {
         {(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">Access level · {TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
         {TITLE_TEAM[edit.title] !== edit.u.team && <div className="banner">This moves {edit.u.name.split(' ')[0]} from the {TEAMS[edit.u.team]} team to the {TEAMS[TITLE_TEAM[edit.title]]} team.</div>}
         {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin} disabled={edit.u.id === me.id} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
-    {made && <Modal title={`${made.name} is added`} onClose={() => setMade(null)} footer={<button className="btn primary" type="button" onClick={() => setMade(null)}>Done</button>}>
-      <div className="stack"><div className="banner ok">Added to {made.company}, {TEAMS[made.team]} team, as {desig(made)}. Share this login with them privately. The password is shown only now.</div>
+    {made && <Modal title={`${made.name} has joined`} onClose={() => setMade(null)} footer={<button className="btn primary" type="button" onClick={() => setMade(null)}>Done</button>}>
+      <div className="stack"><Confetti />
+        <div className="welcome"><div className="welcome-badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></div>
+          <h2 style={{ margin: 0 }}>Welcome to the team, {made.firstName || made.name.split(' ')[0]}!</h2>
+          <div className="muted">{desig(made)} · {TEAMS[made.team]} team · {made.company}</div></div>
+        <div className="banner ok">Share this login with them privately. The password is shown only now.</div>
         <textarea className="in" readOnly value={loginText(made)} style={{ minHeight: 120 }} />
         <div className="row"><button className="btn" type="button" onClick={() => navigator.clipboard?.writeText(loginText(made)).then(() => toast('Copied.'), () => toast('Select the text and copy it.', true))}>Copy</button>
           {waLink(made.phone, loginText(made)) ? <a className="btn wa" href={waLink(made.phone, loginText(made))} target="_blank" rel="noreferrer">Send on WhatsApp</a> : <span className="small muted">Add a mobile number to send it on WhatsApp.</span>}</div></div></Modal>}
