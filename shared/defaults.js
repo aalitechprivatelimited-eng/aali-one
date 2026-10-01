@@ -8,6 +8,9 @@ export const TITLE_TEAM = { admin: 'management', chairman: 'management', ops: 'm
 export const TEAMS = { sales: 'Sales', it: 'IT', management: 'Management' };
 export const MANAGER_TITLES = ['salesmgr', 'itmgr', 'ops', 'cs', 'chairman', 'admin'];
 export const TOP_TITLES = ['ops', 'cs', 'chairman'];
+// Aali Group and its companies. Management belongs to the group and looks after every company.
+export const GROUP = 'Aali Group';
+export const COMPANIES = ['Aali Conssultancy', 'AaliTech', 'Aali Builders'];
 // Roles a department manager may add and look after in their own team.
 export const MANAGER_ADDS = { salesmgr: ['bde'], itmgr: ['itlead', 'dev'] };
 

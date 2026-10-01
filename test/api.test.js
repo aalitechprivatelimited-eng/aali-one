@@ -136,7 +136,7 @@ test('changes feed and admin-only actions', async () => {
   assert.equal(ch.status, 200); assert.ok(ch.body.records.length > 0);
   assert.equal((await call('PUT', '/settings/business', { value: { name: 'X' } }, bde1)).status, 403);
   assert.equal((await call('GET', '/trash', null, admin)).status, 200);
-  assert.equal((await call('POST', '/users', { name: 'New', email: 'n@test.in', password: 'password123', title: 'bde' }, admin)).status, 200);
+  assert.equal((await call('POST', '/users', { name: 'New', email: 'n@test.in', password: 'password123', title: 'bde', company: 'Aali Conssultancy' }, admin)).status, 200);
 });
 
 test('daily reports: top management does not write one; IT Team Lead switch', async () => {
@@ -163,7 +163,7 @@ test('daily reports: top management does not write one; IT Team Lead switch', as
 test('managers add and look after members of their own team only', async () => {
   const login = async (e, p = 'password123') => (await call('POST', '/auth/login', { email: e, password: p })).cookie;
   const sm = await login('sm@test.in'), it = await login('it@test.in');
-  const mk = (c, title, email, extra = {}) => call('POST', '/users', { name: 'New ' + title, email, password: 'password123', title, ...extra }, c);
+  const mk = (c, title, email, extra = {}) => call('POST', '/users', { name: 'New ' + title, email, password: 'password123', title, company: 'Aali Conssultancy', ...extra }, c);
   assert.equal((await mk(bde1, 'bde', 'x1@test.in')).status, 403, 'a BDE cannot add people');
   const nb = await mk(sm, 'bde', 'nb@test.in'); assert.equal(nb.status, 200); assert.equal(nb.body.user.team, 'sales');
   assert.equal((await mk(sm, 'dev', 'x2@test.in')).status, 403, 'not into another team');
@@ -178,4 +178,28 @@ test('managers add and look after members of their own team only', async () => {
   assert.equal((await call('PATCH', '/users/' + id, { isAdmin: true }, sm)).body.user.isAdmin, false);
   assert.equal((await call('PATCH', '/users/' + id, { active: false }, sm)).body.user.active, false);
   assert.equal((await call('PATCH', '/users/u_it', { active: false }, sm)).status, 403);
+});
+
+test('company on staff; collaborations are for management only; task timing', async () => {
+  const login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  const sm = await login('sm@test.in'), ch = await login('ch@test.in'), ops = await login('ops2@test.in');
+  assert.equal((await call('POST', '/users', { name: 'No Co', email: 'noco@test.in', password: 'password123', title: 'bde' }, admin)).status, 400, 'company is required');
+  const b = await call('POST', '/users', { name: 'Builder', email: 'bld@test.in', password: 'password123', title: 'bde', company: 'Aali Builders' }, admin);
+  assert.equal(b.body.user.company, 'Aali Builders');
+  const m = await call('POST', '/users', { name: 'Sec', email: 'cs9@test.in', password: 'password123', title: 'cs', company: 'AaliTech' }, admin);
+  assert.equal(m.body.user.company, 'Aali Group', 'management always belongs to the group');
+  assert.equal((await call('PATCH', '/users/' + b.body.user.id, { company: 'AaliTech' }, admin)).body.user.company, 'AaliTech');
+  assert.equal((await call('POST', '/records', { type: 'collab', data: { kind: 'college', name: 'X College' } }, sm)).status, 403);
+  assert.equal((await call('POST', '/records', { type: 'collab', data: { kind: 'college', name: 'X College' } }, ch)).status, 403, 'the Chairman reads only');
+  const c = (await add(ops, 'collab', { kind: 'college', name: 'ABC Engineering College', city: 'Guntur' })).record;
+  const sees = async (k) => (await call('GET', '/bootstrap', null, k)).body.records.some((x) => x.id === c.id);
+  assert.equal(await sees(ch), true); assert.equal(await sees(admin), true); assert.equal(await sees(sm), false); assert.equal(await sees(bde1), false);
+  assert.equal((await patch(sm, c.id, { name: 'Hacked' })).status, 403);
+  assert.equal((await call('DELETE', '/records/' + c.id, {}, sm)).status, 403);
+  const r = (await add(bde2, 'report', { entries: [{ text: 'Poster for client', kind: 'Poster / design work', state: 'running', start: new Date().toISOString() }] })).record;
+  assert.equal(r.entries[0].state, 'running');
+  assert.equal((await patch(bde2, r.id, { status: 'submitted' })).status, 400, 'a running task blocks submit');
+  const done = await patch(bde2, r.id, { entries: [{ ...r.entries[0], state: 'done', end: new Date().toISOString(), mins: 42 }] });
+  assert.equal(done.body.record.entries[0].mins, 42); assert.equal(done.body.record.entries[0].state, undefined);
+  assert.equal((await patch(bde2, r.id, { status: 'submitted' })).status, 200);
 });

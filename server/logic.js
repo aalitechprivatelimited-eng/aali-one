@@ -21,6 +21,8 @@ export const canSeeReport = (u, d, leadSees = false) => !!u && (d.owner === u.id
 export const NO_REPORT_TITLES = ['chairman', 'ops', 'cs', 'admin']; // top management reads reports, it does not write them
 // Send back / delete: the department manager, or an admin (Ops Manager, Company Secretary). The Chairman reads and remarks only.
 const canRunReport = (u, d) => u.is_admin || (d.owner !== u.id && isManager(u) && !TOP_TITLES.includes(u.title) && u.team === d.team);
+// Collaborations (colleges and employers): top management reads; the Operations Manager, Company Secretary and admins change them.
+export const canEditCollab = (u) => !!u && (u.is_admin || ['ops', 'cs'].includes(u.title));
 const log = (d, by, text) => { d.log = [{ at: new Date().toISOString(), by, text }, ...(d.log || [])].slice(0, 80); };
 
 async function counter(t, key) {
@@ -129,6 +131,10 @@ export async function beforeCreate(t, type, data, user, sample) {
     case 'task': if (!data.title?.trim()) throw new Rule('Enter the task.'); data.status ||= 'todo'; break;
     case 'payment': if (!data.title?.trim()) throw new Rule('Enter what the payment is for.'); data.status ||= 'open'; data.paid ||= 0; data.baseAmount ??= num(data.amount); break;
     case 'approval': data.status = 'pending'; data.requestedBy = me; break;
+    case 'collab':
+      if (!canEditCollab(user)) throw new Rule('Only the Operations Manager or Company Secretary can add a collaboration.', 403);
+      if (!['college', 'employer'].includes(data.kind)) throw new Rule('Choose college or employer.');
+      if (!data.name?.trim()) throw new Rule('Enter the name.'); data.status ||= 'active'; log(data, me, 'Collaboration added'); break;
     case 'report': {
       if (!user) throw new Rule('Please sign in.', 401);
       if (NO_REPORT_TITLES.includes(user.title)) throw new Rule('Top management does not write a daily report.');
@@ -147,6 +153,8 @@ export async function beforeCreate(t, type, data, user, sample) {
 const cleanEntries = (list) => (Array.isArray(list) ? list : []).filter((e) => String(e?.text || '').trim()).slice(0, 100).map((e) => ({
   id: e.id || newId('e_'), at: e.at || new Date().toISOString(), text: String(e.text).trim().slice(0, 500),
   ...(e.kind ? { kind: String(e.kind).slice(0, 60) } : {}), ...(Number(e.mins) > 0 ? { mins: Math.min(1440, Math.round(Number(e.mins))) } : {}),
+  // A task can be started and finished: the time taken is worked out from the two moments.
+  ...(e.start ? { start: String(e.start).slice(0, 30) } : {}), ...(e.end ? { end: String(e.end).slice(0, 30) } : {}), ...(e.state === 'running' ? { state: 'running' } : {}),
   ...(e.refId ? { refId: e.refId, refLabel: String(e.refLabel || '').slice(0, 120), refLink: String(e.refLink || '').slice(0, 120) } : {}) }));
 // Who is told when a report is submitted: the department manager; for a manager's own report, the Ops Manager and Company Secretary.
 async function reportWatchers(t, d) {
@@ -278,6 +286,11 @@ export async function beforeUpdate(t, rec, next, user) {
     case 'lead':
       if (next.status !== prev.status) log(next, me, `Status: ${next.status}`);
       break;
+    case 'collab':
+      if (!canEditCollab(user)) throw new Rule('Only the Operations Manager or Company Secretary can change a collaboration.', 403);
+      if (!next.name?.trim()) throw new Rule('Enter the name.'); next.kind = prev.kind;
+      if (next.status !== prev.status) log(next, me, `Status: ${next.status}`);
+      break;
     case 'report': {
       const mine = prev.owner === me, now = new Date().toISOString();
       if (!canSeeReport(user, prev, !!(await getSetting(t, 'leadSeesReports', false)))) throw new Rule('You cannot open this report.', 403);
@@ -291,6 +304,7 @@ export async function beforeUpdate(t, rec, next, user) {
         if (next.status === 'submitted') {
           if (!mine) throw new Rule('Only the writer can submit a report.', 403);
           if (!next.entries.length) throw new Rule('Add at least one line of work before you submit.');
+          if (next.entries.some((e) => e.state === 'running')) throw new Rule('A task is still running. Press Finish on it before you submit.');
           next.submittedAt = now; log(next, me, 'Report submitted');
           for (const to of await reportWatchers(t, next)) await notify(t, to, `${user.name} submitted the daily report for ${next.date}.`, 'report', rec.id, user, rec.sample);
         } else if (next.status === 'open') {

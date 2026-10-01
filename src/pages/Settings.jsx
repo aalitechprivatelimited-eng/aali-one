@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
 import { useStore, store, http, saveSetting, setMe, upsertUser, poll } from '../api.js';
-import { settings, isManager, TITLES, TEAMS, uname, fmtDT, waLink, myJuniors, canAddPeople } from '../lib.js';
+import { settings, isManager, TITLES, TEAMS, uname, fmtDT, waLink, myJuniors, canAddPeople, COMPANIES, GROUP } from '../lib.js';
 import { Field, In, Sel, Area, Pill, Empty, Modal, attempt, toast } from '../ui.jsx';
 import { TITLE_TEAM } from '../../shared/defaults.js';
 import { ThemeToggle } from '../theme.jsx';
@@ -52,6 +52,11 @@ const ACCESS = {
 const ADMIN_ACCESS = 'Admin: adds people in any team, changes settings, sends back or deletes reports, opens the recycle bin';
 const accessOf = (u) => [...(ACCESS[u.title] || []), ...(u.isAdmin ? [ADMIN_ACCESS] : [])];
 const newPassword = () => { const a = new Uint32Array(2); crypto.getRandomValues(a); return 'Aali-' + [...a].map((n) => n.toString(36)).join('').slice(0, 9); };
+// Which company of the group the person works for. Management always belongs to Aali Group itself.
+function CompanyPicker({ team, value, onChange }) {
+  if (team === 'management') return <div className="row"><span className="chip on">{GROUP}</span><span className="small muted">Management looks after every company in the group.</span></div>;
+  return <div className="row">{COMPANIES.map((c) => <button key={c} type="button" className={'chip' + (value === c ? ' on' : '')} aria-pressed={value === c} onClick={() => onChange(c)}>{c}</button>)}</div>;
+}
 // Pick a role by reading what it can do, instead of a bare dropdown.
 function RolePicker({ roles, value, onChange }) {
   return <div className="roles" role="radiogroup" aria-label="Role">{roles.map((k) => <label key={k} className={'rolecard' + (value === k ? ' on' : '')}>
@@ -70,7 +75,7 @@ function People() {
     if (r) { upsertUser(r.user); setMade({ ...r.user, password: add.password }); setAdd(null); }
   }
   async function saveEdit() {
-    setBusy(true); const ok = await patch(edit.u, { title: edit.title, ...(adm && edit.u.id !== me.id ? { isAdmin: edit.isAdmin } : {}) }, 'Access changed.'); setBusy(false); if (ok) setEdit(null);
+    setBusy(true); const ok = await patch(edit.u, { title: edit.title, company: edit.company, ...(adm && edit.u.id !== me.id ? { isAdmin: edit.isAdmin } : {}) }, 'Access changed.'); setBusy(false); if (ok) setEdit(null);
   }
   const loginText = (u) => `Hi ${u.name.split(' ')[0]}, your Aali One login:\n${location.origin}\nEmail: ${u.email}\nPassword: ${u.password}\nPlease change the password after you sign in (Settings → My profile).`;
   return <div className="stack gap16">
@@ -78,34 +83,36 @@ function People() {
     {Object.entries(TEAMS).filter(([team]) => adm || team === me.team).map(([team, label]) => { const us = store.users.filter((u) => u.team === team).sort((x, y) => TEAM_ROLES[team].indexOf(x.title) - TEAM_ROLES[team].indexOf(y.title) || x.name.localeCompare(y.name));
       return <section key={team} className="stack" style={{ gap: 8 }}>
         <div className="row between"><div><h2 style={{ margin: 0 }}>{label} team <span className="small muted">{us.filter((u) => u.active).length} active</span></h2><span className="small muted">{TEAM_NOTE[team]}</span></div>
-          <button className="btn primary" type="button" onClick={() => setAdd({ team, title: rolesFor(team).at(-1), password: newPassword() })}>+ Add {label} member</button></div>
+          <button className="btn primary" type="button" onClick={() => setAdd({ team, title: rolesFor(team).at(-1), password: newPassword(), company: team === 'management' ? GROUP : me.team === 'management' ? '' : me.company })}>+ Add {label} member</button></div>
         {us.length ? <div className="tbl"><table><thead><tr><th>Person</th><th>Role</th><th>What they can see and do</th><th>Active</th><th /></tr></thead><tbody>
           {us.map((u) => <tr key={u.id} style={{ opacity: u.active ? 1 : 0.55 }}>
-            <td><b>{u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}<div className="small muted">{u.email}</div><div className="small muted num">{u.phone || 'No mobile'}</div></td>
+            <td><b>{u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}<div className="small"><Pill>{u.company}</Pill></div><div className="small muted">{u.email}</div><div className="small muted num">{u.phone || 'No mobile'}</div></td>
             <td><Pill k="gold">{TITLES[u.title] || u.title}</Pill>{u.isAdmin && <> <Pill k="info">Admin</Pill></>}</td>
             <td><ul className="access">{accessOf(u).map((x) => <li key={x}>{x}</li>)}</ul></td>
             <td><input type="checkbox" aria-label={`${u.name} can sign in`} checked={u.active} disabled={!can(u) || u.id === me.id} onChange={(e) => patch(u, { active: e.target.checked }, e.target.checked ? 'Switched on.' : 'Switched off. They can no longer sign in.')} /></td>
-            <td>{can(u) && <div className="row" style={{ justifyContent: 'flex-end' }}>{(adm || jun.length > 1) && <button className="btn sm" type="button" onClick={() => setEdit({ u, title: u.title, isAdmin: u.isAdmin })}>Change access</button>}
+            <td>{can(u) && <div className="row" style={{ justifyContent: 'flex-end' }}>{<button className="btn sm" type="button" onClick={() => setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company })}>Change access</button>}
               <button className="btn sm" type="button" onClick={() => setPw({ ...u, p: newPassword() })}>Set password</button></div>}</td></tr>)}</tbody></table></div>
           : <Empty>No one in the {label} team yet.</Empty>}
       </section>; })}
     {add && <Modal wide title={`Add ${TEAMS[add.team]} member`} onClose={() => setAdd(null)} footer={<><button className="btn" type="button" onClick={() => setAdd(null)}>Cancel</button>
-      <button className="btn primary" type="button" disabled={busy || !add.name?.trim() || !add.email?.trim() || (add.password || '').length < 8} onClick={save}>{busy ? 'Adding…' : 'Add member'}</button></>}>
+      <button className="btn primary" type="button" disabled={busy || !add.name?.trim() || !add.email?.trim() || (add.password || '').length < 8 || (add.team !== 'management' && !COMPANIES.includes(add.company))} onClick={save}>{busy ? 'Adding…' : 'Add member'}</button></>}>
       <div className="form">
         <Field label="Full name"><In value={add.name || ''} onChange={(e) => setAdd({ ...add, name: e.target.value })} autoFocus /></Field>
         <Field label="Mobile (for WhatsApp)"><In value={add.phone || ''} inputMode="tel" onChange={(e) => setAdd({ ...add, phone: e.target.value })} /></Field>
         <Field label="Email (this is their login)" full><In type="email" value={add.email || ''} onChange={(e) => setAdd({ ...add, email: e.target.value })} autoComplete="off" /></Field>
         <Field label="First password (8+ characters)" full hint="They can change it after signing in."><div className="row"><In className="in grow" value={add.password || ''} onChange={(e) => setAdd({ ...add, password: e.target.value })} autoComplete="new-password" />
           <button className="btn sm" type="button" onClick={() => setAdd({ ...add, password: newPassword() })}>New one</button></div></Field>
+        <Field label="Company" full><CompanyPicker team={add.team} value={add.company} onChange={(v) => setAdd({ ...add, company: v })} /></Field>
         <Field label={`Role in the ${TEAMS[add.team]} team – choose what this person should be able to do`} full><RolePicker roles={rolesFor(add.team)} value={add.title} onChange={(v) => setAdd({ ...add, title: v })} /></Field>
         {adm && add.team === 'management' && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> <span><b>Also make them an admin</b><br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
-    {edit && <Modal wide title={`Access for ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Cancel</button>
-      <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin)} onClick={saveEdit}>Save access</button></>}>
-      <div className="stack">{(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">{TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
+    {edit && <Modal wide title={`Company and access for ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Cancel</button>
+      <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin && edit.company === edit.u.company) || (TITLE_TEAM[edit.title] !== 'management' && !COMPANIES.includes(edit.company))} onClick={saveEdit}>Save access</button></>}>
+      <div className="stack"><div><span className="lbl">Company</span><CompanyPicker team={TITLE_TEAM[edit.title]} value={edit.company} onChange={(v) => setEdit({ ...edit, company: v })} /></div>
+        {(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">{TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
         {TITLE_TEAM[edit.title] !== edit.u.team && <div className="banner">This moves {edit.u.name.split(' ')[0]} from the {TEAMS[edit.u.team]} team to the {TEAMS[TITLE_TEAM[edit.title]]} team.</div>}
         {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin} disabled={edit.u.id === me.id} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
     {made && <Modal title={`${made.name} is added`} onClose={() => setMade(null)} footer={<button className="btn primary" type="button" onClick={() => setMade(null)}>Done</button>}>
-      <div className="stack"><div className="banner ok">Added to the {TEAMS[made.team]} team as {TITLES[made.title]}. Share this login with them privately. The password is shown only now.</div>
+      <div className="stack"><div className="banner ok">Added to {made.company}, {TEAMS[made.team]} team, as {TITLES[made.title]}. Share this login with them privately. The password is shown only now.</div>
         <textarea className="in" readOnly value={loginText(made)} style={{ minHeight: 120 }} />
         <div className="row"><button className="btn" type="button" onClick={() => navigator.clipboard?.writeText(loginText(made)).then(() => toast('Copied.'), () => toast('Select the text and copy it.', true))}>Copy</button>
           {waLink(made.phone, loginText(made)) ? <a className="btn wa" href={waLink(made.phone, loginText(made))} target="_blank" rel="noreferrer">Send on WhatsApp</a> : <span className="small muted">Add a mobile number to send it on WhatsApp.</span>}</div></div></Modal>}

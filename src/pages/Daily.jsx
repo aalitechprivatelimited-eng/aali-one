@@ -101,19 +101,23 @@ function Editor({ date, r }) {
   const me = store.me, locked = r?.status === 'submitted', refs = refOptions(me), fields = NUMS[me.team] || [];
   const [text, setText] = useState(''), [ref, setRef] = useState(''), [busy, setBusy] = useState(false), [mins, setMins] = useState('');
   const types = typesFor(me.team), [kind, setKind] = useState(() => { try { const k = localStorage.getItem('aali-worktype'); return types.includes(k) ? k : ''; } catch { return ''; } });
-  const ready = text.trim() && kind && +mins > 0;
+  const ready = text.trim() && kind, timed = +mins > 0;
   const [f, setF] = useState({ plan: r?.plan || '', blockers: r?.blockers || '', nums: r?.nums || {} });
   const save = (data) => (r ? update(r.id, data) : create('report', { date, ...data }));
   const dirty = f.plan !== (r?.plan || '') || f.blockers !== (r?.blockers || '') || JSON.stringify(f.nums) !== JSON.stringify(r?.nums || {});
   const blur = () => { if (dirty && !locked) attempt(() => save(f)); };
-  async function add(e) {
-    e?.preventDefault(); const t = text.trim(); if (!ready || busy) return; setBusy(true);
+  // Two ways to add a task: start it now and press Finish later (the app works out the time), or add one already done with its minutes.
+  async function add(running) {
+    const t = text.trim(); if (!ready || busy || (!running && !timed)) return; setBusy(true);
     try { localStorage.setItem('aali-worktype', kind); } catch {}
-    const o = refs.find((x) => x[0] === ref);
-    const line = { id: Math.random().toString(36).slice(2, 10), at: new Date().toISOString(), text: t, kind, mins: Math.round(+mins), ...(o ? { refId: o[0], refLabel: o[1], refLink: o[2] } : {}) };
-    if (await attempt(() => save({ ...f, entries: [...(r?.entries || []), line] }))) { setText(''); setMins(''); }
+    const o = refs.find((x) => x[0] === ref), now = new Date().toISOString();
+    const line = { id: Math.random().toString(36).slice(2, 10), at: now, text: t, kind, ...(running ? { state: 'running', start: now } : { mins: Math.round(+mins) }), ...(o ? { refId: o[0], refLabel: o[1], refLink: o[2] } : {}) };
+    if (await attempt(() => save({ ...f, entries: [...(r?.entries || []), line] }), running ? 'Task started. Press Finish when it is done.' : '')) { setText(''); setMins(''); }
     setBusy(false);
   }
+  const change = (id, fn, ok) => attempt(() => update(r.id, { ...f, entries: r.entries.map((x) => (x.id === id ? fn(x) : x)) }), ok);
+  const finish = (id) => change(id, (x) => ({ ...x, state: 'done', end: new Date().toISOString(), mins: Math.max(1, Math.round((Date.now() - new Date(x.start)) / 60000)) }), 'Task finished. Time saved.');
+  const fix = (id, m) => change(id, (x) => ({ ...x, mins: Math.max(1, Math.round(m)) }), 'Time corrected.');
   const drop = (id) => attempt(() => update(r.id, { ...f, entries: r.entries.filter((x) => x.id !== id) }));
   const submit = () => attempt(() => update(r.id, { ...f, status: 'submitted' }), 'Report submitted. Your manager has been told.');
   const [l, k] = status(r), auto = autoStats(me.id, date);
@@ -121,19 +125,23 @@ function Editor({ date, r }) {
     <div className="row between"><h2 style={{ margin: 0 }}>{dayName(date)} <span className="small muted">{fmtDate(date)}</span></h2>
       <div className="row"><Pill k={k}>{l}</Pill>{r && <span className="small muted">last saved {ago(r.updatedAt)}</span>}<Sample on={r?.sample} /></div></div>
     {locked ? <div className="banner ok">Submitted{r.submittedAt ? ' at ' + hm(r.submittedAt) : ''}. It is locked now. If something must change, ask your manager to send it back.</div>
-      : <div className="banner info">Add a line each time you finish something. Your manager sees every line as soon as you add it. Press Submit at the end of the day.</div>}
+      : <div className="banner info">Add each task as you take it up. Your manager sees it as soon as you add it. Press Submit at the end of the day.</div>}
     {(r?.remarks || []).length > 0 && <Remarks r={r} />}
-    {!locked && <form className="stack gap4" onSubmit={add}>
+    {!locked && <form className="stack gap4" onSubmit={(e) => { e.preventDefault(); add(!timed); }}>
       <span className="lbl">1. Kind of work</span>
       <div className="row">{types.map((t) => <button key={t} type="button" className={'chip' + (kind === t ? ' on' : '')} aria-pressed={kind === t} onClick={() => setKind(t)}>{t}</button>)}</div>
-      <span className="lbl" style={{ marginTop: 6 }}>2. What you did and how long it took</span>
+      <span className="lbl" style={{ marginTop: 6 }}>2. The task</span>
       <div className="row">
-        <input className="in grow" style={{ minWidth: 220 }} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Called 12 clinics from the Guntur list; 5 picked up" autoFocus maxLength={500} />
-        <input className="in" style={{ width: 110 }} type="number" min="1" max="1440" inputMode="numeric" value={mins} onChange={(e) => setMins(e.target.value)} placeholder="Minutes" aria-label="Minutes spent" />
-        {refs.length > 0 && <Sel value={ref} onChange={setRef} blank="About… (optional)" options={refs.map(([v, lb]) => [v, lb])} style={{ width: 'auto', maxWidth: 240 }} />}
-        <button className="btn primary" type="submit" disabled={!ready || busy}>{busy ? 'Saving…' : 'Add update'}</button></div>
-      <div className="row small"><span className="muted">Quick time:</span>{[10, 15, 30, 45, 60, 90, 120].map((m) => <button key={m} type="button" className="chip" onClick={() => setMins(String(m))}>{fmtMins(m)}</button>)}</div></form>}
-    <Entries r={r} onDrop={!locked && drop} />
+        <input className="in grow" style={{ minWidth: 220 }} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Poster for Vaaradhi Cafe opening offer" autoFocus maxLength={500} />
+        {refs.length > 0 && <Sel value={ref} onChange={setRef} blank="About… (optional)" options={refs.map(([v, lb]) => [v, lb])} style={{ width: 'auto', maxWidth: 240 }} />}</div>
+      <span className="lbl" style={{ marginTop: 6 }}>3. Time</span>
+      <div className="row">
+        <button className="btn primary" type="button" disabled={!ready || busy} onClick={() => add(true)}>▶ Start this task now</button>
+        <span className="small muted">or, if it is already done, it took</span>
+        <input className="in" style={{ width: 100 }} type="number" min="1" max="1440" inputMode="numeric" value={mins} onChange={(e) => setMins(e.target.value)} placeholder="Minutes" aria-label="Minutes the task took" />
+        <button className="btn" type="button" disabled={!ready || !timed || busy} onClick={() => add(false)}>Add finished task</button></div>
+      <span className="small muted">Start a task when you begin it and press Finish when it is done. Aali One works out the time taken. Your manager sees it as you go.</span></form>}
+    <Entries r={r} onDrop={!locked && drop} onFinish={!locked && finish} onFix={!locked && fix} />
     {r && <div><span className="lbl">Time by kind of work</span><TimeBars reports={[r]} empty="No timed work yet." /></div>}
     {auto.length > 0 && <div className="row small"><span className="lbl">Recorded by Aali One</span>{auto.map((a) => <Pill key={a} k="gold">{a}</Pill>)}</div>}
     <div className="form">
@@ -143,16 +151,23 @@ function Editor({ date, r }) {
       <Field label="Problems / help needed" full><Area disabled={locked} value={f.blockers} onChange={(e) => setF({ ...f, blockers: e.target.value })} onBlur={blur} placeholder="Anything stopping your work. Leave empty if none." /></Field>
     </div>
     {!locked && <div className="row between"><span className="small muted">{dirty ? 'Not saved yet – click outside the box to save.' : r ? 'All changes saved.' : 'Nothing written yet.'}</span>
-      <div className="row">{r && <DeleteButton id={r.id} label="Delete report" />}<button className="btn primary" type="button" disabled={!r?.entries?.length} onClick={submit}>Submit for the day</button></div></div>}
+      <div className="row">{r && <DeleteButton id={r.id} label="Delete report" />}<button className="btn primary" type="button" disabled={!r?.entries?.length || r.entries.some((e) => e.state === 'running')} title={r?.entries?.some((e) => e.state === 'running') ? 'Finish the running task first' : ''} onClick={submit}>Submit for the day</button></div></div>}
   </div>;
 }
-function Entries({ r, onDrop }) {
-  const es = r?.entries || [];
-  if (!es.length) return <p className="muted small" style={{ margin: 0 }}>No updates yet.</p>;
-  return <div className="list">{es.map((e) => <div className="li" key={e.id} style={{ padding: '7px 12px' }}><span className="num small muted" style={{ width: 66, flex: 'none' }}>{hm(e.at)}</span>
-    <div className="grow">{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.text}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</div>
-    {e.mins ? <span className="num small">{fmtMins(e.mins)}</span> : null}
-    {onDrop && <button className="btn ghost sm" type="button" aria-label="Remove this line" onClick={() => onDrop(e.id)}>Remove</button>}</div>)}</div>;
+function Entries({ r, onDrop, onFinish, onFix }) {
+  const es = r?.entries || [], [edit, setEdit] = useState(null);
+  if (!es.length) return <p className="muted small" style={{ margin: 0 }}>No tasks yet.</p>;
+  const sofar = (e) => Math.max(0, Math.round((Date.now() - new Date(e.start)) / 60000));
+  return <div className="list">{es.map((e) => { const run = e.state === 'running';
+    return <div className="li" key={e.id} style={{ padding: '7px 12px', background: run ? 'var(--warn-bg)' : '' }}>
+      <span className="num small muted" style={{ width: 118, flex: 'none' }}>{hm(e.start || e.at)}{e.end ? ' – ' + hm(e.end) : ''}</span>
+      <div className="grow">{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.text}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</div>
+      {run ? <><Pill k="warn">In progress · {fmtMins(sofar(e))} so far</Pill>{onFinish && <button className="btn primary sm" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}</>
+        : edit?.id === e.id ? <><input className="in" style={{ width: 80 }} type="number" min="1" max="1440" value={edit.v} onChange={(ev) => setEdit({ id: e.id, v: ev.target.value })} aria-label="Minutes" autoFocus />
+            <button className="btn sm" type="button" disabled={!(+edit.v > 0)} onClick={() => { onFix(e.id, +edit.v); setEdit(null); }}>Save</button></>
+          : <><Pill k="ok">Done</Pill><span className="num small" style={{ minWidth: 64, textAlign: 'right' }}>{fmtMins(e.mins || 0)}</span>
+            {onFix && <button className="btn ghost sm" type="button" title="Use this if you forgot to press Finish on time" onClick={() => setEdit({ id: e.id, v: e.mins || '' })}>Fix time</button>}</>}
+      {onDrop && <button className="btn ghost sm" type="button" aria-label="Remove this task" onClick={() => onDrop(e.id)}>Remove</button>}</div>; })}</div>;
 }
 const Remarks = ({ r }) => <div className="stack gap4">{r.remarks.map((x, i) => <div className="comment" key={i}><div className="row between small"><b>{uname(x.by)}</b><span className="faint">{fmtDT(x.at)}</span></div>{x.text}</div>)}</div>;
 

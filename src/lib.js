@@ -1,6 +1,7 @@
 // Small shared helpers: dates, people, labels, and the "what needs me" feed.
 import { store, list, get } from './api.js';
-import { TITLES, TEAMS, MANAGER_TITLES, TOP_TITLES, MANAGER_ADDS } from '../shared/defaults.js';
+import { TITLES, TEAMS, MANAGER_TITLES, TOP_TITLES, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
+export { COMPANIES, GROUP };
 export { inr, inr2, num, mobile10 } from '../shared/money.js';
 export { TITLES, TEAMS };
 

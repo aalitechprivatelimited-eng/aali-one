@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list } from './api.js';
 import { Toaster, In, Field, attempt, toast } from './ui.jsx';
-import { TITLES, feedItems, forScope, diff, isManager, canAddPeople } from './lib.js';
+import { TITLES, feedItems, forScope, diff, isManager, isTop, canAddPeople } from './lib.js';
 import { ThemeToggle } from './theme.jsx';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
@@ -16,6 +16,7 @@ const Payments = lazy(() => import('./pages/Payments.jsx'));
 const Support = lazy(() => import('./pages/Support.jsx'));
 const Calendar = lazy(() => import('./pages/Calendar.jsx'));
 const Daily = lazy(() => import('./pages/Daily.jsx'));
+const Collab = lazy(() => import('./pages/Collab.jsx'));
 const Reports = lazy(() => import('./pages/Reports.jsx'));
 const Messages = lazy(() => import('./pages/Messages.jsx'));
 const Approvals = lazy(() => import('./pages/Approvals.jsx'));
@@ -106,9 +107,10 @@ function Shell() {
           <div className="sec">Sales</div><L to="/leads">Leads & enquiries</L><L to="/deals">Deals pipeline</L><L to="/clients">Clients</L><L to="/quotes">Quotations</L>
           <div className="sec">Delivery</div><L to="/projects">Projects</L><L to="/tasks">Tasks</L><L to="/support">Support</L>
           <div className="sec">Money</div><L to="/payments">Payments & receipts</L>
+          {isTop() && <><div className="sec">Management</div><L to="/collab">Collaborations</L></>}
           <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L>{canAddPeople() && <L to="/settings/people">{me.isAdmin ? 'People & teams' : 'My team members'}</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
         </nav>
-        <div className="me"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b>{me.name}</b><div className="faint">{TITLES[me.title]}</div></div><ThemeToggle />
+        <div className="me"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b>{me.name}</b><div className="faint">{TITLES[me.title]} · {me.company}</div></div><ThemeToggle />
           <button className="btn ghost sm" type="button" onClick={logout}>Sign out</button></div>
       </aside>
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
@@ -120,7 +122,7 @@ function Shell() {
               <Route path="/" element={<Today />} /><Route path="/inbox" element={<Inbox />} /><Route path="/approvals" element={<Approvals />} />
               <Route path="/leads/*" element={<Leads />} /><Route path="/deals/*" element={<Deals />} /><Route path="/clients/*" element={<Clients />} />
               <Route path="/quotes/*" element={<Quotes />} /><Route path="/projects/*" element={<Projects />} /><Route path="/tasks" element={<Tasks />} />
-              <Route path="/support" element={<Support />} /><Route path="/payments/*" element={<Payments />} /><Route path="/calendar" element={<Calendar />} /><Route path="/daily" element={<Daily />} />
+              <Route path="/support" element={<Support />} /><Route path="/payments/*" element={<Payments />} /><Route path="/calendar" element={<Calendar />} /><Route path="/daily" element={<Daily />} /><Route path="/collab" element={<Collab />} />
               <Route path="/reports" element={<Reports />} /><Route path="/messages" element={<Messages />} /><Route path="/settings/*" element={<Settings />} />
               <Route path="/signoff/:projectId" element={<Signoff />} /><Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

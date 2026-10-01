@@ -2,8 +2,8 @@
 import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, createSession, userFromToken, dropSession, sessionCookie, readCookie,
   publicUser, tooManyFails, noteFail, clearFails } from './auth.js';
-import { beforeCreate, afterCreate, beforeUpdate, insertRec, getSetting, setSetting, isManager, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
-import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS } from '../shared/defaults.js';
+import { beforeCreate, afterCreate, beforeUpdate, insertRec, getSetting, setSetting, isManager, isTop, canEditCollab, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
+import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
 
 const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
 const MAX_BODY = 4_000_000;
@@ -88,7 +88,7 @@ export async function handle(req, res) {
     if (!user) throw new Rule('Please sign in.', 401);
     const admin = user.is_admin, juniors = MANAGER_ADDS[user.title] || [];
     const leadSees = user.title === 'itlead' && !!(await getSetting(db, 'leadSeesReports', false));
-    const mayRead = (r) => r.type === 'notice' ? r.data.to === user.id : r.type !== 'report' || canSeeReport(user, r.data, leadSees); // daily reports are private to the writer, their manager and top management
+    const mayRead = (r) => r.type === 'notice' ? r.data.to === user.id : r.type === 'collab' ? isTop(user) : r.type !== 'report' || canSeeReport(user, r.data, leadSees); // daily reports are private to the writer, their manager and top management
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
     if (path === '/bootstrap' && method === 'GET') {
@@ -138,6 +138,7 @@ export async function handle(req, res) {
       if (!rec) throw new Rule('That item no longer exists.', 404);
       if (ADMIN_ONLY_DELETE.includes(rec.type) && !admin) throw new Rule('Only an admin can delete a signed certificate.', 403);
       if (NEEDS_REASON.includes(rec.type) && reason.length < 5) throw new Rule('Give a reason of at least 5 characters.');
+      if (rec.type === 'collab' && !canEditCollab(user)) throw new Rule('Only the Operations Manager or Company Secretary can delete a collaboration.', 403);
       if (rec.type === 'report' && !canDeleteReport(user, rec.data)) throw new Rule('Only the Operations Manager, the Company Secretary or the department manager can delete a report.', 403);
       if (['deal', 'project', 'client'].includes(rec.type) && !isManager(user) && rec.created_by !== user.id) throw new Rule('Only a manager can delete this.', 403);
       await db.query('update records set deleted_at = now(), deleted_by = $2, delete_reason = $3, updated_at = now() where id = $1', [rec.id, user.id, reason || null]);
@@ -200,9 +201,11 @@ export async function handle(req, res) {
       if (!b.name || !email || String(b.password || '').length < 8) throw new Rule('Enter name, email and a password of at least 8 characters.');
       if (b.title && !TITLE_TEAM[b.title]) throw new Rule('Choose a role from the list.');
       if (!admin && !(juniors.includes(b.title) && !b.isAdmin)) throw new Rule(juniors.length ? 'You can add members to your own team only.' : 'Only an admin or a department manager can add people.', 403);
+      const team = TITLE_TEAM[b.title] || 'sales', company = team === 'management' ? GROUP : b.company;
+      if (team !== 'management' && !COMPANIES.includes(company)) throw new Rule('Choose the company this person works for.');
       const id = newId('u_');
-      try { await db.query('insert into users (id, email, name, title, team, phone, is_admin, pass_hash) values ($1,$2,$3,$4,$5,$6,$7,$8)',
-        [id, email, b.name.trim(), b.title || 'bde', TITLE_TEAM[b.title] || 'sales', b.phone || '', !!b.isAdmin, hashPassword(b.password)]); }
+      try { await db.query('insert into users (id, email, name, title, team, phone, is_admin, pass_hash, company) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [id, email, b.name.trim(), b.title || 'bde', team, b.phone || '', !!b.isAdmin, hashPassword(b.password), company]); }
       catch (e) { if (String(e.message).includes('unique') || e.code === '23505') throw new Rule('Someone already uses that email.'); throw e; }
       await audit(db, user, null, 'user', `Added ${email}`);
       return send(res, 200, { user: publicUser((await db.query('select * from users where id = $1', [id])).rows[0]) });
@@ -216,8 +219,10 @@ export async function handle(req, res) {
       if (lead && b.title && !juniors.includes(b.title)) throw new Rule('You can give roles of your own team only.', 403);
       const next = { name: b.name ?? u.name, phone: b.phone ?? u.phone, title: admin || lead ? (b.title ?? u.title) : u.title, active: admin || lead ? (b.active ?? u.active) : u.active, is_admin: admin ? (b.isAdmin ?? u.is_admin) : u.is_admin };
       if (self && next.active === false) throw new Rule("You can't switch off your own account.");
-      await db.query('update users set name=$2, phone=$3, title=$4, team=$5, active=$6, is_admin=$7, updated_at=now() where id=$1',
-        [u.id, next.name, next.phone, next.title, TITLE_TEAM[next.title] || u.team, next.active, next.is_admin]);
+      if (b.company !== undefined && (admin || lead) && !COMPANIES.includes(b.company) && (TITLE_TEAM[next.title] || u.team) !== 'management') throw new Rule('Choose a company from the list.');
+      const nTeam = TITLE_TEAM[next.title] || u.team, nCompany = nTeam === 'management' ? GROUP : (admin || lead) && COMPANIES.includes(b.company) ? b.company : COMPANIES.includes(u.company) ? u.company : COMPANIES[0];
+      await db.query('update users set name=$2, phone=$3, title=$4, team=$5, active=$6, is_admin=$7, company=$8, updated_at=now() where id=$1',
+        [u.id, next.name, next.phone, next.title, nTeam, next.active, next.is_admin, nCompany]);
       if (b.password) {
         if (String(b.password).length < 8) throw new Rule('Password must be at least 8 characters.');
         if (self && !admin && !checkPassword(String(b.currentPassword || ''), u.pass_hash)) throw new Rule('Your current password is not right.');
