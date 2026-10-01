@@ -41,7 +41,7 @@ function Private() {
 }
 
 function Login({ setup }) {
-  const [f, setF] = useState({ name: '', email: '', password: '' }), [busy, setBusy] = useState(false);
+  const [f, setF] = useState({ name: '', email: '', password: '' }), [busy, setBusy] = useState(false), [show, setShow] = useState(false);
   const up = (k) => (e) => setF({ ...f, [k]: e.target.value });
   async function go(e) {
     e.preventDefault(); setBusy(true);
@@ -56,7 +56,8 @@ function Login({ setup }) {
         {setup && <div className="banner info">First time here. Create the administrator account.</div>}
         {setup && <Field label="Your name"><In value={f.name} onChange={up('name')} required autoComplete="name" /></Field>}
         <Field label="Email"><In type="email" value={f.email} onChange={up('email')} required autoComplete="username" /></Field>
-        <Field label="Password" hint={setup ? 'At least 8 characters.' : ''}><In type="password" value={f.password} onChange={up('password')} required autoComplete={setup ? 'new-password' : 'current-password'} /></Field>
+        <Field label="Password" hint={setup ? 'At least 8 characters.' : ''}><div className="row" style={{ flexWrap: 'nowrap' }}><In className="in grow" type={show ? 'text' : 'password'} value={f.password} onChange={up('password')} required autoComplete={setup ? 'new-password' : 'current-password'} />
+          <button className="btn" type="button" aria-pressed={show} aria-label={show ? 'Hide password' : 'Show password'} onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></div></Field>
         <button className="btn primary" disabled={busy} type="submit">{busy ? 'Please wait…' : setup ? 'Create account' : 'Sign in'}</button>
         {!setup && <p className="small muted" style={{ margin: 0 }}>Forgot your password? Ask the admin to set a new one.</p>}
       </form>
