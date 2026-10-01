@@ -144,6 +144,8 @@ export async function beforeCreate(t, type, data, user, sample) {
       const ex = (await t.query("select id from records where deleted_at is null and type = 'report' and data->>'owner' = $1 and data->>'date' = $2", [me, data.date])).rows[0];
       if (ex) return { merged: true, id: ex.id, type: 'report' }; // one report per person per day
       data.status = 'open'; data.entries = cleanEntries(data.entries);
+      if (data.date === today()) data.dayStart = new Date().toISOString(); else delete data.dayStart; // the day starts when the report is opened
+      delete data.dayEnd;
       for (const k of ['remarks', 'reviewed', 'submittedAt', 'log']) delete data[k];
       break;
     }
@@ -154,7 +156,7 @@ const cleanEntries = (list) => (Array.isArray(list) ? list : []).filter((e) => S
   id: e.id || newId('e_'), at: e.at || new Date().toISOString(), text: String(e.text).trim().slice(0, 500),
   ...(e.kind ? { kind: String(e.kind).slice(0, 60) } : {}), ...(Number(e.mins) > 0 ? { mins: Math.min(1440, Math.round(Number(e.mins))) } : {}),
   // A task can be started and finished: the time taken is worked out from the two moments.
-  ...(e.start ? { start: String(e.start).slice(0, 30) } : {}), ...(e.end ? { end: String(e.end).slice(0, 30) } : {}), ...(e.state === 'running' ? { state: 'running' } : {}),
+  ...(e.start ? { start: String(e.start).slice(0, 30) } : {}), ...(e.end ? { end: String(e.end).slice(0, 30) } : {}), ...(e.state === 'running' ? { state: 'running' } : {}), ...(e.brk ? { brk: true } : {}),
   ...(e.refId ? { refId: e.refId, refLabel: String(e.refLabel || '').slice(0, 120), refLink: String(e.refLink || '').slice(0, 120) } : {}) }));
 // Who is told when a report is submitted: the department manager; for a manager's own report, the Ops Manager and Company Secretary.
 async function reportWatchers(t, d) {
@@ -295,7 +297,7 @@ export async function beforeUpdate(t, rec, next, user) {
       const mine = prev.owner === me, now = new Date().toISOString();
       if (!canSeeReport(user, prev, !!(await getSetting(t, 'leadSeesReports', false)))) throw new Rule('You cannot open this report.', 403);
       const remark = String(next._remark || '').trim().slice(0, 500), reviewed = !!next._reviewed; delete next._remark; delete next._reviewed;
-      for (const k of ['owner', 'team', 'ownerTitle', 'date', 'remarks', 'reviewed', 'submittedAt']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
+      for (const k of ['owner', 'team', 'ownerTitle', 'date', 'remarks', 'reviewed', 'submittedAt', 'dayStart', 'dayEnd']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
       if (mine) next.entries = cleanEntries(next.entries);
       const edited = ['entries', 'plan', 'blockers', 'nums'].some((k) => JSON.stringify(next[k] ?? null) !== JSON.stringify(prev[k] ?? null));
       if (edited && !mine) throw new Rule('Only the writer can change a report. Managers can add a remark.', 403);
@@ -306,11 +308,12 @@ export async function beforeUpdate(t, rec, next, user) {
           if (!next.entries.length) throw new Rule('Add at least one line of work before you submit.');
           if (next.entries.some((e) => e.state === 'running')) throw new Rule('A task is still running. Press Finish on it before you submit.');
           next.submittedAt = now; log(next, me, 'Report submitted');
+          next.dayEnd = next.date === today() ? now : next.entries.map((e) => e.end || '').sort().pop() || now; // the day ends at submit
           for (const to of await reportWatchers(t, next)) await notify(t, to, `${user.name} submitted the daily report for ${next.date}.`, 'report', rec.id, user, rec.sample);
         } else if (next.status === 'open') {
           if (!canRunReport(user, prev)) throw new Rule('Only the department manager, the Operations Manager or the Company Secretary can send a report back.', 403);
           if (!remark) throw new Rule('Say what needs to change.');
-          delete next.reviewed; delete next.submittedAt; log(next, me, `Sent back: ${remark}`);
+          delete next.reviewed; delete next.submittedAt; delete next.dayEnd; log(next, me, `Sent back: ${remark}`);
         } else throw new Rule('Unknown report status.');
       }
       if (reviewed) {

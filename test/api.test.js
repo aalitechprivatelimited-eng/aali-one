@@ -200,9 +200,11 @@ test('company on staff; collaborations are for management only; task timing', as
   assert.equal((await patch(sm, c.id, { name: 'Hacked' })).status, 403);
   assert.equal((await call('DELETE', '/records/' + c.id, {}, sm)).status, 403);
   const r = (await add(bde2, 'report', { entries: [{ text: 'Poster for client', kind: 'Poster / design work', state: 'running', start: new Date().toISOString() }] })).record;
-  assert.equal(r.entries[0].state, 'running');
+  assert.equal(r.entries[0].state, 'running'); assert.ok(r.dayStart, 'the day starts when the report is opened');
+  assert.equal((await patch(bde2, r.id, { dayStart: '2000-01-01T00:00:00Z' })).body.record.dayStart, r.dayStart, 'the start time cannot be changed');
   assert.equal((await patch(bde2, r.id, { status: 'submitted' })).status, 400, 'a running task blocks submit');
   const done = await patch(bde2, r.id, { entries: [{ ...r.entries[0], state: 'done', end: new Date().toISOString(), mins: 42 }] });
   assert.equal(done.body.record.entries[0].mins, 42); assert.equal(done.body.record.entries[0].state, undefined);
-  assert.equal((await patch(bde2, r.id, { status: 'submitted' })).status, 200);
+  const fin = await patch(bde2, r.id, { status: 'submitted' });
+  assert.equal(fin.status, 200); assert.ok(fin.body.record.dayEnd, 'the day ends at submit');
 });
