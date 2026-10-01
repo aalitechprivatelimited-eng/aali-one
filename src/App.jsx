@@ -3,6 +3,7 @@ import { Routes, Route, NavLink, Navigate, useLocation, useParams } from 'react-
 import { boot, useStore, store, login, logout, http, list } from './api.js';
 import { Toaster, In, Field, attempt, toast } from './ui.jsx';
 import { TITLES, feedItems, forScope, diff, isManager, canAddPeople } from './lib.js';
+import { ThemeToggle } from './theme.jsx';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
 const Leads = lazy(() => import('./pages/Leads.jsx'));
@@ -51,7 +52,8 @@ function Login({ setup }) {
   }
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 16 }}>
-      <form className="card stack" style={{ width: 'min(400px,100%)', padding: 24 }} onSubmit={go}>
+      <form className="card stack" style={{ width: 'min(400px,100%)', padding: 24, position: 'relative' }} onSubmit={go}>
+        <div style={{ position: 'absolute', top: 30, right: 14 }}><ThemeToggle /></div>
         <div className="row"><img src="/icon.svg" alt="" width="40" height="40" /><div><h1>Aali One</h1><div className="small muted">Aali Group · sales, delivery and payments in one place</div></div></div>
         {setup && <div className="banner info">First time here. Create the administrator account.</div>}
         {setup && <Field label="Your name"><In value={f.name} onChange={up('name')} required autoComplete="name" /></Field>}
@@ -106,12 +108,12 @@ function Shell() {
           <div className="sec">Money</div><L to="/payments">Payments & receipts</L>
           <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L>{canAddPeople() && <L to="/settings/people">{me.isAdmin ? 'People & teams' : 'My team members'}</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
         </nav>
-        <div className="me"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b>{me.name}</b><div className="faint">{TITLES[me.title]}</div></div>
+        <div className="me"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b>{me.name}</b><div className="faint">{TITLES[me.title]}</div></div><ThemeToggle />
           <button className="btn ghost sm" type="button" onClick={logout}>Sign out</button></div>
       </aside>
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
       <div style={{ minWidth: 0 }}>
-        <div className="mobilebar"><button className="btn sm" type="button" onClick={() => setOpen(true)} aria-label="Open menu">☰ Menu</button><b style={{ fontFamily: 'var(--doc)' }}>Aali One</b></div>
+        <div className="mobilebar"><button className="btn sm" type="button" onClick={() => setOpen(true)} aria-label="Open menu">☰ Menu</button><b style={{ fontFamily: 'var(--doc)' }} className="grow">Aali One</b><ThemeToggle /></div>
         <main className="main">
           <Suspense fallback={<div className="empty">Loading…</div>}>
             <Routes>

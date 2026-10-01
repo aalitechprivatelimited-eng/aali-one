@@ -3,6 +3,8 @@ import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
 import { useStore, store, http, saveSetting, setMe, upsertUser, poll } from '../api.js';
 import { settings, isManager, TITLES, TEAMS, uname, fmtDT, waLink, myJuniors, canAddPeople } from '../lib.js';
 import { Field, In, Sel, Area, Pill, Empty, Modal, attempt, toast } from '../ui.jsx';
+import { TITLE_TEAM } from '../../shared/defaults.js';
+import { ThemeToggle } from '../theme.jsx';
 
 export default function Settings() {
   useStore(); const admin = store.me.isAdmin;
@@ -29,47 +31,79 @@ function Me() {
     <h3>Change password</h3><Field label="Current password"><In type="password" value={f.currentPassword} onChange={(e) => setF({ ...f, currentPassword: e.target.value })} autoComplete="current-password" /></Field>
     <Field label="New password (8+ characters)"><In type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="new-password" /></Field>
     <button className="btn primary" type="button" onClick={async () => { const r = await attempt(() => http('PATCH', '/users/' + me.id, { name: f.name, phone: f.phone, ...(f.password ? { password: f.password, currentPassword: f.currentPassword } : {}) }), 'Saved.'); if (r) { setMe(r.user); setF({ ...f, password: '', currentPassword: '' }); } }}>Save</button>
+    <div className="row"><span className="lbl">Look</span><ThemeToggle label /></div>
     <p className="small muted">Install on your phone: open Aali One in Chrome → menu → “Add to Home screen”.</p></div>;
 }
 
 const TEAM_ROLES = { sales: ['salesmgr', 'bde'], it: ['itmgr', 'itlead', 'dev'], management: ['ops', 'cs', 'chairman'] };
 const TEAM_NOTE = { sales: 'Sales Manager and BDEs. They work on leads, deals, quotations and payments.', it: 'IT Manager, Team Lead and developers. They deliver the projects.', management: 'Operations Manager, Company Secretary and Chairman. They see every department.' };
+// What each role can see and do, in plain words. Shown next to every person and when a role is chosen.
+const ACCESS = {
+  bde: ['Works on own leads, deals, quotations and payments', 'Writes a daily report; sees only their own'],
+  salesmgr: ['Sees the whole Sales team’s work', 'Reads and reviews Sales daily reports', 'Approves discounts; adds BDEs', 'Writes a daily report'],
+  dev: ['Works on own tasks and projects', 'Writes a daily report; sees only their own'],
+  itlead: ['Leads projects and their tasks', 'Writes a daily report', 'Reads developers’ reports only when the Operations Manager switches that on'],
+  itmgr: ['Sees the whole IT team’s work', 'Reads and reviews IT daily reports', 'Approves early starts; adds Team Leads and developers', 'Writes a daily report'],
+  ops: ['Sees every department', 'Reads all daily reports', 'Controls the Team Lead report switch', 'Does not write a daily report'],
+  cs: ['Sees every department', 'Reads all daily reports', 'Does not write a daily report'],
+  chairman: ['Sees every department', 'Reads all daily reports and can remark', 'Does not write a daily report'],
+  admin: ['Sees every department'],
+};
+const ADMIN_ACCESS = 'Admin: adds people in any team, changes settings, sends back or deletes reports, opens the recycle bin';
+const accessOf = (u) => [...(ACCESS[u.title] || []), ...(u.isAdmin ? [ADMIN_ACCESS] : [])];
 const newPassword = () => { const a = new Uint32Array(2); crypto.getRandomValues(a); return 'Aali-' + [...a].map((n) => n.toString(36)).join('').slice(0, 9); };
+// Pick a role by reading what it can do, instead of a bare dropdown.
+function RolePicker({ roles, value, onChange }) {
+  return <div className="roles" role="radiogroup" aria-label="Role">{roles.map((k) => <label key={k} className={'rolecard' + (value === k ? ' on' : '')}>
+    <input type="radio" name="role" checked={value === k} onChange={() => onChange(k)} /><div><b>{TITLES[k]}</b> <span className="small muted">· {TEAMS[TITLE_TEAM[k]]} team</span>
+      <ul>{ACCESS[k].map((x) => <li key={x}>{x}</li>)}</ul></div></label>)}</div>;
+}
 // People are added here, team by team. Nothing needs to be done in the database.
 function People() {
-  const [add, setAdd] = useState(null), [pw, setPw] = useState(null), [made, setMade] = useState(null), [busy, setBusy] = useState(false);
+  const [add, setAdd] = useState(null), [pw, setPw] = useState(null), [made, setMade] = useState(null), [busy, setBusy] = useState(false), [edit, setEdit] = useState(null);
   const me = store.me, adm = me.isAdmin, jun = myJuniors(), can = (u) => adm || (u.id !== me.id && jun.includes(u.title) && !u.isAdmin);
   if (!canAddPeople()) return <Empty>Only an admin or a department manager can add people.</Empty>;
   const patch = (u, data, ok) => attempt(async () => upsertUser((await http('PATCH', '/users/' + u.id, data)).user), ok);
+  const rolesFor = (team) => (adm ? TEAM_ROLES[team] : jun);
   async function save() {
     setBusy(true); const r = await attempt(() => http('POST', '/users', add)); setBusy(false);
     if (r) { upsertUser(r.user); setMade({ ...r.user, password: add.password }); setAdd(null); }
   }
+  async function saveEdit() {
+    setBusy(true); const ok = await patch(edit.u, { title: edit.title, ...(adm && edit.u.id !== me.id ? { isAdmin: edit.isAdmin } : {}) }, 'Access changed.'); setBusy(false); if (ok) setEdit(null);
+  }
   const loginText = (u) => `Hi ${u.name.split(' ')[0]}, your Aali One login:\n${location.origin}\nEmail: ${u.email}\nPassword: ${u.password}\nPlease change the password after you sign in (Settings → My profile).`;
   return <div className="stack gap16">
-    <p className="small muted" style={{ margin: 0 }}>{adm ? 'Add each person under their team. The role decides what they see: a manager sees the whole team; the Operations Manager, Company Secretary and Chairman see every department.' : 'Add and look after the members of your own team. Other teams and manager roles are handled by the Operations Manager or Company Secretary.'}</p>
+    <p className="small muted" style={{ margin: 0 }}>{adm ? 'Add each person under their team. Beside every name you can read exactly what that person can see and do.' : 'Add and look after the members of your own team. Other teams and manager roles are handled by the Operations Manager or Company Secretary.'}</p>
     {Object.entries(TEAMS).filter(([team]) => adm || team === me.team).map(([team, label]) => { const us = store.users.filter((u) => u.team === team).sort((x, y) => TEAM_ROLES[team].indexOf(x.title) - TEAM_ROLES[team].indexOf(y.title) || x.name.localeCompare(y.name));
       return <section key={team} className="stack" style={{ gap: 8 }}>
         <div className="row between"><div><h2 style={{ margin: 0 }}>{label} team <span className="small muted">{us.filter((u) => u.active).length} active</span></h2><span className="small muted">{TEAM_NOTE[team]}</span></div>
-          <button className="btn primary" type="button" onClick={() => setAdd({ team, title: (adm ? TEAM_ROLES[team] : jun).at(-1), password: newPassword() })}>+ Add {label} member</button></div>
-        {us.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Email (login)</th><th>Role</th><th>Mobile</th><th>Admin</th><th>Active</th><th /></tr></thead><tbody>
-          {us.map((u) => <tr key={u.id} style={{ opacity: u.active ? 1 : 0.55 }}><td><b>{u.name}</b></td><td>{u.email}</td>
-            <td><Sel value={u.title} disabled={!can(u)} onChange={(v) => patch(u, { title: v }, 'Role changed.')} style={{ minWidth: 150 }} options={!adm ? (can(u) ? jun : [u.title]).map((k) => [k, TITLES[k]]) : Object.entries(TEAMS).flatMap(([t, l]) => TEAM_ROLES[t].map((k) => [k, t === team ? TITLES[k] : `${TITLES[k]} (move to ${l})`])).concat(u.title === 'admin' ? [['admin', TITLES.admin]] : [])} /></td>
-            <td>{u.phone || '—'}</td><td><input type="checkbox" aria-label="Admin" checked={u.isAdmin} disabled={!adm || u.id === store.me.id} onChange={(e) => patch(u, { isAdmin: e.target.checked })} /></td>
-            <td><input type="checkbox" aria-label="Active" checked={u.active} disabled={!can(u) || u.id === store.me.id} onChange={(e) => patch(u, { active: e.target.checked }, e.target.checked ? 'Switched on.' : 'Switched off. They can no longer sign in.')} /></td>
-            <td>{can(u) && <button className="btn sm" type="button" onClick={() => setPw({ ...u, p: newPassword() })}>Set password</button>}</td></tr>)}</tbody></table></div>
+          <button className="btn primary" type="button" onClick={() => setAdd({ team, title: rolesFor(team).at(-1), password: newPassword() })}>+ Add {label} member</button></div>
+        {us.length ? <div className="tbl"><table><thead><tr><th>Person</th><th>Role</th><th>What they can see and do</th><th>Active</th><th /></tr></thead><tbody>
+          {us.map((u) => <tr key={u.id} style={{ opacity: u.active ? 1 : 0.55 }}>
+            <td><b>{u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}<div className="small muted">{u.email}</div><div className="small muted num">{u.phone || 'No mobile'}</div></td>
+            <td><Pill k="gold">{TITLES[u.title] || u.title}</Pill>{u.isAdmin && <> <Pill k="info">Admin</Pill></>}</td>
+            <td><ul className="access">{accessOf(u).map((x) => <li key={x}>{x}</li>)}</ul></td>
+            <td><input type="checkbox" aria-label={`${u.name} can sign in`} checked={u.active} disabled={!can(u) || u.id === me.id} onChange={(e) => patch(u, { active: e.target.checked }, e.target.checked ? 'Switched on.' : 'Switched off. They can no longer sign in.')} /></td>
+            <td>{can(u) && <div className="row" style={{ justifyContent: 'flex-end' }}>{(adm || jun.length > 1) && <button className="btn sm" type="button" onClick={() => setEdit({ u, title: u.title, isAdmin: u.isAdmin })}>Change access</button>}
+              <button className="btn sm" type="button" onClick={() => setPw({ ...u, p: newPassword() })}>Set password</button></div>}</td></tr>)}</tbody></table></div>
           : <Empty>No one in the {label} team yet.</Empty>}
       </section>; })}
-    {add && <Modal title={`Add ${TEAMS[add.team]} member`} onClose={() => setAdd(null)} footer={<><button className="btn" type="button" onClick={() => setAdd(null)}>Cancel</button>
+    {add && <Modal wide title={`Add ${TEAMS[add.team]} member`} onClose={() => setAdd(null)} footer={<><button className="btn" type="button" onClick={() => setAdd(null)}>Cancel</button>
       <button className="btn primary" type="button" disabled={busy || !add.name?.trim() || !add.email?.trim() || (add.password || '').length < 8} onClick={save}>{busy ? 'Adding…' : 'Add member'}</button></>}>
-      <div className="form"><Field label="Team"><Sel value={add.team} disabled={!adm} onChange={(v) => setAdd({ ...add, team: v, title: TEAM_ROLES[v].at(-1) })} options={TEAMS} /></Field>
-        <Field label="Role"><Sel value={add.title} onChange={(v) => setAdd({ ...add, title: v })} options={(adm ? TEAM_ROLES[add.team] : jun).map((k) => [k, TITLES[k]])} /></Field>
+      <div className="form">
         <Field label="Full name"><In value={add.name || ''} onChange={(e) => setAdd({ ...add, name: e.target.value })} autoFocus /></Field>
         <Field label="Mobile (for WhatsApp)"><In value={add.phone || ''} inputMode="tel" onChange={(e) => setAdd({ ...add, phone: e.target.value })} /></Field>
         <Field label="Email (this is their login)" full><In type="email" value={add.email || ''} onChange={(e) => setAdd({ ...add, email: e.target.value })} autoComplete="off" /></Field>
         <Field label="First password (8+ characters)" full hint="They can change it after signing in."><div className="row"><In className="in grow" value={add.password || ''} onChange={(e) => setAdd({ ...add, password: e.target.value })} autoComplete="new-password" />
           <button className="btn sm" type="button" onClick={() => setAdd({ ...add, password: newPassword() })}>New one</button></div></Field>
-        {adm && add.team === 'management' && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> Administrator (can change settings and add people)</label>}</div></Modal>}
+        <Field label={`Role in the ${TEAMS[add.team]} team – choose what this person should be able to do`} full><RolePicker roles={rolesFor(add.team)} value={add.title} onChange={(v) => setAdd({ ...add, title: v })} /></Field>
+        {adm && add.team === 'management' && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> <span><b>Also make them an admin</b><br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
+    {edit && <Modal wide title={`Access for ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Cancel</button>
+      <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin)} onClick={saveEdit}>Save access</button></>}>
+      <div className="stack">{(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">{TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
+        {TITLE_TEAM[edit.title] !== edit.u.team && <div className="banner">This moves {edit.u.name.split(' ')[0]} from the {TEAMS[edit.u.team]} team to the {TEAMS[TITLE_TEAM[edit.title]]} team.</div>}
+        {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin} disabled={edit.u.id === me.id} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
     {made && <Modal title={`${made.name} is added`} onClose={() => setMade(null)} footer={<button className="btn primary" type="button" onClick={() => setMade(null)}>Done</button>}>
       <div className="stack"><div className="banner ok">Added to the {TEAMS[made.team]} team as {TITLES[made.title]}. Share this login with them privately. The password is shown only now.</div>
         <textarea className="in" readOnly value={loginText(made)} style={{ minHeight: 120 }} />
