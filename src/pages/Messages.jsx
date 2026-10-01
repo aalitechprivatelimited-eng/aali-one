@@ -39,6 +39,7 @@ function Card({ u, text, sub }) {
 }
 export default function Messages() {
   useStore(); const me = store.me, all = isManager() ? activeUsers() : [me];
+  if (!me.isAdmin) return <Empty>WhatsApp messages are for management only.</Empty>;
   const cards = all.map((u) => ({ u, d: digest(u) })).filter((x) => x.d);
   const tops = activeUsers().filter((u) => isTop(u) && !u.isAdmin || ['ops', 'cs', 'chairman'].includes(u.title));
   return <>

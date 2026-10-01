@@ -108,7 +108,7 @@ function Shell() {
           <div className="sec">Delivery</div><L to="/projects">Projects</L><L to="/tasks">Tasks</L><L to="/support">Support</L>
           {canMoney() && <><div className="sec">Money</div><L to="/payments">Payments & receipts</L></>}
           {isTop() && <><div className="sec">Management</div><L to="/collab">Collaborations</L></>}
-          <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L>{canAddPeople() && <L to="/settings/people">{me.isAdmin ? 'People & teams' : 'My team members'}</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
+          <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L>{me.isAdmin && <L to="/messages">WhatsApp messages</L>}{canAddPeople() && <L to="/settings/people">{me.isAdmin ? 'People & teams' : 'My team members'}</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
         </nav>
         <div className="me"><div className="me-who"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b className="ell">{me.name}</b><div className="faint ell" title={desig(me)}>{desig(me)}</div><div className="faint ell">{me.company}</div></div></div>
           <div className="me-act"><ThemeToggle label /><button className="btn sm" type="button" onClick={logout}>Sign out</button></div></div>

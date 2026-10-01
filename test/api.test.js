@@ -172,7 +172,11 @@ test('managers add and look after members of their own team only', async () => {
   const sm = await login('sm@test.in'), it = await login('it@test.in');
   const mk = (c, title, email, extra = {}) => call('POST', '/users', { name: 'New ' + title, email, password: 'password123', title, company: 'Aali Conssultancy', designation: 'Member', ...extra }, c);
   assert.equal((await mk(bde1, 'bde', 'x1@test.in')).status, 403, 'a BDE cannot add people');
-  const nb = await mk(sm, 'bde', 'nb@test.in'); assert.equal(nb.status, 200); assert.equal(nb.body.user.team, 'sales');
+  const nb = await mk(sm, 'bde', 'nb@test.in', { company: 'Aali Builders' }); assert.equal(nb.status, 200); assert.equal(nb.body.user.team, 'sales');
+  assert.equal(nb.body.user.company, 'Aali Conssultancy', 'a manager cannot choose another company');
+  for (const change of [{ company: 'AaliTech' }, { designation: 'Senior BDE' }, { firstName: 'X', surname: 'Y' }, { title: 'bde' }])
+    assert.equal((await call('PATCH', '/users/' + nb.body.user.id, change, sm)).status, 403, 'only management changes ' + Object.keys(change)[0]);
+  assert.equal((await call('PATCH', '/users/' + nb.body.user.id, { company: 'AaliTech', designation: 'Senior BDE' }, admin)).body.user.company, 'AaliTech');
   assert.equal((await mk(sm, 'dev', 'x2@test.in')).status, 403, 'not into another team');
   assert.equal((await mk(sm, 'salesmgr', 'x3@test.in')).status, 403, 'not another manager');
   assert.equal((await mk(sm, 'bde', 'x4@test.in', { isAdmin: true })).status, 403, 'not an admin');

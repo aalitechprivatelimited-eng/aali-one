@@ -213,7 +213,8 @@ export async function handle(req, res) {
       if (!fullName || !email || String(b.password || '').length < 8) throw new Rule('Enter name, email and a password of at least 8 characters.');
       if (b.title && !TITLE_TEAM[b.title]) throw new Rule('Choose a role from the list.');
       if (!admin && !(juniors.includes(b.title) && !b.isAdmin)) throw new Rule(juniors.length ? 'You can add members to your own team only.' : 'Only an admin or a department manager can add people.', 403);
-      const team = TITLE_TEAM[b.title] || 'sales', company = team === 'management' ? GROUP : b.company;
+      // A department manager adds people into their own company; only management chooses or changes the company.
+      const team = TITLE_TEAM[b.title] || 'sales', company = team === 'management' ? GROUP : admin ? b.company : COMPANIES.includes(user.company) ? user.company : COMPANIES[0];
       if (team !== 'management' && !COMPANIES.includes(company)) throw new Rule('Choose the company this person works for.');
       const designation = String(b.designation || '').trim().slice(0, 80);
       if (!designation) throw new Rule('Enter the designation.');
@@ -232,7 +233,8 @@ export async function handle(req, res) {
       if (u.removed_at) throw new Rule('This person was removed. Restore them from the Staff register first.');
       const lead = !admin && !self && juniors.includes(u.title) && !u.is_admin; // a manager looking after their own team member
       if (!admin && !self && !lead) throw new Rule('You can change members of your own team only.', 403);
-      if (lead && b.title && !juniors.includes(b.title)) throw new Rule('You can give roles of your own team only.', 403);
+      // A department manager can set a password and switch a member off or on. Name, designation, company and access are for management.
+      if (lead && ['title', 'company', 'designation', 'firstName', 'surname', 'name', 'phone'].some((k) => b[k] !== undefined)) throw new Rule('Only management can change a person\'s details, company or access.', 403);
       let nSurname = u.surname || '';
       if (b.firstName !== undefined && (admin || lead || self)) { const fn = String(b.firstName).trim().slice(0, 60); nSurname = String(b.surname || '').trim().slice(0, 60);
         if (!fn || !nSurname) throw new Rule('Enter both the name and the surname.'); b.name = `${fn} ${nSurname}`; }
