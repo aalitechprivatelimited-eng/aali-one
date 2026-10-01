@@ -343,8 +343,8 @@ function Team() {
     {!rows.length && <Empty>No people in this view. Add people in Settings → People.</Empty>}
     {view === 'week' ? <Week people={people} end={date} pick={(d, id) => { setDate(d); setView('day'); setOpen(id); }} />
       : <div className={isTop(me) ? 'stack gap16' : 'split'}>
-        {/* Management sees the departments side by side (IT | Sales); a department manager keeps the single list with the side panel. */}
-        <div className={isTop(me) ? 'deptcols' : 'stack gap16'}>{(isTop(me) ? ['it', 'sales', 'management'] : ['sales', 'it', 'management']).map((t) => { const g = rows.filter((x) => x.u.team === t); if (!g.length) return null;
+        {/* Management sees the departments side by side (Sales | IT); a department manager keeps the single list with the side panel. */}
+        <div className={isTop(me) ? 'deptcols' : 'stack gap16'}>{['sales', 'it', 'management'].map((t) => { const g = rows.filter((x) => x.u.team === t); if (!g.length) return null;
           const parts = [['Manager', g.filter((x) => isManager(x.u))], ['Team', g.filter((x) => !isManager(x.u))]].filter((x) => x[1].length), cs = g.reduce((n, x) => n + callStats(x.r).n, 0);
           return <section key={t} className={isTop(me) ? 'deptcol' : ''}><div className="row between" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{TEAMS[t]} Team</h2>
             <span className="small muted">{g.filter((x) => x.r).length} of {g.length} present · {g.filter((x) => x.r?.status === 'submitted').length} submitted{t === 'sales' ? ` · ${cs} calls` : ''}</span></div>
