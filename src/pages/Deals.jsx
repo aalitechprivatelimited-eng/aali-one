@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore, list, get, create, update, store } from '../api.js';
-import { settings, uname, fmtDate, today, addDays, inr, stageLabel, stageProb, isManager, dealReceived, diff, clientName } from '../lib.js';
+import { settings, uname, fmtDate, today, addDays, inr, stageLabel, stageProb, isManager, dealReceived, diff, clientName, canMoney } from '../lib.js';
 import { Modal, Field, In, Sel, Area, Pill, Due, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, People, attempt, toast, Seg, Avs } from '../ui.jsx';
 import { Activities } from '../activity.jsx';
 import { services } from './Leads.jsx';
@@ -102,7 +102,7 @@ function DealView({ id }) {
   return (
     <>
       <div className="topbar"><h1>{d.title} <small>{stageLabel(d.stage)} · {stageProb(d.stage)}% chance · {inr(d.value)}</small></h1>
-        <div className="row"><Link className="btn" to="/deals">Pipeline</Link><Link className="btn" to={`/quotes/new?deal=${id}`}>+ Quotation</Link>
+        <div className="row"><Link className="btn" to="/deals">Pipeline</Link>{canMoney() && <Link className="btn" to={`/quotes/new?deal=${id}`}>+ Quotation</Link>}
           {d.stage !== 'lost' && d.stage !== 'won' && <button className="btn" type="button" onClick={() => setLost(true)}>Mark lost</button>}
           {d.stage !== 'won' && <button className="btn primary" type="button" onClick={() => set({ stage: 'won' }, 'Deal won! Write the handoff note for IT below.').then(() => setTab('handoff'))}>Mark won</button>}</div></div>
       {d.repeatPending && <div className="banner" style={{ marginBottom: 12 }}><b>This client asked again about {d.service}.</b> Ask them: earlier enquiry or new requirement?
@@ -139,9 +139,9 @@ function DealView({ id }) {
               <button className="btn sm ghost" type="button" onClick={() => set({ cadence: null, _note: 'Follow-up plan stopped' })}>Stop plan</button></> : null; })()
               : <div className="row">{settings().cadences.map((c) => <button key={c.id} className="btn sm" type="button" onClick={() => set({ cadence: { id: c.id, start: today(), done: [] }, _note: `Started follow-up plan: ${c.name}` }, 'Plan started. Steps appear in Today.')}>Start: {c.name}</button>)}</div>}
           </div>
-          <div className="card stack"><h2>Quotations</h2>
+          {canMoney() && <div className="card stack"><h2>Quotations</h2>
             {quotes.length ? quotes.map((q) => <Link key={q.id} to={'/quotes/' + q.id} className="row small"><b className="num">{q.number}</b><span>{inr(q.totals?.total)}</span><Pill k={q.status === 'accepted' ? 'ok' : q.status === 'needs approval' ? 'warn' : ''}>{q.status}</Pill></Link>) : <p className="small muted" style={{ margin: 0 }}>No quotation yet.</p>}
-            <Link className="btn sm" to={`/quotes/new?deal=${id}`}>+ New quotation</Link></div>
+            <Link className="btn sm" to={`/quotes/new?deal=${id}`}>+ New quotation</Link></div>}
           <div className="card stack"><h2>Time in each stage</h2>{days.map((h, i) => <div key={i} className="row small"><span className="grow">{stageLabel(h.stage)}</span><span className="num">{fmtDate(h.at.slice(0, 10))}</span><span className="num">{h.days} days</span></div>)}</div>
         </div></div>}
       {tab === 'handoff' && <Handoff d={d} set={set} project={project} pays={pays} received={received} client={client} />}
@@ -168,8 +168,8 @@ function Handoff({ d, set, project, pays, received, client }) {
       scope: f.scope, lead: '', people: [d.owner, ...(d.people || [])].filter(Boolean), priority: !!d.priority, template: tpl?.name || '' }));
     if (!p) return;
     if (tpl) for (const t of tpl.tasks) await create('task', { title: t.title, projectId: p.record.id, due: addDays(today(), t.days), milestone: !!t.milestone, team: 'it', status: 'todo', priority: 'medium' });
-    if (!h.advance && !pays.some((x) => x.kind === 'advance')) await create('payment', { title: 'Advance', kind: 'advance', clientId: d.clientId, dealId: d.id, amount: Math.round((+d.value || 0) / 2), due: addDays(today(), 2), owner: d.owner, repeat: 'none' });
-    toast(h.advance ? 'Handed over. The IT Manager will assign a lead.' : 'Handed over. It waits for the advance – a “Collect advance” payment was added for the BDE.');
+    if (canMoney() && !h.advance && !pays.some((x) => x.kind === 'advance')) await create('payment', { title: 'Advance', kind: 'advance', clientId: d.clientId, dealId: d.id, amount: Math.round((+d.value || 0) / 2), due: addDays(today(), 2), owner: d.owner, repeat: 'none' });
+    toast(h.advance ? 'Handed over. The IT Manager will assign a lead.' : canMoney() ? 'Handed over. It waits for the advance – a “Collect advance” payment was added.' : 'Handed over. It waits for the advance. The Sales Manager records the payment.');
     nav('/projects/' + p.record.id);
   }
   return <div className="grid2">
@@ -182,13 +182,13 @@ function Handoff({ d, set, project, pays, received, client }) {
       <div className={'banner ' + (h.advance ? 'ok' : '')}>{h.advance ? 'Advance received – IT can start work.' : 'No advance yet. IT can see the project but cannot start work (not even planning) until the advance receipt is made.'}</div>
       {!project && <button className="btn primary" type="button" onClick={handOver}>Save & hand over to IT</button>}
     </div>
-    <div className="card stack"><h2>Payment plan</h2>
+    {canMoney() ? <div className="card stack"><h2>Payment plan</h2>
       <div className="small">Received <b className="num">{inr(received)}</b> of <b className="num">{inr(d.value)}</b>{+d.value > received ? <> · balance <b className="num">{inr(d.value - received)}</b></> : null}</div>
       {pays.map((p) => <div key={p.id} className="row small"><span className="grow">{p.title}</span><span className="num">{inr(p.amount)}</span><Due date={p.status === 'paid' ? '' : p.due} /><Pill k={p.status === 'paid' ? 'ok' : ''}>{p.status === 'paid' ? 'Paid' : `Paid ${inr(p.paid || 0)}`}</Pill></div>)}
       <div className="row"><button className="btn sm" type="button" onClick={() => setPay({ title: 'Balance', kind: 'final', amount: Math.max(0, (+d.value || 0) - received), due: addDays(today(), 30) })}>+ Payment</button>
         <button className="btn sm" type="button" onClick={() => setPay({ title: 'Website maintenance', kind: 'maintenance', amount: 1500, due: addDays(today(), 30), repeat: 'monthly' })}>+ Maintenance fee</button>
         <Link className="btn sm" to="/payments">Record a payment</Link></div>
-    </div>
+    </div> : <div className="card stack"><h2>Payments</h2><p className="small muted" style={{ margin: 0 }}>Quotations, receipts and payments for this deal are handled by the Sales Manager and management.</p></div>}
     {pay && <Modal title="Add to payment plan" onClose={() => setPay(null)} footer={<button className="btn primary" type="button" onClick={async () => (await attempt(() => create('payment', { ...pay, amount: +pay.amount || 0, clientId: d.clientId, dealId: d.id, owner: d.owner, repeat: pay.repeat || 'none' }), 'Added.')) && setPay(null)}>Add</button>}>
       <div className="form">
         <Field label="For"><In value={pay.title} onChange={(e) => setPay({ ...pay, title: e.target.value })} /></Field>

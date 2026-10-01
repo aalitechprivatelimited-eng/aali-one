@@ -21,6 +21,9 @@ export const canSeeReport = (u, d, leadSees = false) => !!u && (d.owner === u.id
 export const NO_REPORT_TITLES = ['chairman', 'ops', 'cs', 'admin']; // top management reads reports, it does not write them
 // Send back / delete: the department manager, or an admin (Ops Manager, Company Secretary). The Chairman reads and remarks only.
 const canRunReport = (u, d) => u.is_admin || (d.owner !== u.id && isManager(u) && !TOP_TITLES.includes(u.title) && u.team === d.team);
+// Money papers – quotations, invoices, receipts and payments – are for the Sales Manager and management only.
+export const MONEY = ['quote', 'invoice', 'receipt', 'payment'];
+export const canMoney = (u) => !!u && (u.is_admin || ['salesmgr', 'ops', 'cs', 'chairman', 'admin'].includes(u.title));
 // Collaborations (colleges and employers): top management reads; the Operations Manager, Company Secretary and admins change them.
 export const canEditCollab = (u) => !!u && (u.is_admin || ['ops', 'cs'].includes(u.title));
 const log = (d, by, text) => { d.log = [{ at: new Date().toISOString(), by, text }, ...(d.log || [])].slice(0, 80); };

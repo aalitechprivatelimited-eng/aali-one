@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore, list, get, create, update, remove, store } from '../api.js';
-import { uname, fmtDate, inr, stageLabel, pStageLabel, isManager, mobile10 } from '../lib.js';
+import { uname, fmtDate, inr, stageLabel, pStageLabel, isManager, mobile10, canMoney } from '../lib.js';
 import { Modal, Field, In, Area, Pill, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, attempt, toast } from '../ui.jsx';
 import { useId } from '../App.jsx';
 
@@ -56,8 +56,8 @@ function ClientView({ id }) {
     <div className="topbar"><h1>{c.name} <small>{c.city}{c.gstin ? ' · GSTIN ' + c.gstin : ''}</small></h1>
       <div className="row"><Link className="btn" to="/clients">All clients</Link><Link className="btn" to={`/support?client=${id}`}>+ Support request</Link>{isManager() && <button className="btn" type="button" onClick={() => setMerge(true)}>Merge duplicate</button>}</div></div>
     <div className="stats">
-      <div className="stat"><span className="l">Received</span><span className="v">{inr(m.received)}</span></div>
-      <div className={'stat' + (m.due ? ' warm' : '')}><span className="l">Still due</span><span className="v">{inr(m.due)}</span></div>
+      {canMoney() && <div className="stat"><span className="l">Received</span><span className="v">{inr(m.received)}</span></div>}
+      {canMoney() && <div className={'stat' + (m.due ? ' warm' : '')}><span className="l">Still due</span><span className="v">{inr(m.due)}</span></div>}
       <div className="stat"><span className="l">Deals</span><span className="v">{deals.length}</span></div>
       <div className="stat"><span className="l">Rating</span><span className="v">{m.rating ? m.rating.toFixed(1) + ' ★' : '—'}</span></div>
     </div>
@@ -79,14 +79,14 @@ function ClientView({ id }) {
       <Sec title="Leads & deals" empty={!deals.length && !leads.length ? 'None yet.' : ''}>
         {leads.map((l) => <Link key={l.id} to={'/leads/' + l.id} className="row small"><Pill>Lead</Pill><b>{l.name}</b><span>{l.service}</span><span className="muted">{l.status}</span></Link>)}
         {deals.map((d) => <Link key={d.id} to={'/deals/' + d.id} className="row small"><Pill k="gold">Deal</Pill><b>{d.title}</b><span className="num">{inr(d.value)}</span><span className="muted">{stageLabel(d.stage)}</span></Link>)}</Sec>
-      <Sec title="Quotations & invoices" empty={!quotes.length && !invoices.length ? 'None yet.' : ''}>
+      {canMoney() && <Sec title="Quotations & invoices" empty={!quotes.length && !invoices.length ? 'None yet.' : ''}>
         {quotes.map((q) => <Link key={q.id} to={'/quotes/' + q.id} className="row small"><b className="num">{q.number}</b><span className="num">{inr(q.totals?.total)}</span><Pill>{q.status}</Pill></Link>)}
-        {invoices.map((q) => <Link key={q.id} to={'/payments/invoice/' + q.id} className="row small"><b className="num">{q.number}</b><span className="num">{inr(q.totals?.total)}</span><Pill k="info">Invoice</Pill></Link>)}</Sec>
+        {invoices.map((q) => <Link key={q.id} to={'/payments/invoice/' + q.id} className="row small"><b className="num">{q.number}</b><span className="num">{inr(q.totals?.total)}</span><Pill k="info">Invoice</Pill></Link>)}</Sec>}
       <Sec title="Projects" empty={!projects.length ? 'None yet.' : ''}>{projects.map((p) => <Link key={p.id} to={'/projects/' + p.id} className="row small"><b>{p.name}</b><Pill>{pStageLabel(p.stage)}</Pill>{p.signoffId && <Pill k="ok">Signed off</Pill>}</Link>)}
         {signoffs.map((s) => <div key={s.id} className="small">Sign-off <b className="num">{s.certNo}</b> by {s.signerName} · {'★'.repeat(+s.rating || 0)} {s.ratingComment}</div>)}</Sec>
-      <Sec title="Payments" empty={!pays.length && !receipts.length ? 'None yet.' : ''}>
+      {canMoney() && <Sec title="Payments" empty={!pays.length && !receipts.length ? 'None yet.' : ''}>
         {pays.map((p) => <div key={p.id} className="row small"><span className="grow">{p.title}</span><span className="num">{inr(p.amount)}</span><Pill k={p.status === 'paid' ? 'ok' : ''}>{p.status === 'paid' ? 'Paid' : 'Due ' + fmtDate(p.due)}</Pill></div>)}
-        {receipts.map((r) => <Link key={r.id} to={'/payments/receipt/' + r.id} className="row small"><b className="num">{r.number}</b><span className="num">{inr(r.totals?.received)}</span><span className="muted">{fmtDate(r.date)}</span></Link>)}</Sec>
+        {receipts.map((r) => <Link key={r.id} to={'/payments/receipt/' + r.id} className="row small"><b className="num">{r.number}</b><span className="num">{inr(r.totals?.received)}</span><span className="muted">{fmtDate(r.date)}</span></Link>)}</Sec>}
       <Sec title="Support requests" empty={!tickets.length ? 'None.' : ''}>{tickets.map((t) => <div key={t.id} className="row small"><b className="num">{t.number}</b><span className="grow">{t.title}</span><Pill k={t.status === 'resolved' ? 'ok' : 'warn'}>{t.status}</Pill></div>)}</Sec>
       <Sec title="Files"><Attachments value={c.files || []} onChange={(files) => set({ files })} /></Sec>
       <Sec title="Comments"><Comments relType="client" relId={id} /></Sec>

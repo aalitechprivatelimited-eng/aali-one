@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list } from './api.js';
 import { Toaster, In, Field, attempt, toast } from './ui.jsx';
-import { TITLES, feedItems, forScope, diff, isManager, isTop, canAddPeople, desig } from './lib.js';
+import { TITLES, feedItems, forScope, diff, isManager, isTop, canAddPeople, canMoney, desig } from './lib.js';
 import { ThemeToggle } from './theme.jsx';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
@@ -104,9 +104,9 @@ function Shell() {
         <div className="brand"><img src="/icon.svg" alt="" /><div><b>Aali One</b><span>Aali Group</span></div></div>
         <nav className="nav">
           <L to="/" cnt={late}>Today</L><L to="/daily" cnt={toReview}>Daily reports</L><L to="/inbox" cnt={unread}>Notifications</L>{isManager() && <L to="/approvals" cnt={pending}>Approvals</L>}
-          <div className="sec">Sales</div><L to="/leads">Leads & enquiries</L><L to="/deals">Deals pipeline</L><L to="/clients">Clients</L><L to="/quotes">Quotations</L>
+          <div className="sec">Sales</div><L to="/leads">Leads & enquiries</L><L to="/deals">Deals pipeline</L><L to="/clients">Clients</L>{canMoney() && <L to="/quotes">Quotations</L>}
           <div className="sec">Delivery</div><L to="/projects">Projects</L><L to="/tasks">Tasks</L><L to="/support">Support</L>
-          <div className="sec">Money</div><L to="/payments">Payments & receipts</L>
+          {canMoney() && <><div className="sec">Money</div><L to="/payments">Payments & receipts</L></>}
           {isTop() && <><div className="sec">Management</div><L to="/collab">Collaborations</L></>}
           <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L>{canAddPeople() && <L to="/settings/people">{me.isAdmin ? 'People & teams' : 'My team members'}</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
         </nav>

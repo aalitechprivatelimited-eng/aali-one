@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
-import { useStore, store, http, saveSetting, setMe, upsertUser, dropUser, poll } from '../api.js';
+import { useStore, store, http, saveSetting, setMe, upsertUser, poll } from '../api.js';
 import { settings, isManager, TITLES, TEAMS, uname, fmtDT, waLink, myJuniors, canAddPeople, COMPANIES, GROUP, desig } from '../lib.js';
 import { Field, In, Sel, Area, Pill, Empty, Modal, attempt, toast } from '../ui.jsx';
 import { TITLE_TEAM } from '../../shared/defaults.js';
@@ -13,11 +13,11 @@ export default function Settings() {
     <div className="topbar"><h1>Settings</h1></div>
     <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{canAddPeople() && <L to="people">{admin ? 'People & teams' : 'My team members'}</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales & report setup</L>}
       {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{admin && <L to="projects">Project templates</L>}<L to="connections">Connections</L>
-      {isManager() && <L to="audit">Audit log</L>}{admin && <L to="trash">Recycle bin</L>}{admin && <L to="data">Sample data</L>}<L to="help">Help</L></div>
+      {isManager() && <L to="audit">Audit log</L>}{admin && <L to="staff">Staff register</L>}{admin && <L to="trash">Recycle bin</L>}{admin && <L to="data">Sample data</L>}<L to="help">Help</L></div>
     <Routes>
       <Route path="me" element={<Me />} /><Route path="people" element={<People />} /><Route path="business" element={<Business />} /><Route path="sales" element={<Sales />} />
       <Route path="templates" element={<Templates />} /><Route path="plans" element={<Plans />} /><Route path="projects" element={<ProjTemplates />} /><Route path="connections" element={<Connections />} />
-      <Route path="audit" element={<Audit />} /><Route path="trash" element={<Trash />} /><Route path="data" element={<Data />} /><Route path="help" element={<Help />} /><Route path="*" element={<Navigate to="me" replace />} />
+      <Route path="audit" element={<Audit />} /><Route path="staff" element={<Staff />} /><Route path="trash" element={<Trash />} /><Route path="data" element={<Data />} /><Route path="help" element={<Help />} /><Route path="*" element={<Navigate to="me" replace />} />
     </Routes>
   </>;
 }
@@ -66,21 +66,6 @@ function Confetti() {
   return <div className="confetti" aria-hidden="true">{bits.map((b, i) => <i key={i} style={{ left: b.left + '%', width: b.size, height: b.round ? b.size : b.size * 0.45, borderRadius: b.round ? '50%' : 2, background: b.color,
     animationDelay: b.delay + 's', animationDuration: b.time + 's', '--turn': b.turn + 'deg', '--drift': b.drift + 'px' }} />)}</div>;
 }
-// One button per person that opens every action for them.
-function Actions({ u, self, adm, on }) {
-  const [open, setOpen] = useState(false);
-  useEffect(() => { if (!open) return; const close = () => setOpen(false); const t = setTimeout(() => addEventListener('click', close), 0); return () => { clearTimeout(t); removeEventListener('click', close); }; }, [open]);
-  const Item = ({ a, children, danger, hint }) => <button type="button" role="menuitem" className={'menu-i' + (danger ? ' danger' : '')} onClick={() => { setOpen(false); on(a); }}><b>{children}</b>{hint && <span>{hint}</span>}</button>;
-  return <div className="menu-wrap"><button className="btn sm" type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>Actions ▾</button>
-    {open && <div className="menu" role="menu">
-      <Item a="edit" hint="Name, designation, company, access">Edit details</Item>
-      <Item a="password" hint="Give them a new password">Set new password</Item>
-      {u.phone && <Item a="whatsapp" hint="Send the link and their login email">Send login on WhatsApp</Item>}
-      {!self && <Item a="signout" hint="For a lost or shared phone">Sign out everywhere</Item>}
-      {!self && (u.active ? <Item a="off" danger hint="They left: block sign-in, keep their work">Deactivate</Item> : <Item a="on" hint="Let them sign in again">Reactivate</Item>)}
-      {!self && adm && <Item a="remove" danger hint="Only for a test entry or a mistake">Remove from the system</Item>}
-    </div>}</div>;
-}
 // Pick a role by reading what it can do, instead of a bare dropdown.
 function RolePicker({ roles, value, onChange }) {
   return <div className="roles" role="radiogroup" aria-label="Access level">{roles.map((k) => <label key={k} className={'rolecard' + (value === k ? ' on' : '')}>
@@ -96,18 +81,17 @@ function People() {
   const rolesFor = (team) => (adm ? TEAM_ROLES[team] : jun);
   const [ask, setAsk] = useState(null); // a confirm window: { kind: 'off' | 'remove', u, work }
   async function act(a, u) {
-    if (a === 'edit') setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '', firstName: u.firstName || u.name, surname: u.surname || '' });
-    if (a === 'password') setPw({ ...u, p: newPassword() });
-    if (a === 'on') patch(u, { active: true }, `${u.name} can sign in again.`);
-    if (a === 'off') setAsk({ kind: 'off', u });
+    if (a === 'edit') setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '', firstName: u.firstName || u.name, surname: u.surname || '', pw: '' });
+    if (a === 'password') { if (await attempt(() => http('PATCH', '/users/' + u.id, { password: edit.pw }), u.id === me.id ? 'Your password is changed.' : `Password set. ${u.name} is signed out everywhere. Share the new password privately.`)) setEdit({ ...edit, pw: '' }); }
+    if (a === 'on') { if (await patch(u, { active: true }, `${u.name} can sign in again.`)) setEdit(null); }
+    if (a === 'off') { setEdit(null); setAsk({ kind: 'off', u }); }
     if (a === 'signout') attempt(() => http('POST', `/users/${u.id}/signout`), `${u.name} is signed out on every device.`);
-    if (a === 'whatsapp') window.open(waLink(u.phone, `Hi ${u.name.split(' ')[0]}, this is your Aali One link: ${location.origin}\nYour login email is ${u.email}. If you forgot the password, tell me and I will set a new one.`), '_blank', 'noopener');
-    if (a === 'remove') { const work = await attempt(() => http('GET', `/users/${u.id}/work`)); if (work) setAsk({ kind: 'remove', u, work }); }
+    if (a === 'remove') { setEdit(null); setAsk({ kind: 'remove', u, reason: '' }); }
   }
   async function confirmAsk() {
     setBusy(true); const { kind, u } = ask;
     const ok = kind === 'off' ? await patch(u, { active: false }, `${u.name} is deactivated and signed out. Their work stays in the system.`).then(async (r) => { if (r) await http('POST', `/users/${u.id}/signout`).catch(() => {}); return r; })
-      : await attempt(async () => { await http('DELETE', '/users/' + u.id); dropUser(u.id); }, `${u.name} is removed.`);
+      : await attempt(async () => upsertUser((await http('DELETE', '/users/' + u.id, { reason: ask.reason })).user), `${u.name} is removed and moved to the Staff register.`);
     setBusy(false); if (ok) setAsk(null);
   }
   async function save() {
@@ -120,7 +104,7 @@ function People() {
   const loginText = (u) => `Hi ${u.name.split(' ')[0]}, your Aali One login:\n${location.origin}\nEmail: ${u.email}\nPassword: ${u.password}\nPlease change the password after you sign in (Settings → My profile).`;
   return <div className="stack gap16">
     <p className="small muted" style={{ margin: 0 }}>{adm ? 'Add each person under their team. Beside every name you can read exactly what that person can see and do.' : 'Add and look after the members of your own team. Other teams and manager roles are handled by the Operations Manager or Company Secretary.'}</p>
-    {Object.entries(TEAMS).filter(([team]) => adm || team === me.team).map(([team, label]) => { const us = store.users.filter((u) => u.team === team).sort((x, y) => TEAM_ROLES[team].indexOf(x.title) - TEAM_ROLES[team].indexOf(y.title) || x.name.localeCompare(y.name));
+    {Object.entries(TEAMS).filter(([team]) => adm || team === me.team).map(([team, label]) => { const us = store.users.filter((u) => u.team === team && !u.removedAt).sort((x, y) => TEAM_ROLES[team].indexOf(x.title) - TEAM_ROLES[team].indexOf(y.title) || x.name.localeCompare(y.name));
       return <section key={team} className="stack" style={{ gap: 8 }}>
         <div className="row between"><div><h2 style={{ margin: 0 }}>{label} team <span className="small muted">{us.filter((u) => u.active).length} active</span></h2><span className="small muted">{TEAM_NOTE[team]}</span></div>
           <button className="btn primary" type="button" onClick={() => setAdd({ team, title: rolesFor(team).at(-1), password: newPassword(), company: team === 'management' ? GROUP : me.team === 'management' ? '' : me.company })}>+ Add {label} member</button></div>
@@ -131,7 +115,7 @@ function People() {
             <td><b>{desig(u)}</b><div className="small muted">Access: {LEVEL[u.title] || u.title}</div>{u.isAdmin && <Pill k="info">Admin</Pill>}</td>
             <td><ul className="access">{accessOf(u).map((x) => <li key={x}>{x}</li>)}</ul></td>
             <td>{u.active ? <Pill k="ok">Active</Pill> : <Pill k="bad">Deactivated</Pill>}</td>
-            <td style={{ textAlign: 'right' }}>{can(u) || u.id === me.id ? <Actions u={u} self={u.id === me.id} adm={adm} on={(a) => act(a, u)} /> : null}</td></tr>)}</tbody></table></div>
+            <td style={{ textAlign: 'right' }}>{can(u) || u.id === me.id ? <button className="btn sm" type="button" onClick={() => act('edit', u)}>Actions</button> : null}</td></tr>)}</tbody></table></div>
           : <Empty>No one in the {label} team yet.</Empty>}
       </section>; })}
     {add && <Modal wide title={`Add ${TEAMS[add.team]} member`} onClose={() => setAdd(null)} footer={<><button className="btn" type="button" onClick={() => setAdd(null)}>Cancel</button>
@@ -147,15 +131,30 @@ function People() {
         <Field label="Company" full><CompanyPicker team={add.team} value={add.company} onChange={(v) => setAdd({ ...add, company: v })} /></Field>
         <Field label="Access level – what this person should be able to see and do" full><RolePicker roles={rolesFor(add.team)} value={add.title} onChange={(v) => setAdd({ ...add, title: v })} /></Field>
         {adm && add.team === 'management' && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> <span><b>Also make them an admin</b><br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
-    {edit && <Modal wide title={`Edit ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Cancel</button>
-      <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin && edit.company === edit.u.company && edit.designation === (edit.u.designation || '') && edit.firstName === (edit.u.firstName || edit.u.name) && edit.surname === (edit.u.surname || '')) || !edit.firstName.trim() || !edit.surname.trim() || (TITLE_TEAM[edit.title] !== 'management' && !COMPANIES.includes(edit.company))} onClick={saveEdit}>Save access</button></>}>
-      <div className="stack"><div className="form"><Field label="Name"><In value={edit.firstName} maxLength={60} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></Field>
+    {edit && <Modal wide title={`Actions for ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Close</button>
+      <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin && edit.company === edit.u.company && edit.designation === (edit.u.designation || '') && edit.firstName === (edit.u.firstName || edit.u.name) && edit.surname === (edit.u.surname || '')) || !edit.firstName.trim() || !edit.surname.trim() || (TITLE_TEAM[edit.title] !== 'management' && !COMPANIES.includes(edit.company))} onClick={saveEdit}>Save details</button></>}>
+      <div className="stack"><h3 style={{ margin: 0 }}>Details</h3><div className="form"><Field label="Name"><In value={edit.firstName} maxLength={60} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></Field>
         <Field label="Surname"><In value={edit.surname} maxLength={60} onChange={(e) => setEdit({ ...edit, surname: e.target.value })} /></Field></div>
         <Field label="Designation" hint="Leave empty to show the access level's name."><In value={edit.designation} maxLength={80} autoComplete="off" onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
         <div><span className="lbl">Company</span><CompanyPicker team={TITLE_TEAM[edit.title]} value={edit.company} onChange={(v) => setEdit({ ...edit, company: v })} /></div>
         {(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">Access level · {TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
         {TITLE_TEAM[edit.title] !== edit.u.team && <div className="banner">This moves {edit.u.name.split(' ')[0]} from the {TEAMS[edit.u.team]} team to the {TEAMS[TITLE_TEAM[edit.title]]} team.</div>}
-        {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin} disabled={edit.u.id === me.id} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
+        {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin} disabled={edit.u.id === me.id} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}
+        <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}><h3 style={{ margin: 0 }}>Password</h3>
+          <div className="row"><In className="in grow" style={{ minWidth: 180, maxWidth: 280 }} value={edit.pw} onChange={(e) => setEdit({ ...edit, pw: e.target.value })} placeholder="New password (8+ characters)" autoComplete="new-password" />
+            <button className="btn sm" type="button" onClick={() => setEdit({ ...edit, pw: newPassword() })}>Suggest one</button>
+            <button className="btn" type="button" disabled={(edit.pw || '').length < 8} onClick={() => act('password', edit.u)}>Set this password</button></div>
+          <span className="small muted">Note the password down before you press the button. It is not shown again.</span></div>
+        <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}><h3 style={{ margin: 0 }}>Account</h3>
+          <div className="row"><span className="small muted">Status:</span>{edit.u.active ? <Pill k="ok">Active</Pill> : <Pill k="bad">Deactivated</Pill>}</div>
+          <div className="acts">
+            {waLink(edit.u.phone, 'x') && <a className="act" href={waLink(edit.u.phone, `Hi ${edit.u.name.split(' ')[0]}, this is your Aali One link: ${location.origin}\nYour login email is ${edit.u.email}. If you forgot the password, tell me and I will set a new one.`)} target="_blank" rel="noreferrer"><b>Send login on WhatsApp</b><span>The app link and their login email</span></a>}
+            {edit.u.id !== me.id && <button type="button" className="act" onClick={() => act('signout', edit.u)}><b>Sign out everywhere</b><span>For a lost or shared phone</span></button>}
+            {edit.u.id !== me.id && (edit.u.active ? <button type="button" className="act danger" onClick={() => act('off', edit.u)}><b>Deactivate</b><span>Block sign-in for now; they stay on the team list</span></button>
+              : <button type="button" className="act" onClick={() => act('on', edit.u)}><b>Reactivate</b><span>Let them sign in again</span></button>)}
+            {edit.u.id !== me.id && adm && <button type="button" className="act danger" onClick={() => act('remove', edit.u)}><b>Remove from the team</b><span>They left: move them to the Staff register</span></button>}
+          </div></div>
+      </div></Modal>}
     {made && <Modal title={`${made.name} has joined`} onClose={() => setMade(null)} footer={<button className="btn primary" type="button" onClick={() => setMade(null)}>Done</button>}>
       <div className="stack"><Confetti />
         <div className="welcome"><div className="welcome-badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></div>
@@ -165,15 +164,12 @@ function People() {
         <textarea className="in" readOnly value={loginText(made)} style={{ minHeight: 120 }} />
         <div className="row"><button className="btn" type="button" onClick={() => navigator.clipboard?.writeText(loginText(made)).then(() => toast('Copied.'), () => toast('Select the text and copy it.', true))}>Copy</button>
           {waLink(made.phone, loginText(made)) ? <a className="btn wa" href={waLink(made.phone, loginText(made))} target="_blank" rel="noreferrer">Send on WhatsApp</a> : <span className="small muted">Add a mobile number to send it on WhatsApp.</span>}</div></div></Modal>}
-    {ask && <Modal title={ask.kind === 'off' ? `Deactivate ${ask.u.name}?` : `Remove ${ask.u.name}?`} onClose={() => setAsk(null)} footer={<><button className="btn" type="button" onClick={() => setAsk(null)}>Cancel</button>
-      {ask.kind === 'off' ? <button className="btn danger" type="button" disabled={busy} onClick={confirmAsk}>Deactivate</button>
-        : ask.work.work ? <button className="btn danger" type="button" disabled={busy} onClick={() => setAsk({ kind: 'off', u: ask.u })}>Deactivate instead</button>
-          : <button className="btn danger" type="button" disabled={busy} onClick={confirmAsk}>Remove for good</button>}</>}>
-      {ask.kind === 'off' ? <div className="stack"><p style={{ margin: 0 }}>Use this when someone leaves the company.</p><ul className="access" style={{ fontSize: 13.5 }}><li>They are signed out and cannot sign in again.</li><li>Everything they did stays in the system with their name.</li><li>You can reactivate them any time.</li></ul></div>
-        : ask.work.work ? <div className="stack"><div className="banner bad">{ask.u.name} cannot be removed: they have {ask.work.work} item{ask.work.work === 1 ? '' : 's'} of work in the system ({ask.work.types.map((x) => `${x.n} ${x.type}${x.n === 1 ? '' : 's'}`).join(', ')}).</div>
-            <p style={{ margin: 0 }}>Removing them would leave that work without an owner. Deactivate them instead: they cannot sign in, and the history keeps their name.</p></div>
-          : <div className="stack"><p style={{ margin: 0 }}>Use this for a test entry or a person added by mistake. This cannot be undone.</p><ul className="access" style={{ fontSize: 13.5 }}><li>Their login is deleted.</li>
-            <li>{ask.work.reports ? `Their ${ask.work.reports} daily report${ask.work.reports === 1 ? '' : 's'} go to the recycle bin.` : 'They have no daily reports.'}</li><li>They have no leads, deals, projects or payments, so nothing else is affected.</li></ul></div>}</Modal>}
+    {ask && <Modal title={ask.kind === 'off' ? `Deactivate ${ask.u.name}?` : `Remove ${ask.u.name} from the team?`} onClose={() => setAsk(null)} footer={<><button className="btn" type="button" onClick={() => setAsk(null)}>Cancel</button>
+      <button className="btn danger" type="button" disabled={busy || (ask.kind === 'remove' && ask.reason.trim().length < 3)} onClick={confirmAsk}>{ask.kind === 'off' ? 'Deactivate' : 'Remove from the team'}</button></>}>
+      {ask.kind === 'off' ? <div className="stack"><p style={{ margin: 0 }}>Use this to block someone for a while, for example during long leave.</p><ul className="access" style={{ fontSize: 13.5 }}><li>They are signed out and cannot sign in.</li><li>They stay on the team list, marked Deactivated.</li><li>You can reactivate them any time.</li></ul></div>
+        : <div className="stack"><p style={{ margin: 0 }}>Use this when someone leaves, or for a test entry. Nothing is erased.</p><ul className="access" style={{ fontSize: 13.5 }}><li>They are signed out and can no longer sign in.</li>
+          <li>They leave the team list and move to the <b>Staff register</b>, with their details and history.</li><li>Everything they did stays in the system with their name.</li><li>You can restore them from the Staff register.</li></ul>
+          <Field label="Reason (required)"><In value={ask.reason} maxLength={200} onChange={(e) => setAsk({ ...ask, reason: e.target.value })} placeholder="e.g. Resigned on 30 Sep, or Test entry" autoFocus /></Field></div>}</Modal>}
     {pw && <Modal title={`New password for ${pw.name}`} onClose={() => setPw(null)} footer={<button className="btn primary" type="button" disabled={(pw.p || '').length < 8} onClick={async () => (await attempt(() => http('PATCH', '/users/' + pw.id, { password: pw.p }), 'Password set. They are signed out everywhere.')) && setPw(null)}>Set password</button>}>
       <Field label="New password (8+ characters)" hint="Note it down and share it with them privately before you press Set password."><In value={pw.p || ''} onChange={(e) => setPw({ ...pw, p: e.target.value })} autoComplete="new-password" /></Field></Modal>}
   </div>;
@@ -280,6 +276,37 @@ function Audit() {
   if (!rows) return <Empty>Loading…</Empty>;
   return <div className="tbl"><table><thead><tr><th>When</th><th>Who</th><th>What</th><th>Item</th><th>Details</th></tr></thead><tbody>
     {rows.map((r) => <tr key={r.id}><td className="num">{fmtDT(r.at)}</td><td>{uname(r.user_id)}</td><td>{r.action}</td><td>{r.type}</td><td>{r.summary}</td></tr>)}</tbody></table></div>;
+}
+// Staff register: everyone ever added – active, deactivated and removed – with their details and history. Only active people can sign in.
+function Staff() {
+  const [rows, setRows] = useState(null), [f, setF] = useState('all'), [open, setOpen] = useState(null), [hist, setHist] = useState(null);
+  const load = () => http('GET', '/staff').then((r) => setRows(r.staff)).catch((e) => toast(e.message, true));
+  useEffect(() => { load(); }, []);
+  const state = (u) => (u.removedAt ? ['Removed', 'bad'] : u.active ? ['Active', 'ok'] : ['Deactivated', 'warn']);
+  const show = async (u) => { setOpen(u); setHist(null); setHist(await http('GET', `/users/${u.id}/history`).catch(() => ({ history: [], work: { work: 0, reports: 0, types: [] } }))); };
+  const restore = async (u) => { const r = await attempt(() => http('POST', `/users/${u.id}/restore`), `${u.name} is restored and can sign in again.`); if (r) { upsertUser(r.user); setOpen(null); load(); } };
+  if (!rows) return <Empty>Loading the staff register…</Empty>;
+  const list = rows.filter((u) => f === 'all' || state(u)[0].toLowerCase() === f), n = (k) => rows.filter((u) => state(u)[0] === k).length;
+  return <div className="stack">
+    <p className="small muted" style={{ margin: 0 }}>Everyone who was ever added to Aali One. Nobody is erased: a person who leaves is kept here with their details and history, but only active people can sign in.</p>
+    <div className="stats" style={{ marginBottom: 0 }}><div className="stat"><span className="l">Active</span><span className="v">{n('Active')}</span></div><div className="stat"><span className="l">Deactivated</span><span className="v">{n('Deactivated')}</span></div>
+      <div className="stat"><span className="l">Removed</span><span className="v">{n('Removed')}</span></div><div className="stat"><span className="l">Total ever added</span><span className="v">{rows.length}</span></div></div>
+    <div className="seg" role="group">{[['all', 'Everyone'], ['active', 'Active'], ['deactivated', 'Deactivated'], ['removed', 'Removed']].map(([v, l]) => <button key={v} type="button" aria-pressed={f === v} onClick={() => setF(v)}>{l}</button>)}</div>
+    {list.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Designation</th><th>Company · team</th><th>Status</th><th>Joined</th><th>Last signed in</th><th>Left on</th><th>Reason</th><th /></tr></thead><tbody>
+      {list.map((u) => { const [l, k] = state(u); return <tr key={u.id} className="click" onClick={() => show(u)} style={{ opacity: u.removedAt ? 0.8 : 1 }}>
+        <td><b>{u.name}</b><div className="small muted">{u.email}</div><div className="small muted num">{u.phone || ''}</div></td><td>{desig(u)}</td><td>{u.company}<div className="small muted">{TEAMS[u.team]} team</div></td>
+        <td><Pill k={k}>{l}</Pill>{u.isAdmin && <> <Pill k="info">Admin</Pill></>}</td><td className="num">{u.createdAt ? fmtDT(u.createdAt) : '—'}</td><td className="num">{u.lastLogin ? fmtDT(u.lastLogin) : 'Never'}</td>
+        <td className="num">{u.removedAt ? fmtDT(u.removedAt) : '—'}</td><td style={{ maxWidth: 200 }}>{u.removedReason || '—'}</td><td className="small muted">History</td></tr>; })}</tbody></table></div> : <Empty>No one in this list.</Empty>}
+    {open && <Modal wide title={open.name} onClose={() => setOpen(null)} footer={<><span />{open.removedAt ? <button className="btn primary" type="button" onClick={() => restore(open)}>Restore to the team</button> : <button className="btn" type="button" onClick={() => setOpen(null)}>Close</button>}</>}>
+      <div className="stack"><div className="row"><Pill k={state(open)[1]}>{state(open)[0]}</Pill><Pill>{desig(open)}</Pill><Pill>{open.company}</Pill><Pill>{TEAMS[open.team]} team</Pill></div>
+        <div className="form"><div><span className="lbl">Login email</span><div>{open.email}</div></div><div><span className="lbl">Mobile</span><div className="num">{open.phone || '—'}</div></div>
+          <div><span className="lbl">Joined</span><div className="num">{open.createdAt ? fmtDT(open.createdAt) : '—'}</div></div><div><span className="lbl">Last signed in</span><div className="num">{open.lastLogin ? `${fmtDT(open.lastLogin)} · ${open.logins} sign-in${open.logins === 1 ? '' : 's'} in all` : 'Never'}</div></div>
+          {open.removedAt && <><div><span className="lbl">Removed on</span><div className="num">{fmtDT(open.removedAt)} by {uname(open.removedBy)}</div></div><div><span className="lbl">Reason</span><div>{open.removedReason}</div></div></>}</div>
+        <div><span className="lbl">Work in the system</span>{!hist ? <p className="small muted" style={{ margin: 0 }}>Loading…</p> : <div className="row small">{hist.work.reports > 0 && <Pill k="gold">{hist.work.reports} daily report{hist.work.reports === 1 ? '' : 's'}</Pill>}
+          {hist.work.types.map((x) => <Pill key={x.type} k="gold">{x.n} {x.type}{x.n === 1 ? '' : 's'}</Pill>)}{!hist.work.reports && !hist.work.work && <span className="muted">Nothing recorded.</span>}</div>}</div>
+        <div><span className="lbl">History of this account</span>{!hist ? null : hist.history.length ? <ul className="log">{hist.history.map((h, i) => <li key={i}><span className="num">{fmtDT(h.at)}</span><span>{h.summary} <span className="faint">· {uname(h.user_id)}</span></span></li>)}</ul> : <p className="small muted" style={{ margin: 0 }}>No changes recorded.</p>}</div>
+      </div></Modal>}
+  </div>;
 }
 function Trash() {
   const [rows, setRows] = useState(null), load = () => http('GET', '/trash').then((r) => setRows(r.records), (e) => toast(e.message, true));

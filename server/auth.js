@@ -33,7 +33,7 @@ export function readCookie(req, name) {
   const m = String(req.headers.cookie || '').match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
   return m ? decodeURIComponent(m[1]) : '';
 }
-export const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, title: u.title, team: u.team, phone: u.phone, isAdmin: u.is_admin, active: u.active, designation: u.designation || '',
+export const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, title: u.title, team: u.team, phone: u.phone, isAdmin: u.is_admin, active: u.active, designation: u.designation || '', createdAt: u.created_at, removedAt: u.removed_at || null, removedReason: u.removed_reason || '', removedBy: u.removed_by || null,
   surname: u.surname && u.name.endsWith(u.surname) ? u.surname : '', firstName: u.surname && u.name.endsWith(u.surname) ? u.name.slice(0, -u.surname.length).trim() : u.name,
   company: u.team === 'management' ? 'Aali Group' : u.company || 'Aali Conssultancy' });
 

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useStore, list, store } from '../api.js';
-import { feedItems, forScope, today, addDays, diff, escalated, inr, isManager, isTop, activeUsers, TITLES, desig, waLink, stageProb, MONTHS } from '../lib.js';
+import { feedItems, forScope, today, addDays, diff, escalated, inr, isManager, isTop, activeUsers, TITLES, desig, waLink, stageProb, MONTHS, canMoney } from '../lib.js';
 import { Empty, Pill, toast } from '../ui.jsx';
 
 function digest(u) {
@@ -27,7 +27,7 @@ function weekly() {
     `• Open pipeline: ${inr(open.reduce((s, d) => s + (+d.value || 0), 0))} (likely ${inr(open.reduce((s, d) => s + (+d.value || 0) * stageProb(d.stage) / 100, 0))})`,
     '', '*Delivery*', `• Active projects: ${list('project').filter((p) => !['live', 'onhold', 'awaiting'].includes(p.stage)).length}`, `• Waiting for advance: ${list('project').filter((p) => p.stage === 'awaiting').length}`,
     `• Client sign-offs this week: ${list('signoff').filter((s) => inW(s.signedAt)).length}`, `• Support requests open: ${list('ticket').filter((x) => x.status !== 'resolved').length}`,
-    '', '*Money*', `• Received this week: ${inr(got)}`, `• Overdue: ${inr(overdue.reduce((s, p) => s + Math.max(0, p.amount - (p.paid || 0)), 0))} (${overdue.length})`,
+    ...(canMoney() ? ['', '*Money*', `• Received this week: ${inr(got)}`, `• Overdue: ${inr(overdue.reduce((s, p) => s + Math.max(0, p.amount - (p.paid || 0)), 0))} (${overdue.length})`] : []),
     ...(esc.length ? ['', `*Escalated – 3+ days late (${esc.length})*`, ...esc.slice(0, 10).map((i) => `• ${i.title}`)] : []), '', `Open Aali One: ${location.origin}`].join('\n');
 }
 function Card({ u, text, sub }) {

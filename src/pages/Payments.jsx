@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { useStore, list, get, create, update, store } from '../api.js';
-import { settings, uname, fmtDate, today, addDays, inr, clientName, diff } from '../lib.js';
+import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney } from '../lib.js';
 import { receiptTotals, docTotals, fyLabel } from '../../shared/money.js';
 import { Modal, Field, In, Sel, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs } from '../ui.jsx';
 import { ReceiptSheet, QuoteSheet } from '../doc.jsx';
 
 export default function Payments() {
   useStore(); const p = useParams()['*'] || '', [kind, id] = p.split('/');
+  if (!canMoney()) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>;
   if (kind === 'receipt' && id) return <ReceiptEditor id={id === 'new' ? null : id} />;
   if (kind === 'invoice' && id) return <InvoiceEditor id={id === 'new' ? null : id} />;
   return <Home />;

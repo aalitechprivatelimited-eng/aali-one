@@ -2,7 +2,7 @@
 import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, createSession, userFromToken, dropSession, sessionCookie, readCookie,
   publicUser, tooManyFails, noteFail, clearFails } from './auth.js';
-import { beforeCreate, afterCreate, beforeUpdate, insertRec, getSetting, setSetting, isManager, isTop, canEditCollab, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
+import { beforeCreate, afterCreate, beforeUpdate, insertRec, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
 
 const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
@@ -95,7 +95,7 @@ export async function handle(req, res) {
     if (!user) throw new Rule('Please sign in.', 401);
     const admin = user.is_admin, juniors = MANAGER_ADDS[user.title] || [];
     const leadSees = user.title === 'itlead' && !!(await getSetting(db, 'leadSeesReports', false));
-    const mayRead = (r) => r.type === 'notice' ? r.data.to === user.id : r.type === 'collab' ? isTop(user) : r.type !== 'report' || canSeeReport(user, r.data, leadSees); // daily reports are private to the writer, their manager and top management
+    const mayRead = (r) => r.type === 'notice' ? r.data.to === user.id : r.type === 'collab' ? isTop(user) : MONEY.includes(r.type) ? canMoney(user) : r.type !== 'report' || canSeeReport(user, r.data, leadSees); // daily reports are private to the writer, their manager and top management
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
     if (path === '/bootstrap' && method === 'GET') {
@@ -113,6 +113,7 @@ export async function handle(req, res) {
     if (path === '/records' && method === 'POST') {
       const b = await readBody(req), type = String(b.type || ''), data = { ...(b.data || {}) };
       if (!/^[a-z]{2,20}$/.test(type)) throw new Rule('Unknown record type.');
+      if (MONEY.includes(type) && !canMoney(user)) throw new Rule('Only the Sales Manager and management handle quotations, receipts and payments.', 403);
       const out = await db.tx(async (t) => {
         const r = await beforeCreate(t, type, data, user, false);
         if (r.merged) { const rec = (await t.query('select * from records where id = $1', [r.id])).rows[0]; return { merged: true, record: toClient(rec) }; }
@@ -129,6 +130,7 @@ export async function handle(req, res) {
       const out = await db.tx(async (t) => {
         const rec = (await t.query('select * from records where id = $1 and deleted_at is null for update', [m[1]])).rows[0];
         if (!rec) throw new Rule('That item no longer exists.', 404);
+        if (MONEY.includes(rec.type) && !canMoney(user)) throw new Rule('Only the Sales Manager and management handle quotations, receipts and payments.', 403);
         const next = { ...rec.data, ...(b.data || {}) };
         for (const k of Object.keys(next)) if (next[k] === null && b.data && k in b.data) delete next[k];
         await beforeUpdate(t, rec, next, user);
@@ -145,6 +147,7 @@ export async function handle(req, res) {
       if (!rec) throw new Rule('That item no longer exists.', 404);
       if (ADMIN_ONLY_DELETE.includes(rec.type) && !admin) throw new Rule('Only an admin can delete a signed certificate.', 403);
       if (NEEDS_REASON.includes(rec.type) && reason.length < 5) throw new Rule('Give a reason of at least 5 characters.');
+      if (MONEY.includes(rec.type) && !canMoney(user)) throw new Rule('Only the Sales Manager and management handle quotations, receipts and payments.', 403);
       if (rec.type === 'collab' && !canEditCollab(user)) throw new Rule('Only the Operations Manager or Company Secretary can delete a collaboration.', 403);
       if (rec.type === 'report' && !canDeleteReport(user, rec.data)) throw new Rule('Only the Operations Manager, the Company Secretary or the department manager can delete a report.', 403);
       if (['deal', 'project', 'client'].includes(rec.type) && !isManager(user) && rec.created_by !== user.id) throw new Rule('Only a manager can delete this.', 403);
@@ -217,7 +220,8 @@ export async function handle(req, res) {
       const id = newId('u_');
       try { await db.query('insert into users (id, email, name, title, team, phone, is_admin, pass_hash, company, designation, surname) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
         [id, email, fullName, b.title || 'bde', team, b.phone || '', !!b.isAdmin, hashPassword(b.password), company, designation, b.firstName !== undefined ? surname : '']); }
-      catch (e) { if (String(e.message).includes('unique') || e.code === '23505') throw new Rule('Someone already uses that email.'); throw e; }
+      catch (e) { if (String(e.message).includes('unique') || e.code === '23505') { const ex = (await db.query('select name, removed_at from users where email = $1', [email])).rows[0];
+        throw new Rule(ex?.removed_at ? `This email belongs to ${ex.name}, who was removed earlier. Restore them from the Staff register instead.` : 'Someone already uses that email.'); } throw e; }
       await audit(db, user, null, 'user', `Added ${email}`);
       return send(res, 200, { user: publicUser((await db.query('select * from users where id = $1', [id])).rows[0]) });
     }
@@ -225,6 +229,7 @@ export async function handle(req, res) {
     if (m && method === 'PATCH') {
       const b = await readBody(req), self = m[1] === user.id;
       const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
+      if (u.removed_at) throw new Rule('This person was removed. Restore them from the Staff register first.');
       const lead = !admin && !self && juniors.includes(u.title) && !u.is_admin; // a manager looking after their own team member
       if (!admin && !self && !lead) throw new Rule('You can change members of your own team only.', 403);
       if (lead && b.title && !juniors.includes(b.title)) throw new Rule('You can give roles of your own team only.', 403);
@@ -261,22 +266,41 @@ export async function handle(req, res) {
       if (!admin) throw new Rule('Only an admin can check this.', 403);
       return send(res, 200, await userWork(db, m[1]));
     }
-    // Remove a person for good. Only for someone with no real work in the system (a test entry or a mistake);
-    // anyone with leads, deals, projects, payments and so on is deactivated instead, so the history keeps their name.
+    // Remove a person from the team. Like an HR register, the person is never erased: they lose access and move to the
+    // Staff register with everything they did, and can be restored.
     m = path.match(/^\/users\/([\w-]+)$/);
     if (m && method === 'DELETE') {
       if (!admin) throw new Rule('Only an admin can remove a person.', 403);
       if (m[1] === user.id) throw new Rule("You can't remove your own account.");
+      const b = await readBody(req), reason = String(b.reason || '').trim().slice(0, 200);
+      if (reason.length < 3) throw new Rule('Write why this person is being removed.');
       const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
-      const w = await userWork(db, u.id);
-      if (w.work) throw new Rule(`${u.name} has ${w.work} item${w.work === 1 ? '' : 's'} of work in the system. Deactivate them instead, so the history keeps their name.`, 409);
-      await db.tx(async (t) => {
-        await t.query('delete from sessions where user_id = $1', [u.id]);
-        await t.query("update records set deleted_at = now(), deleted_by = $2, delete_reason = 'Person removed', updated_at = now() where deleted_at is null and ((type = 'report' and data->>'owner' = $1) or (type = 'notice' and data->>'to' = $1))", [u.id, user.id]);
-        await t.query('delete from users where id = $1', [u.id]);
-      });
-      await audit(db, user, null, 'user', `Removed ${u.email} (${u.name})`);
-      return send(res, 200, { ok: true, reports: w.reports });
+      await db.query('delete from sessions where user_id = $1', [u.id]);
+      await db.query('update users set active = false, removed_at = now(), removed_by = $2, removed_reason = $3, updated_at = now() where id = $1', [u.id, user.id, reason]);
+      await audit(db, user, null, 'user', `Removed ${u.email} (${u.name}) – ${reason}`);
+      return send(res, 200, { user: publicUser((await db.query('select * from users where id = $1', [u.id])).rows[0]) });
+    }
+    m = path.match(/^\/users\/([\w-]+)\/restore$/);
+    if (m && method === 'POST') {
+      if (!admin) throw new Rule('Only an admin can restore a person.', 403);
+      const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
+      await db.query("update users set active = true, removed_at = null, removed_by = null, removed_reason = '', updated_at = now() where id = $1", [u.id]);
+      await audit(db, user, null, 'user', `Restored ${u.email} (${u.name})`);
+      return send(res, 200, { user: publicUser((await db.query('select * from users where id = $1', [u.id])).rows[0]) });
+    }
+    // Staff register: every person ever added, with when they last signed in.
+    if (path === '/staff' && method === 'GET') {
+      if (!admin) throw new Rule('Only an admin can open the staff register.', 403);
+      const [us, logins] = await Promise.all([db.query('select * from users order by name'), db.query("select user_id, max(at) as at, count(*)::int n from audit where action = 'login' group by user_id")]);
+      const last = new Map(logins.rows.map((r) => [r.user_id, r]));
+      return send(res, 200, { staff: us.rows.map((u) => ({ ...publicUser(u), lastLogin: last.get(u.id)?.at || null, logins: last.get(u.id)?.n || 0 })) });
+    }
+    m = path.match(/^\/users\/([\w-]+)\/history$/);
+    if (m && method === 'GET') {
+      if (!admin) throw new Rule('Only an admin can open a person\'s history.', 403);
+      const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
+      const rows = (await db.query("select a.at, a.summary, a.user_id from audit a where a.action = 'user' and a.summary ilike $1 order by a.at desc limit 100", ['%' + u.email + '%'])).rows;
+      return send(res, 200, { history: rows, work: await userWork(db, u.id) });
     }
     if (path === '/sample/clear' && method === 'POST') {
       if (!admin) throw new Rule('Only an admin can clear sample data.', 403);

@@ -20,13 +20,15 @@ function call(method, path, body, cookie = '') {
 const add = async (c, type, data) => { const r = await call('POST', '/records', { type, data }, c); if (r.status !== 200) throw new Error(r.body.error); return r.body; };
 const patch = (c, id, data) => call('PATCH', '/records/' + id, { data }, c);
 
-let admin, bde1, bde2;
+let admin, bde1, bde2, sm, it0;
 test('setup and logins', async () => {
   const s = await call('POST', '/setup', { name: 'Nikhil', email: 'ops@test.in', password: 'password123' });
   assert.equal(s.status, 200); admin = s.cookie;
   const db = await getDb();
-  for (const [id, email, title] of [['u_b1', 'b1@test.in', 'bde'], ['u_b2', 'b2@test.in', 'bde'], ['u_it', 'it@test.in', 'itmgr']])
-    await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', [id, email, email, title, title === 'bde' ? 'sales' : 'it', hashPassword('password123')]);
+  for (const [id, email, title] of [['u_b1', 'b1@test.in', 'bde'], ['u_b2', 'b2@test.in', 'bde'], ['u_it', 'it@test.in', 'itmgr'], ['u_sm', 'sm@test.in', 'salesmgr']])
+    await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', [id, email, email, title, title === 'itmgr' ? 'it' : 'sales', hashPassword('password123')]);
+  sm = (await call('POST', '/auth/login', { email: 'sm@test.in', password: 'password123' })).cookie;
+  it0 = (await call('POST', '/auth/login', { email: 'it@test.in', password: 'password123' })).cookie;
   bde1 = (await call('POST', '/auth/login', { email: 'b1@test.in', password: 'password123' })).cookie;
   bde2 = (await call('POST', '/auth/login', { email: 'b2@test.in', password: 'password123' })).cookie;
   assert.equal((await call('POST', '/auth/login', { email: 'b1@test.in', password: 'wrong' })).status, 401);
@@ -45,21 +47,25 @@ test('leads: round-robin, duplicate mobile+service merges, new service keeps BDE
   assert.equal(bad.status, 400);
 });
 
-test('quotes: numbering, discount approval, deal value follows', async () => {
+test('quotes: numbering, deal value follows; only the Sales Manager and management handle money papers', async () => {
   const deal = (await add(bde1, 'deal', { title: 'Website – Sunrise', phone: '9876543210', value: 0 })).record;
-  const q1 = (await add(bde1, 'quote', { dealId: deal.id, date: '2026-09-30', items: [{ desc: 'Site', qty: 1, rate: 40000 }], taxMode: 'intra', taxRate: 18, discountType: 'percent', discountValue: 20 })).record;
-  const q2 = (await add(bde1, 'quote', { date: '2026-09-30', items: [{ desc: 'App', qty: 1, rate: 1000 }], taxMode: 'none' })).record;
+  const body = { dealId: deal.id, date: '2026-09-30', items: [{ desc: 'Site', qty: 1, rate: 40000 }], taxMode: 'intra', taxRate: 18, discountType: 'percent', discountValue: 20 };
+  assert.equal((await call('POST', '/records', { type: 'quote', data: body }, bde1)).status, 403, 'a BDE cannot make a quotation');
+  assert.equal((await call('POST', '/records', { type: 'payment', data: { title: 'Advance', amount: 1 } }, bde1)).status, 403);
+  const q1 = (await add(sm, 'quote', body)).record;
+  const q2 = (await add(sm, 'quote', { date: '2026-09-30', items: [{ desc: 'App', qty: 1, rate: 1000 }], taxMode: 'none' })).record;
   assert.equal(q1.number, 'AC/2026-27/001'); assert.equal(q2.number, 'AC/2026-27/002');
-  assert.equal(q1.status, 'needs approval'); assert.equal(q1.totals.total, 37760);
-  const boot = (await call('GET', '/bootstrap', null, admin)).body;
-  const appr = boot.records.find((r) => r.type === 'approval' && r.relId === q1.id); assert.ok(appr);
-  assert.equal((await patch(bde1, appr.id, { status: 'approved' })).status, 403);
-  assert.equal((await patch(admin, appr.id, { status: 'approved' })).status, 200);
+  assert.equal(q1.status, 'draft'); assert.ok(q1.discountApprovedAt, 'a manager\'s own discount needs no second approval'); assert.equal(q1.totals.total, 37760);
   const d = (await call('GET', '/bootstrap', null, admin)).body.records.find((r) => r.id === deal.id);
   assert.equal(d.value, 37760); assert.equal(d.quoteNo, 'AC/2026-27/001');
-  const del = await call('DELETE', '/records/' + q2.id, { reason: 'no' }, bde1); assert.equal(del.status, 400);
-  assert.equal((await call('DELETE', '/records/' + q2.id, { reason: 'Made by mistake' }, bde1)).status, 200);
-  const q3 = (await add(bde1, 'quote', { date: '2026-09-30', items: [{ desc: 'x', qty: 1, rate: 1 }], taxMode: 'none' })).record;
+  const types = async (c) => new Set((await call('GET', '/bootstrap', null, c)).body.records.map((r) => r.type));
+  assert.ok((await types(sm)).has('quote')); assert.ok((await types(admin)).has('quote'));
+  assert.ok(!(await types(bde1)).has('quote'), 'a BDE cannot see quotations'); assert.ok(!(await types(it0)).has('quote'), 'the IT team cannot see quotations');
+  assert.equal((await patch(bde1, q1.id, { status: 'sent' })).status, 403);
+  assert.equal((await call('DELETE', '/records/' + q2.id, { reason: 'Made by mistake' }, bde1)).status, 403);
+  const del = await call('DELETE', '/records/' + q2.id, { reason: 'no' }, sm); assert.equal(del.status, 400);
+  assert.equal((await call('DELETE', '/records/' + q2.id, { reason: 'Made by mistake' }, sm)).status, 200);
+  const q3 = (await add(sm, 'quote', { date: '2026-09-30', items: [{ desc: 'x', qty: 1, rate: 1 }], taxMode: 'none' })).record;
   assert.equal(q3.number, 'AC/2026-27/003', 'deleted numbers are never reused');
 });
 
@@ -67,13 +73,14 @@ test('advance gate, receipt unlocks project, sign-off makes it live', async () =
   const deal = (await add(bde1, 'deal', { title: 'App – Kaveri', stage: 'won', handoff: { advance: false } })).record;
   const proj = (await add(bde1, 'project', { name: 'App – Kaveri', dealId: deal.id, stage: 'awaiting', deadline: '2026-11-30' })).record;
   const blocked = await patch(bde1, proj.id, { stage: 'planning' }); assert.equal(blocked.status, 400); assert.match(blocked.body.error, /No advance/);
-  const pay = (await add(bde1, 'payment', { title: 'Advance', kind: 'advance', dealId: deal.id, amount: 50000, due: '2026-10-02' })).record;
-  const rc = (await add(bde1, 'receipt', { date: '2026-09-30', paymentId: pay.id, items: [{ desc: 'Advance', amount: 50000, incl: true }], taxMode: 'intra', taxRate: 18 })).record;
+  const pay = (await add(sm, 'payment', { title: 'Advance', kind: 'advance', dealId: deal.id, amount: 50000, due: '2026-10-02' })).record;
+  const rc = (await add(sm, 'receipt', { date: '2026-09-30', paymentId: pay.id, items: [{ desc: 'Advance', amount: 50000, incl: true }], taxMode: 'intra', taxRate: 18 })).record;
   assert.match(rc.number, /^ACY-300926\/001$/);
   const all = (await call('GET', '/bootstrap', null, admin)).body.records;
   assert.equal(all.find((r) => r.id === proj.id).stage, 'planning');
   assert.equal(all.find((r) => r.id === pay.id).status, 'paid');
-  assert.equal((await patch(bde1, rc.id, { date: '2026-10-01' })).status, 400, 'receipt date is frozen');
+  assert.equal((await patch(sm, rc.id, { date: '2026-10-01' })).status, 400, 'receipt date is frozen');
+  assert.ok(!(await call('GET', '/bootstrap', null, bde1)).body.records.some((r) => ['payment', 'receipt'].includes(r.type)), 'a BDE cannot see payments or receipts');
   assert.equal((await patch(bde1, proj.id, { deadline: '2026-11-15' })).status, 400, 'deadline change needs a reason');
   assert.equal((await patch(bde1, proj.id, { deadline: '2026-11-15', _reason: 'Client launch event' })).status, 200);
   assert.equal((await patch(bde1, proj.id, { stage: 'live' })).status, 400, 'live needs sign-off');
@@ -96,7 +103,7 @@ test('recurring task makes the next one; mentions notify', async () => {
 
 test('daily reports: one per day, private to writer + manager + top, submit locks, send back', async () => {
   const db = await getDb();
-  for (const [id, email, title, team] of [['u_sm', 'sm@test.in', 'salesmgr', 'sales'], ['u_ch', 'ch@test.in', 'chairman', 'management']])
+  for (const [id, email, title, team] of [['u_ch', 'ch@test.in', 'chairman', 'management']])
     await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', [id, email, email, title, team, hashPassword('password123')]);
   const login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
   const sm = await login('sm@test.in'), ch = await login('ch@test.in'), it = await login('it@test.in');
@@ -228,18 +235,27 @@ test('name and surname; a salesperson keeps the leads they find', async () => {
   assert.equal(two.record.owner, 'u_b1');
 });
 
-test('removing a person: only when they have no work; otherwise deactivate', async () => {
+test('removing a person keeps them in the staff register; they lose access and can be restored', async () => {
   const mk = async (e) => (await call('POST', '/users', { firstName: 'Test', surname: 'Person', email: e, password: 'password123', title: 'bde', company: 'Aali Conssultancy', designation: 'BDE' }, admin)).body.user;
   const t1 = await mk('gone1@test.in'), c1 = (await call('POST', '/auth/login', { email: 'gone1@test.in', password: 'password123' })).cookie;
-  await add(c1, 'report', { entries: [{ text: 'Trying the app', kind: 'Other', mins: 5 }] });
-  assert.equal((await call('DELETE', '/users/' + t1.id, null, bde1)).status, 403);
-  assert.equal((await call('POST', '/users/' + t1.id + '/signout', null, admin)).status, 200);
-  assert.equal((await call('GET', '/bootstrap', null, c1)).status, 401, 'signed out everywhere');
-  assert.equal((await call('GET', '/users/' + t1.id + '/work', null, admin)).body.reports, 1);
-  assert.equal((await call('DELETE', '/users/' + t1.id, null, admin)).status, 200, 'a test person with only a report can be removed');
+  const rp = (await add(c1, 'report', { entries: [{ text: 'Trying the app', kind: 'Other', mins: 5 }] })).record;
+  assert.equal((await call('DELETE', '/users/' + t1.id, { reason: 'Test entry' }, bde1)).status, 403);
+  assert.equal((await call('DELETE', '/users/' + t1.id, { reason: '' }, admin)).status, 400, 'a reason is needed');
+  const rm = await call('DELETE', '/users/' + t1.id, { reason: 'Test entry' }, admin);
+  assert.equal(rm.status, 200); assert.ok(rm.body.user.removedAt); assert.equal(rm.body.user.active, false); assert.equal(rm.body.user.removedReason, 'Test entry');
+  assert.equal((await call('GET', '/bootstrap', null, c1)).status, 401, 'signed out');
+  assert.equal((await call('POST', '/auth/login', { email: 'gone1@test.in', password: 'password123' })).status, 401, 'cannot sign in');
   const boot = (await call('GET', '/bootstrap', null, admin)).body;
-  assert.ok(!boot.users.some((u) => u.id === t1.id)); assert.ok(!boot.records.some((r) => r.type === 'report' && r.owner === t1.id));
-  assert.equal((await call('POST', '/auth/login', { email: 'gone1@test.in', password: 'password123' })).status, 401);
-  const busy = await call('DELETE', '/users/u_b1', null, admin);
-  assert.equal(busy.status, 409); assert.match(busy.body.error, /Deactivate/);
+  assert.ok(boot.users.some((u) => u.id === t1.id && u.removedAt), 'still in the system'); assert.ok(boot.records.some((r) => r.id === rp.id), 'their report is kept, not sent to the bin');
+  assert.equal((await call('GET', '/staff', null, bde1)).status, 403);
+  const staff = (await call('GET', '/staff', null, admin)).body.staff.find((u) => u.id === t1.id);
+  assert.ok(staff.lastLogin); assert.equal(staff.logins, 1);
+  const hist = (await call('GET', '/users/' + t1.id + '/history', null, admin)).body;
+  assert.ok(hist.history.some((h) => /Removed/.test(h.summary))); assert.equal(hist.work.reports, 1);
+  assert.equal((await call('PATCH', '/users/' + t1.id, { active: true }, admin)).status, 400, 'must be restored, not just switched on');
+  assert.match((await call('POST', '/users', { firstName: 'Again', surname: 'Person', email: 'gone1@test.in', password: 'password123', title: 'bde', company: 'AaliTech', designation: 'BDE' }, admin)).body.error, /Restore/);
+  const back = await call('POST', '/users/' + t1.id + '/restore', null, admin);
+  assert.equal(back.body.user.active, true); assert.equal(back.body.user.removedAt, null);
+  assert.equal((await call('POST', '/auth/login', { email: 'gone1@test.in', password: 'password123' })).status, 200);
+  assert.equal((await call('DELETE', '/users/u_b1', { reason: 'Left the company' }, admin)).status, 200, 'a person with work can be removed too; the work keeps their name');
 });

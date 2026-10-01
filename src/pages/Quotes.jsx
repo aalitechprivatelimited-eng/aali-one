@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore, list, get, create, update, store } from '../api.js';
-import { settings, uname, fmtDate, today, addDays, inr, clientName } from '../lib.js';
+import { settings, uname, fmtDate, today, addDays, inr, clientName, canMoney } from '../lib.js';
 import { docTotals, fyLabel } from '../../shared/money.js';
 import { Field, In, Sel, Area, Pill, Empty, Sample, DeleteButton, Message, attempt, toast } from '../ui.jsx';
 import { QuoteSheet } from '../doc.jsx';
@@ -9,7 +9,7 @@ import { useId } from '../App.jsx';
 
 export const STATUS = ['draft', 'needs approval', 'sent', 'accepted', 'declined', 'expired'];
 const tone = { accepted: 'ok', 'needs approval': 'warn', declined: 'bad', expired: 'bad', sent: 'info' };
-export default function Quotes() { useStore(); const id = useId(); return id ? <Editor id={id === 'new' ? null : id} /> : <Register />; }
+export default function Quotes() { useStore(); const id = useId(); if (!canMoney()) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>; return id ? <Editor id={id === 'new' ? null : id} /> : <Register />; }
 
 function Register() {
   const nav = useNavigate(), [f, setF] = useState({ q: '', status: '', fy: fyLabel(today()) });

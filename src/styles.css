@@ -185,6 +185,11 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 .menu-i.danger b{color:var(--bad)}
 .tbl:has(.menu){overflow:visible}
 
+.acts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
+.act{display:flex;flex-direction:column;gap:2px;text-align:left;border:1px solid var(--line-2);background:var(--paper);border-radius:10px;padding:9px 12px;color:var(--ink);text-decoration:none}
+.act:hover{border-color:var(--gold)} .act b{font-size:13.5px} .act span{font-size:12px;color:var(--ink-soft)}
+.act.danger b{color:var(--bad)} .act.danger:hover{border-color:var(--bad)}
+
 /* calendar + project progress */
 .calhead{padding:6px 8px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--line);background:var(--gold-50)}
 .calday{min-height:108px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:5px;cursor:pointer;overflow:hidden}
