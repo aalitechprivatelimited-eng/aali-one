@@ -101,7 +101,7 @@ function Shell() {
           <div className="sec">Sales</div><L to="/leads">Leads & enquiries</L><L to="/deals">Deals pipeline</L><L to="/clients">Clients</L><L to="/quotes">Quotations</L>
           <div className="sec">Delivery</div><L to="/projects">Projects</L><L to="/tasks">Tasks</L><L to="/support">Support</L>
           <div className="sec">Money</div><L to="/payments">Payments & receipts</L>
-          <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L><L to="/settings">Settings</L>
+          <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L>{me.isAdmin && <L to="/settings/people">People & teams</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
         </nav>
         <div className="me"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b>{me.name}</b><div className="faint">{TITLES[me.title]}</div></div>
           <button className="btn ghost sm" type="button" onClick={logout}>Sign out</button></div>

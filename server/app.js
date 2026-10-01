@@ -199,6 +199,7 @@ export async function handle(req, res) {
       if (!admin) throw new Rule('Only an admin can add people.', 403);
       const b = await readBody(req), email = String(b.email || '').trim().toLowerCase();
       if (!b.name || !email || String(b.password || '').length < 8) throw new Rule('Enter name, email and a password of at least 8 characters.');
+      if (b.title && !TITLE_TEAM[b.title]) throw new Rule('Choose a role from the list.');
       const id = newId('u_');
       try { await db.query('insert into users (id, email, name, title, team, phone, is_admin, pass_hash) values ($1,$2,$3,$4,$5,$6,$7,$8)',
         [id, email, b.name.trim(), b.title || 'bde', TITLE_TEAM[b.title] || 'sales', b.phone || '', !!b.isAdmin, hashPassword(b.password)]); }
