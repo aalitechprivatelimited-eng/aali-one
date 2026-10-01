@@ -111,8 +111,9 @@ test('daily reports: one per day, private to writer + manager + top, submit lock
   assert.equal((await patch(bde2, r.id, { plan: 'x' })).status, 403);
   assert.equal((await patch(sm, r.id, { plan: 'x' })).status, 403, 'a manager cannot rewrite it');
   assert.equal((await patch(bde1, r.id, { status: 'submitted' })).status, 400, 'empty report cannot be submitted');
-  const up = await patch(bde1, r.id, { entries: [{ text: 'Called 20 clinics' }], nums: { calls: 20 } });
+  const up = await patch(bde1, r.id, { entries: [{ text: 'Called 20 clinics', kind: 'Calling', mins: '95' }], nums: { calls: 20 } });
   assert.equal(up.status, 200); assert.equal(up.body.record.entries.length, 1);
+  assert.equal(up.body.record.entries[0].kind, 'Calling'); assert.equal(up.body.record.entries[0].mins, 95);
   const since = new Date(Date.now() - 5e3).toISOString();
   assert.ok((await call('GET', '/changes?since=' + encodeURIComponent(since), null, sm)).body.records.some((x) => x.id === r.id), 'the manager gets the update live');
   assert.ok(!(await call('GET', '/changes?since=' + encodeURIComponent(since), null, bde2)).body.records.some((x) => x.id === r.id));

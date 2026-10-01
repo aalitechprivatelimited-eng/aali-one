@@ -44,6 +44,11 @@ export const DEFAULT_SETTINGS = {
     { id: 'svc-host', name: 'Domain + hosting (yearly)', unit: 'Year', rate: 4500, note: 'Domain renewal and shared hosting.' },
   ],
   discountApprovalPct: 10,
+  // Kinds of work a person can pick for each line of the daily report (time is added up per kind).
+  workTypes: {
+    sales: ['Calling', 'Information gathering', 'Client visit / meeting', 'Follow-up messages', 'Video making', 'Poster / design work', 'Client work (photo editing etc.)', 'Quotation / paperwork', 'Payment collection', 'Team management', 'Other'],
+    it: ['Development', 'Design', 'Testing', 'Client changes', 'Support', 'Meeting', 'Team management', 'Other'],
+  },
   leadSeesReports: false, // when on, the IT Team Lead can read the developers' daily reports
   escalateDays: 3,
   templates: [

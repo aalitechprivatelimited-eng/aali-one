@@ -11,7 +11,7 @@ export default function Settings() {
   const L = ({ to, children }) => <NavLink to={'/settings/' + to} className={({ isActive }) => 'btn sm' + (isActive ? ' primary' : '')}>{children}</NavLink>;
   return <>
     <div className="topbar"><h1>Settings</h1></div>
-    <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{canAddPeople() && <L to="people">{admin ? 'People & teams' : 'My team members'}</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales setup</L>}
+    <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{canAddPeople() && <L to="people">{admin ? 'People & teams' : 'My team members'}</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales & report setup</L>}
       {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{admin && <L to="projects">Project templates</L>}<L to="connections">Connections</L>
       {isManager() && <L to="audit">Audit log</L>}{admin && <L to="trash">Recycle bin</L>}{admin && <L to="data">Sample data</L>}<L to="help">Help</L></div>
     <Routes>
@@ -129,7 +129,7 @@ function Business() {
 function Lines({ label, value, onChange }) { return <Field label={label} hint="One per line"><Area value={value.join('\n')} onChange={(e) => onChange(e.target.value.split('\n'))} onBlur={(e) => onChange(e.target.value.split('\n').map((x) => x.trim()).filter(Boolean))} style={{ minHeight: 120 }} /></Field>; }
 function Sales() {
   const s = settings(), [pipe, setPipe] = useState(structuredClone(s.pipeline)), [srv, setSrv] = useState(structuredClone(s.services)), [src, setSrc] = useState(s.sources), [lost, setLost] = useState(s.lostReasons);
-  const [disc, setDisc] = useState(s.discountApprovalPct), [esc, setEsc] = useState(s.escalateDays);
+  const [disc, setDisc] = useState(s.discountApprovalPct), [esc, setEsc] = useState(s.escalateDays), [wt, setWt] = useState(structuredClone(s.workTypes));
   return <div className="stack gap16" style={{ maxWidth: 900 }}>
     <div className="card stack"><h2>Deal stages and win chance</h2><p className="small muted" style={{ margin: 0 }}>Win chance is used for “likely income”. Stage keys stay the same; you can rename them.</p>
       {pipe.map((p, i) => <div key={p.key} className="row"><In value={p.label} onChange={(e) => setPipe(pipe.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} style={{ maxWidth: 260 }} />
@@ -142,6 +142,9 @@ function Sales() {
       <div className="row"><button className="btn sm" type="button" onClick={() => setSrv([...srv, { id: 'svc-' + Date.now().toString(36), name: 'New service', unit: 'Project', rate: 0, note: '' }])}>+ Service</button><button className="btn primary sm" type="button" onClick={() => attempt(() => saveSetting('services', srv), 'Saved.')}>Save services</button></div></div>
     <div className="grid2"><div className="card stack"><Lines label="Lead sources" value={src} onChange={setSrc} /><button className="btn primary sm" type="button" onClick={() => attempt(() => saveSetting('sources', src.filter(Boolean)), 'Saved.')}>Save sources</button></div>
       <div className="card stack"><Lines label="Reasons a deal is lost" value={lost} onChange={setLost} /><button className="btn primary sm" type="button" onClick={() => attempt(() => saveSetting('lostReasons', lost.filter(Boolean)), 'Saved.')}>Save reasons</button></div></div>
+    <div className="card stack"><h2>Kinds of work in the daily report</h2><p className="small muted" style={{ margin: 0 }}>People pick one of these for every line they write, with the minutes spent. Add anything your teams do, such as video making or photo editing.</p>
+      <div className="grid2"><Lines label="Sales team" value={wt.sales} onChange={(v) => setWt({ ...wt, sales: v })} /><Lines label="IT team" value={wt.it} onChange={(v) => setWt({ ...wt, it: v })} /></div>
+      <button className="btn primary sm" type="button" style={{ alignSelf: 'start' }} onClick={() => attempt(() => saveSetting('workTypes', { sales: wt.sales.filter(Boolean), it: wt.it.filter(Boolean) }), 'Saved.')}>Save kinds of work</button></div>
     <div className="card form"><Field label="Discount above this % needs a manager's OK"><In type="number" value={disc} onChange={(e) => setDisc(e.target.value)} /></Field>
       <Field label="Escalate to top management after (days late)"><In type="number" value={esc} onChange={(e) => setEsc(e.target.value)} /></Field>
       <button className="btn primary sm" type="button" style={{ alignSelf: 'end' }} onClick={() => attempt(async () => { await saveSetting('discountApprovalPct', +disc); await saveSetting('escalateDays', +esc); }, 'Saved.')}>Save limits</button></div>

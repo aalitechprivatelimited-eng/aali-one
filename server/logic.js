@@ -146,6 +146,7 @@ export async function beforeCreate(t, type, data, user, sample) {
 }
 const cleanEntries = (list) => (Array.isArray(list) ? list : []).filter((e) => String(e?.text || '').trim()).slice(0, 100).map((e) => ({
   id: e.id || newId('e_'), at: e.at || new Date().toISOString(), text: String(e.text).trim().slice(0, 500),
+  ...(e.kind ? { kind: String(e.kind).slice(0, 60) } : {}), ...(Number(e.mins) > 0 ? { mins: Math.min(1440, Math.round(Number(e.mins))) } : {}),
   ...(e.refId ? { refId: e.refId, refLabel: String(e.refLabel || '').slice(0, 120), refLink: String(e.refLink || '').slice(0, 120) } : {}) }));
 // Who is told when a report is submitted: the department manager; for a manager's own report, the Ops Manager and Company Secretary.
 async function reportWatchers(t, d) {
