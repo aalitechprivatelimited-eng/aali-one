@@ -342,15 +342,16 @@ function Team() {
       <span className="small muted">One tap opens WhatsApp with the report typed in; you press send. Sending by itself every evening needs a WhatsApp Business account (Settings → Connections).</span></div>}
     {!rows.length && <Empty>No people in this view. Add people in Settings → People.</Empty>}
     {view === 'week' ? <Week people={people} end={date} pick={(d, id) => { setDate(d); setView('day'); setOpen(id); }} />
-      : <div className="split">
-        <div className="stack gap16">{['sales', 'it', 'management'].map((t) => { const g = rows.filter((x) => x.u.team === t); if (!g.length) return null;
+      : <div className={isTop(me) ? 'stack gap16' : 'split'}>
+        {/* Management sees the departments side by side (IT | Sales); a department manager keeps the single list with the side panel. */}
+        <div className={isTop(me) ? 'deptcols' : 'stack gap16'}>{(isTop(me) ? ['it', 'sales', 'management'] : ['sales', 'it', 'management']).map((t) => { const g = rows.filter((x) => x.u.team === t); if (!g.length) return null;
           const parts = [['Manager', g.filter((x) => isManager(x.u))], ['Team', g.filter((x) => !isManager(x.u))]].filter((x) => x[1].length), cs = g.reduce((n, x) => n + callStats(x.r).n, 0);
-          return <section key={t}><div className="row between" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{TEAMS[t]} Team</h2>
+          return <section key={t} className={isTop(me) ? 'deptcol' : ''}><div className="row between" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{TEAMS[t]} Team</h2>
             <span className="small muted">{g.filter((x) => x.r).length} of {g.length} present · {g.filter((x) => x.r?.status === 'submitted').length} submitted{t === 'sales' ? ` · ${cs} calls` : ''}</span></div>
             {parts.map(([label, list]) => <div key={label} style={{ marginBottom: 10 }}><span className="lbl">{TEAMS[t]} {label}{label === 'Team' ? ` · ${list.length}` : ''}</span>
               <div className="list" style={{ marginTop: 4 }}>{list.map(({ u, r }, i) => <PersonRow key={u.id} u={u} r={r} date={date} first={!i} open={open === u.id} toggle={() => setOpen(open === u.id ? '' : u.id)} />)}</div></div>)}
           </section>; })}</div>
-        <div className="stack">
+        <div className={isTop(me) ? 'grid3' : 'stack'} style={{ alignItems: 'start' }}>
           <div className="card"><h3>Time by kind of work</h3><TimeBars reports={rows.map((x) => x.r)} empty="No timed work written for this day yet." /></div>
           <div className="card"><h3>Latest updates</h3>{feed.length ? <div className="stack gap4">{feed.map((e) => <div key={e.u.id + e.id} className="small"><span className="num faint">{hm(e.at)}</span> <b>{e.u.name.split(' ')[0]}</b> · {e.brk ? 'Break' : (e.kind ? e.kind + ': ' : '') + e.text}{e.state === 'running' ? ' (in progress)' : e.mins ? ` (${fmtMins(e.mins)})` : ''}</div>)}</div> : <p className="small muted" style={{ margin: 0 }}>Nothing written for this day yet. New lines show here by themselves.</p>}</div>
           {help.length > 0 && <div className="card"><h3>Problems / help needed</h3><div className="stack gap4">{help.map(({ u, r }) => <div key={u.id} className="small"><b>{u.name}</b> · {r.blockers}</div>)}</div></div>}
@@ -362,8 +363,8 @@ function PersonRow({ u, r, date, open, toggle, first }) {
   const nudge = waLink(u.phone, `Hi ${u.name.split(' ')[0]}, please update your daily work report for ${fmtDate(date)} in Aali One: ${location.origin}/daily`);
   return <div style={{ borderTop: first ? 'none' : '1px solid var(--line)' }}>
     <button type="button" className="li" onClick={toggle} aria-expanded={open} style={{ width: '100%', border: 'none', background: 'none', textAlign: 'left' }}>
-      <Av id={u.id} /><div className="grow"><div className="t">{u.name}</div><div className="small muted">{desig(u)} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} task${r.entries?.length === 1 ? '' : 's'} · last ${ago(r.updatedAt)}` : ''}</div></div>
-      <DaySummary r={r} small />
+      <Av id={u.id} /><div className="grow" style={{ minWidth: 150 }}><div className="t">{u.name}</div><div className="small muted">{desig(u)} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} task${r.entries?.length === 1 ? '' : 's'} · last ${ago(r.updatedAt)}` : ''}</div></div>
+      {r && <div style={{ flexBasis: '100%', order: 9, paddingLeft: 38 }}><DaySummary r={r} small /></div>}
       {cs.n > 0 && <span className="small muted"><span className="num">{cs.n}</span> calls · <span className="num">{cs.pos}</span> interested</span>}
       {r?.blockers?.trim() && <Pill k="bad">Needs help</Pill>}<Pill k={k}>{l}</Pill><Sample on={r?.sample} /><span className="faint" aria-hidden>{open ? '▾' : '▸'}</span></button>
     {open && <div className="stack" style={{ padding: '4px 14px 14px 52px' }}>

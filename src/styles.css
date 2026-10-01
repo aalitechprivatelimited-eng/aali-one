@@ -171,6 +171,9 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 @keyframes welcome-up{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.confetti{display:none}.welcome-badge,.welcome-badge svg path,.welcome h2,.welcome .muted{animation:none;stroke-dashoffset:0}}
 
+.deptcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:14px;align-items:start}
+.deptcol{background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:12px 12px 4px;min-width:0}
+
 /* calendar + project progress */
 .calhead{padding:6px 8px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--line);background:var(--gold-50)}
 .calday{min-height:108px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:5px;cursor:pointer;overflow:hidden}
