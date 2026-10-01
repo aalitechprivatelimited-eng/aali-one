@@ -207,6 +207,10 @@ test('company on staff; collaborations are for management only; task timing', as
   assert.equal(done.body.record.entries[0].mins, 42); assert.equal(done.body.record.entries[0].state, undefined);
   const cs = await patch(bde2, r.id, { calls: [{ org: 'Gems High School', phone: '9963522158', place: 'Bapatla', resp: 'Interested', meeting: 'Tomorrow', met: 1, note: 'Wants quotation' }, { org: '  ' }] });
   assert.equal(cs.body.record.calls.length, 1); assert.equal(cs.body.record.calls[0].met, true);
+  const cur = cs.body.record.entries, v = { text: 'Website discussion', kind: 'Client visit / meeting', mins: 60 };
+  assert.equal((await patch(bde2, r.id, { entries: [...cur, v] })).status, 400, 'a client visit needs the client details');
+  const vis = await patch(bde2, r.id, { entries: [...cur, { ...v, visit: { client: 'Gems High School', person: 'Principal', phone: '9963522158', place: 'Bapatla' } }] });
+  assert.equal(vis.status, 200); assert.equal(vis.body.record.entries[1].visit.client, 'Gems High School');
   const fin = await patch(bde2, r.id, { status: 'submitted' });
   assert.equal((await patch(bde2, r.id, { calls: [] })).status, 400, 'the call sheet is locked after submit');
   assert.equal(fin.status, 200); assert.ok(fin.body.record.dayEnd, 'the day ends at submit');

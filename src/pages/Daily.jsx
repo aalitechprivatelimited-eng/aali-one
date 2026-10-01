@@ -69,7 +69,7 @@ const dayText = (d) => `Day ${hm(d.start)} – ${d.open ? 'still on' : hm(d.end)
 function reportText(r) {
   const u = user(r.owner), d = dayLine(r), t = timeByType([r]);
   const out = [`*Daily report · ${u?.name || ''}* (${desig(u)})`, fullDate(r.date), d.start ? dayText(d) : '', '', '*Tasks*'];
-  for (const x of d.rows.slice(0, 30)) out.push(x.gap ? `• ${hm(x.s)}–${hm(x.en)} _Nothing recorded (${fmtMins(Math.round((x.en - x.s) / 60000))})_` : x.e.brk ? `• ${hm(x.s)}–${hm(x.en)} Break` : `• ${hm(x.s)}–${x.e.state === 'running' ? 'now' : hm(x.en)} ${x.e.kind ? x.e.kind + ': ' : ''}${x.e.text}${x.e.proj ? ' [' + x.e.proj + ']' : ''}${x.e.note ? ' – ' + x.e.note : ''} (${fmtMins(Math.round((x.en - x.s) / 60000))}${x.e.state === 'running' ? ', in progress' : ''})`);
+  for (const x of d.rows.slice(0, 30)) out.push(x.gap ? `• ${hm(x.s)}–${hm(x.en)} _Nothing recorded (${fmtMins(Math.round((x.en - x.s) / 60000))})_` : x.e.brk ? `• ${hm(x.s)}–${hm(x.en)} Break` : `• ${hm(x.s)}–${x.e.state === 'running' ? 'now' : hm(x.en)} ${x.e.kind ? x.e.kind + ': ' : ''}${x.e.text}${x.e.visit ? ` [Client: ${x.e.visit.client}, met ${x.e.visit.person}, ${x.e.visit.phone}, ${x.e.visit.place}]` : x.e.proj ? ' [' + x.e.proj + ']' : ''}${x.e.note ? ' – ' + x.e.note : ''} (${fmtMins(Math.round((x.en - x.s) / 60000))}${x.e.state === 'running' ? ', in progress' : ''})`);
   if (t.total) out.push('', '*Time by kind of work*', ...t.rows.map(([k, m]) => `• ${k}: ${fmtMins(m)}`));
   if (r.calls?.length) out.push('', `*Calls:* ${callLine(callStats(r))}`, ...r.calls.filter((c) => ['Interested', 'Call back'].includes(c.resp) || c.met).slice(0, 15).map((c) => `• ${c.org}${c.place ? ', ' + c.place : ''} – ${c.resp}${c.meeting ? ', meeting: ' + c.meeting : ''}${c.note ? ' – ' + c.note : ''}`));
   if (r.blockers?.trim()) out.push('', `*Problems / help needed:* ${r.blockers.trim()}`);
@@ -218,11 +218,13 @@ function Mine() {
 }
 function Editor({ date, r }) {
   const me = store.me, locked = r?.status === 'submitted';
+  const [vis, setVis] = useState({ client: '', person: '', phone: '', place: '' }), upV = (k) => (e) => setVis({ ...vis, [k]: e.target.value });
   const [text, setText] = useState(''), [proj, setProj] = useState(''), [busy, setBusy] = useState(false), [mins, setMins] = useState(''), [from, setFrom] = useState('');
   const lastEnd = r ? (r.entries || []).reduce((m, e) => Math.max(m, bounds(e)[1]), r.dayStart ? new Date(r.dayStart).getTime() : 0) : 0, fromV = from || (lastEnd ? hm24(lastEnd) : '');
   const onBreak = r?.entries?.some((e) => e.brk && e.state === 'running');
   const types = typesFor(me.team), [kind, setKind] = useState(() => { try { const k = localStorage.getItem('aali-worktype'); return types.includes(k) ? k : ''; } catch { return ''; } });
-  const ready = text.trim() && kind, timed = +mins > 0 && /^\d\d:\d\d$/.test(fromV);
+  const isVisit = /visit/i.test(kind), visitOk = !isVisit || (vis.client.trim() && vis.person.trim() && vis.phone.trim() && vis.place.trim());
+  const ready = text.trim() && kind && visitOk, timed = +mins > 0 && /^\d\d:\d\d$/.test(fromV);
   const [f, setF] = useState({ plan: r?.plan || '', blockers: r?.blockers || '', nums: r?.nums || {} });
   const save = (data) => (r ? update(r.id, data) : create('report', { date, ...data }));
   const dirty = f.plan !== (r?.plan || '') || f.blockers !== (r?.blockers || '') || JSON.stringify(f.nums) !== JSON.stringify(r?.nums || {});
@@ -234,8 +236,8 @@ function Editor({ date, r }) {
     const t = text.trim(); if (!ready || busy || (!running && !timed)) return; setBusy(true);
     try { localStorage.setItem('aali-worktype', kind); } catch {}
     const now = new Date().toISOString(), st = running ? 0 : new Date(`${date}T${fromV}:00`).getTime(), m = Math.round(+mins);
-    const line = { id: Math.random().toString(36).slice(2, 10), at: now, text: t, kind, ...(running ? { state: 'running', start: now } : { mins: m, start: new Date(st).toISOString(), end: new Date(st + m * 60000).toISOString() }), ...(proj.trim() ? { proj: proj.trim() } : {}) };
-    if (await attempt(() => save({ ...f, entries: [...(running ? closeRunning(r?.entries || []) : r?.entries || []), line] }), running ? 'Task started. The earlier task is closed.' : '')) { setText(''); setMins(''); setFrom(''); setProj(''); }
+    const line = { id: Math.random().toString(36).slice(2, 10), at: now, text: t, kind, ...(running ? { state: 'running', start: now } : { mins: m, start: new Date(st).toISOString(), end: new Date(st + m * 60000).toISOString() }), ...(isVisit ? { visit: vis, proj: vis.client.trim() } : proj.trim() ? { proj: proj.trim() } : {}) };
+    if (await attempt(() => save({ ...f, entries: [...(running ? closeRunning(r?.entries || []) : r?.entries || []), line] }), running ? 'Task started. The earlier task is closed.' : '')) { setText(''); setMins(''); setFrom(''); setProj(''); setVis({ client: '', person: '', phone: '', place: '' }); }
     setBusy(false);
   }
   const change = (id, fn, ok) => attempt(() => update(r.id, { ...f, entries: r.entries.map((x) => (x.id === id ? fn(x) : x)) }), ok);
@@ -263,7 +265,14 @@ function Editor({ date, r }) {
       <span className="lbl" style={{ marginTop: 6 }}>2. The task – write exactly what you are doing</span>
       <div className="row">
         <input className="in" style={{ flex: '3 1 260px' }} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Editing 6 photos for Hotel Leela Imperial gallery page" autoFocus maxLength={500} />
-        <input className="in" style={{ flex: '1 1 170px' }} value={proj} onChange={(e) => setProj(e.target.value)} placeholder="Client / project" maxLength={120} /></div>
+        {!isVisit && <input className="in" style={{ flex: '1 1 170px' }} value={proj} onChange={(e) => setProj(e.target.value)} placeholder="Client / project" maxLength={120} />}</div>
+      {isVisit && <div className="stack gap4" style={{ background: 'var(--gold-50)', border: '1px solid var(--line-2)', borderRadius: 10, padding: 10 }}>
+        <span className="lbl">Client visit – who are you visiting? (all four are needed)</span>
+        <div className="row"><input className="in" style={{ flex: '2 1 200px' }} value={vis.client} onChange={upV('client')} placeholder="Client / business name" maxLength={120} />
+          <input className="in" style={{ flex: '1 1 160px' }} value={vis.person} onChange={upV('person')} placeholder="Person you are meeting" maxLength={80} />
+          <input className="in" style={{ flex: '1 1 130px' }} value={vis.phone} onChange={upV('phone')} placeholder="Their contact no." inputMode="tel" maxLength={40} />
+          <input className="in" style={{ flex: '1 1 160px' }} value={vis.place} onChange={upV('place')} placeholder="Place / address" maxLength={120} /></div>
+        <span className="small muted">In the task box above, write the purpose of the visit. When you are back, press “Add outcome” on the visit to write what was decided.</span></div>}
       <span className="lbl" style={{ marginTop: 6 }}>3. Time</span>
       <div className="row">
         <button className="btn primary" type="button" disabled={!ready || busy} onClick={() => add(true)}>▶ Start this task now</button>
@@ -297,15 +306,15 @@ function Entries({ r, onDrop, onFinish, onFix, onNote }) {
       const e = x.e, run = e.state === 'running';
       return <div className="li" key={e.id} style={{ padding: '7px 12px', background: run ? 'var(--warn-bg)' : '' }}>
         <span className="num small muted" style={{ width: 118, flex: 'none' }}>{hm(x.s)} – {run ? 'now' : hm(x.en)}</span>
-        <div className="grow">{e.brk ? <Pill>Break</Pill> : <>{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.text}{e.proj && <> <Pill k="gold">{e.proj}</Pill></>}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</>}
+        <div className="grow">{e.brk ? <Pill>Break</Pill> : <>{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.text}{e.proj && !e.visit && <> <Pill k="gold">{e.proj}</Pill></>}{e.visit && <div className="small"><b>Client:</b> {e.visit.client} · <b>Met:</b> {e.visit.person} · <span className="num">{e.visit.phone}</span> · {e.visit.place}</div>}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</>}
           {rem?.id === e.id ? <div className="row" style={{ marginTop: 4 }}><input className="in grow" value={rem.v} onChange={(ev) => setRem({ id: e.id, v: ev.target.value })} placeholder="Result, issue or remark" maxLength={300} autoFocus /><button className="btn sm" type="button" onClick={() => { onNote(e.id, rem.v.trim()); setRem(null); }}>Save</button></div>
-            : e.note ? <div className="small muted">Remark: {e.note}</div> : null}</div>
+            : e.note ? <div className="small muted">{e.visit ? 'Outcome' : 'Remark'}: {e.note}</div> : null}</div>
         {run ? <><Pill k="warn">{e.brk ? 'On break' : 'In progress'} · {fmtMins(dur)} so far</Pill>{onFinish && <button className="btn primary sm" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}</>
           : edit?.id === e.id ? <><input className="in" style={{ width: 80 }} type="number" min="1" max="1440" value={edit.v} onChange={(ev) => setEdit({ id: e.id, v: ev.target.value })} aria-label="Minutes" autoFocus />
               <button className="btn sm" type="button" disabled={!(+edit.v > 0)} onClick={() => { onFix(e.id, +edit.v); setEdit(null); }}>Save</button></>
             : <>{!e.brk && <Pill k="ok">Done</Pill>}<span className="num small" style={{ minWidth: 64, textAlign: 'right' }}>{fmtMins(e.mins || dur)}</span>
               {onFix && <button className="btn ghost sm" type="button" title="Use this if you forgot to press Finish on time" onClick={() => setEdit({ id: e.id, v: e.mins || dur || '' })}>Fix time</button>}</>}
-        {onNote && !e.brk && <button className="btn ghost sm" type="button" onClick={() => setRem({ id: e.id, v: e.note || '' })}>{e.note ? 'Edit remark' : 'Add remark'}</button>}
+        {onNote && !e.brk && <button className="btn ghost sm" type="button" onClick={() => setRem({ id: e.id, v: e.note || '' })}>{e.visit ? (e.note ? 'Edit outcome' : 'Add outcome') : e.note ? 'Edit remark' : 'Add remark'}</button>}
         {onDrop && <button className="btn ghost sm" type="button" aria-label="Remove this line" onClick={() => onDrop(e.id)}>Remove</button>}</div>; })}
     {r.dayEnd && <div className="li" style={mark}><span className="num muted" style={{ width: 132, flex: 'none' }}>{hm(d.end)}</span><b>Day ended</b></div>}
   </div>;

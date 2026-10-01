@@ -145,7 +145,7 @@ export async function beforeCreate(t, type, data, user, sample) {
       if (data.date < addDays(today(), -3) && !user.is_admin) throw new Rule('You can fill a report for the last 3 days only.');
       const ex = (await t.query("select id from records where deleted_at is null and type = 'report' and data->>'owner' = $1 and data->>'date' = $2", [me, data.date])).rows[0];
       if (ex) return { merged: true, id: ex.id, type: 'report' }; // one report per person per day
-      data.status = 'open'; data.entries = cleanEntries(data.entries); data.calls = cleanCalls(data.calls);
+      data.status = 'open'; data.entries = cleanEntries(data.entries); checkVisits(data.entries); data.calls = cleanCalls(data.calls);
       if (data.date === today()) data.dayStart = new Date().toISOString(); else delete data.dayStart; // the day starts when the report is opened
       delete data.dayEnd;
       for (const k of ['remarks', 'reviewed', 'submittedAt', 'log']) delete data[k];
@@ -159,8 +159,11 @@ const cleanEntries = (list) => (Array.isArray(list) ? list : []).filter((e) => S
   ...(e.kind ? { kind: String(e.kind).slice(0, 60) } : {}), ...(Number(e.mins) > 0 ? { mins: Math.min(1440, Math.round(Number(e.mins))) } : {}),
   // A task can be started and finished: the time taken is worked out from the two moments.
   ...(e.start ? { start: String(e.start).slice(0, 30) } : {}), ...(e.end ? { end: String(e.end).slice(0, 30) } : {}), ...(e.state === 'running' ? { state: 'running' } : {}), ...(e.brk ? { brk: true } : {}),
+  ...(e.visit?.client ? { visit: { client: String(e.visit.client).trim().slice(0, 120), person: String(e.visit.person || '').trim().slice(0, 80), phone: String(e.visit.phone || '').trim().slice(0, 40), place: String(e.visit.place || '').trim().slice(0, 120) } } : {}),
   ...(e.proj ? { proj: String(e.proj).trim().slice(0, 120) } : {}), ...(e.note ? { note: String(e.note).trim().slice(0, 300) } : {}),
   ...(e.refId ? { refId: e.refId, refLabel: String(e.refLabel || '').slice(0, 120), refLink: String(e.refLink || '').slice(0, 120) } : {}) }));
+// A client visit must say who was visited: client name, the person met, their number and the place.
+const checkVisits = (list) => { for (const e of list) if (/visit/i.test(e.kind || '') && !(e.visit?.client && e.visit.person && e.visit.phone && e.visit.place)) throw new Rule('For a client visit, enter the client name, the person you are meeting, their contact number and the place.'); };
 // The call sheet inside a report: one row per call, as the BDEs kept in Excel.
 const cleanCalls = (list) => (Array.isArray(list) ? list : []).filter((c) => String(c?.org || '').trim()).slice(0, 400).map((c) => ({
   id: c.id || newId('c_'), at: c.at || new Date().toISOString(), org: String(c.org).trim().slice(0, 120), phone: String(c.phone || '').trim().slice(0, 40),
@@ -306,7 +309,7 @@ export async function beforeUpdate(t, rec, next, user) {
       if (!canSeeReport(user, prev, !!(await getSetting(t, 'leadSeesReports', false)))) throw new Rule('You cannot open this report.', 403);
       const remark = String(next._remark || '').trim().slice(0, 500), reviewed = !!next._reviewed; delete next._remark; delete next._reviewed;
       for (const k of ['owner', 'team', 'ownerTitle', 'date', 'remarks', 'reviewed', 'submittedAt', 'dayStart', 'dayEnd']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
-      if (mine) { next.entries = cleanEntries(next.entries); if (next.calls !== undefined) next.calls = cleanCalls(next.calls); }
+      if (mine) { next.entries = cleanEntries(next.entries); if (prev.status !== 'submitted') checkVisits(next.entries); if (next.calls !== undefined) next.calls = cleanCalls(next.calls); }
       const edited = ['entries', 'calls', 'plan', 'blockers', 'nums'].some((k) => JSON.stringify(next[k] ?? null) !== JSON.stringify(prev[k] ?? null));
       if (edited && !mine) throw new Rule('Only the writer can change a report. Managers can add a remark.', 403);
       if (edited && prev.status === 'submitted') throw new Rule('This report is already submitted. Ask your manager to send it back if it needs a change.');
