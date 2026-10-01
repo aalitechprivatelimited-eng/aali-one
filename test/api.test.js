@@ -150,10 +150,11 @@ test('daily reports: top management does not write one; IT Team Lead switch', as
   const sees = async (c, id) => (await call('GET', '/bootstrap', null, c)).body.records.some((x) => x.id === id);
   assert.equal(await sees(tl, r.id), false, 'off by default');
   assert.equal((await patch(tl, r.id, { _remark: 'hi' })).status, 403);
-  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: true }, tl)).status, 403, 'only an admin flips the switch');
-  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: true }, admin)).status, 200);
+  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: true }, tl)).status, 403);
+  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: true }, admin)).status, 403, 'only the Operations Manager flips the switch');
+  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: true }, ops)).status, 200);
   assert.equal(await sees(tl, r.id), true); assert.equal(await sees(tl, mgr.id), false, "not the IT Manager's report");
   assert.equal((await patch(tl, r.id, { _remark: 'Nice' })).status, 200);
-  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: false }, admin)).status, 200);
+  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: false }, ops)).status, 200);
   assert.equal(await sees(tl, r.id), false);
 });

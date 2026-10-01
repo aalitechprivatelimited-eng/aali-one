@@ -138,7 +138,7 @@ function Team() {
       <div className="stat"><span className="l">Waiting for review</span><span className="v">{n((x) => x.r?.status === 'submitted' && !x.r.reviewed)}</span></div>
       <div className={'stat' + (help.length ? ' hot' : '')}><span className="l">Need help</span><span className="v">{help.length}</span></div>
     </div>
-    {me.isAdmin && <label className="check card" style={{ marginBottom: 12 }}><input type="checkbox" checked={!!settings().leadSeesReports}
+    {me.title === 'ops' && <label className="check card" style={{ marginBottom: 12 }}><input type="checkbox" checked={!!settings().leadSeesReports}
       onChange={(e) => attempt(() => saveSetting('leadSeesReports', e.target.checked), e.target.checked ? "On: the IT Team Lead can now read the developers' reports." : "Off: only the IT Manager and top management read the developers' reports.")} />
       <span><b>IT Team Lead can read the developers' daily reports</b><br /><span className="small muted">Off for now. Switch it on when the IT team grows. The Team Lead can read and remark; review and send-back stay with the IT Manager.</span></span></label>}
     {!rows.length && <Empty>No people in this view. Add people in Settings → People.</Empty>}

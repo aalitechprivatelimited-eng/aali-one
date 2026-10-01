@@ -190,7 +190,7 @@ export async function handle(req, res) {
     // ---------- admin ----------
     m = path.match(/^\/settings\/(\w+)$/);
     if (m && method === 'PUT') {
-      if (!admin) throw new Rule('Only an admin can change settings.', 403);
+      if (m[1] === 'leadSeesReports' ? user.title !== 'ops' : !admin) throw new Rule(m[1] === 'leadSeesReports' ? 'Only the Operations Manager can change this switch.' : 'Only an admin can change settings.', 403);
       if (!SETTING_KEYS.includes(m[1])) throw new Rule('Unknown setting.');
       const b = await readBody(req); await setSetting(db, m[1], b.value); await audit(db, user, null, 'settings', m[1]);
       return send(res, 200, { ok: true });
