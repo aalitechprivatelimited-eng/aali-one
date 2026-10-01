@@ -76,7 +76,8 @@ function ProjectView({ id }) {
       <div className="row"><Link className="btn" to="/projects">All projects</Link>{deal && <Link className="btn" to={'/deals/' + deal.id}>Deal</Link>}
         {!so && ['testing', 'live'].includes(p.stage) && <Link className="btn primary" to={'/signoff/' + id}>Get client sign-off</Link>}</div></div>
     {!ok && <div className="banner bad" style={{ marginBottom: 12 }}><b>Advance not received.</b> No work at all, not even planning, until the BDE records the advance receipt.
-      {isManager() && <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={() => setAppr({ kind: 'start' })}>Approve early start</button>}</div>}
+      {isManager() ? <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={() => setAppr({ kind: 'start' })}>Approve early start</button>
+        : <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={() => setAppr({ kind: 'start', ask: true })}>Ask a manager for an early start</button>}</div>}
     <div className="tabs" role="tablist">{[['overview', 'Overview'], ['tasks', `Tasks (${tasks.filter((t) => t.status !== 'done').length})`], ['board', 'Task board'], ['timeline', 'Timeline'], ['changes', `Changes (${(p.changes || []).filter((c) => c.status !== 'closed').length})`], ['time', 'Time'], ['signoff', 'Sign-off'], ['talk', 'Comments & files'], ['history', 'History']].map(([k, l]) =>
       <button key={k} role="tab" type="button" aria-selected={tab === k} onClick={() => setTab(k)}>{l}</button>)}</div>
     {tab === 'overview' && <div className="grid2">
@@ -111,14 +112,14 @@ function ProjectView({ id }) {
       <div className="paper-wrap"><CertificateSheet s={so} project={p} /></div></> : <div className="card stack"><p style={{ margin: 0 }}>When the work is ready, hand your phone or tablet to the client. They sign on screen, a photo can be taken with their consent, and they rate the work. The project then moves to Live.</p>
         {(p.changes || []).some((c) => c.status === 'open') && <div className="banner">There are open client changes. Finish them, or tell the client before they sign.</div>}
         <div className="row"><Link className="btn primary" to={'/signoff/' + id}>Get client sign-off</Link>
-          {isManager() && !p.liveNoSign && <button className="btn" type="button" onClick={() => setAppr({ kind: 'nosign' })}>Allow Live without sign-off</button>}
+          {!p.liveNoSign && <button className="btn" type="button" onClick={() => setAppr({ kind: 'nosign', ask: !isManager() })}>{isManager() ? 'Allow Live without sign-off' : 'Ask to go Live without sign-off'}</button>}
           {p.liveNoSign && <Pill k="info">Live without sign-off allowed: {p.liveNoSign.reason}</Pill>}</div></div>}</div>}
     {tab === 'talk' && <div className="grid2"><div className="card stack"><h2>Comments</h2><Comments relType="project" relId={id} /></div><div className="card stack"><h2>Files</h2><Attachments value={p.files || []} onChange={(files) => set({ files })} /></div></div>}
     {tab === 'history' && <div className="card"><Log items={p.log} /></div>}
     {task && <TaskModal task={task.task} preset={task.preset} onClose={() => setTask(null)} />}
     {dl !== null && <Reason title="Why is the deadline changing?" hint="Everyone involved, including the BDE, is told." onClose={() => setDl(null)} onSave={(r) => set({ deadline: dl, _reason: r }, 'Deadline changed. Everyone involved was told.').then((x) => x && setDl(null))} />}
     {appr && <Reason title={appr.kind === 'start' ? 'Approve early start without advance' : 'Allow Live without client sign-off'} hint="Recorded in the project history." onClose={() => setAppr(null)}
-      onSave={(r) => set(appr.kind === 'start' ? { startApproved: { by: store.me.id, at: today(), reason: r }, stage: p.stage === 'awaiting' ? 'planning' : p.stage } : { liveNoSign: { by: store.me.id, at: today(), reason: r } }, 'Approved.').then((x) => x && setAppr(null))} />}
+      onSave={(r) => appr.ask ? attempt(() => create('approval', { kind: appr.kind === 'start' ? 'earlystart' : 'livenosign', relType: 'project', relId: id, reason: `${appr.kind === 'start' ? 'Start without advance' : 'Live without sign-off'} – ${p.name}: ${r}` }), 'Sent to the managers for approval.').then((x) => x && setAppr(null)) : set(appr.kind === 'start' ? { startApproved: { by: store.me.id, at: today(), reason: r }, stage: p.stage === 'awaiting' ? 'planning' : p.stage } : { liveNoSign: { by: store.me.id, at: today(), reason: r } }, 'Approved.').then((x) => x && setAppr(null))} />}
   </>;
 }
 

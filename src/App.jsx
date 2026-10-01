@@ -1,7 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list } from './api.js';
-import { Toaster, In, Field, attempt } from './ui.jsx';
+import { Toaster, In, Field, attempt, toast } from './ui.jsx';
 import { TITLES, feedItems, forScope, diff, isManager } from './lib.js';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
@@ -63,9 +63,29 @@ function Login({ setup }) {
   );
 }
 
+// Task reminder times: alert while Aali One is open (and a browser notification if allowed).
+function useReminders() {
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+    const tick = () => {
+      const now = new Date(), day = now.toISOString().slice(0, 10), hm = now.toTimeString().slice(0, 5);
+      let seen = {}; try { seen = JSON.parse(localStorage.getItem('aali-reminded') || '{}'); } catch {}
+      for (const t of list('task')) {
+        if (t.status === 'done' || !t.remindAt || t.due !== day || t.remindAt > hm || (t.owner !== store.me?.id && !(t.people || []).includes(store.me?.id))) continue;
+        const key = t.id + day; if (seen[key]) continue; seen[key] = 1;
+        toast(`Reminder: ${t.title}`);
+        try { if (Notification.permission === 'granted') new Notification('Aali One reminder', { body: t.title, icon: '/icon.svg' }); } catch {}
+      }
+      try { localStorage.setItem('aali-reminded', JSON.stringify(seen)); } catch {}
+    };
+    tick(); const h = setInterval(tick, 30000); return () => clearInterval(h);
+  }, []);
+}
+
 function Shell() {
   const [open, setOpen] = useState(false), loc = useLocation(), me = store.me;
   useEffect(() => setOpen(false), [loc.pathname]);
+  useReminders();
   const late = forScope(feedItems(), 'mine').filter((i) => diff(i.due) <= 0).length;
   const unread = list('notice').filter((n) => n.to === me.id && !n.read).length;
   const pending = isManager() ? list('approval').filter((a) => a.status === 'pending').length : 0;
