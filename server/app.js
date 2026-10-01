@@ -3,7 +3,7 @@ import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, createSession, userFromToken, dropSession, sessionCookie, readCookie,
   publicUser, tooManyFails, noteFail, clearFails } from './auth.js';
 import { beforeCreate, afterCreate, beforeUpdate, insertRec, getSetting, setSetting, isManager, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
-import { DEFAULT_SETTINGS, TITLE_TEAM } from '../shared/defaults.js';
+import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS } from '../shared/defaults.js';
 
 const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
 const MAX_BODY = 4_000_000;
@@ -86,7 +86,7 @@ export async function handle(req, res) {
     // ---------- signed in ----------
     const user = await userFromToken(db, readCookie(req, 'aali_session'));
     if (!user) throw new Rule('Please sign in.', 401);
-    const admin = user.is_admin;
+    const admin = user.is_admin, juniors = MANAGER_ADDS[user.title] || [];
     const leadSees = user.title === 'itlead' && !!(await getSetting(db, 'leadSeesReports', false));
     const mayRead = (r) => r.type === 'notice' ? r.data.to === user.id : r.type !== 'report' || canSeeReport(user, r.data, leadSees); // daily reports are private to the writer, their manager and top management
 
@@ -196,10 +196,10 @@ export async function handle(req, res) {
       return send(res, 200, { ok: true });
     }
     if (path === '/users' && method === 'POST') {
-      if (!admin) throw new Rule('Only an admin can add people.', 403);
       const b = await readBody(req), email = String(b.email || '').trim().toLowerCase();
       if (!b.name || !email || String(b.password || '').length < 8) throw new Rule('Enter name, email and a password of at least 8 characters.');
       if (b.title && !TITLE_TEAM[b.title]) throw new Rule('Choose a role from the list.');
+      if (!admin && !(juniors.includes(b.title) && !b.isAdmin)) throw new Rule(juniors.length ? 'You can add members to your own team only.' : 'Only an admin or a department manager can add people.', 403);
       const id = newId('u_');
       try { await db.query('insert into users (id, email, name, title, team, phone, is_admin, pass_hash) values ($1,$2,$3,$4,$5,$6,$7,$8)',
         [id, email, b.name.trim(), b.title || 'bde', TITLE_TEAM[b.title] || 'sales', b.phone || '', !!b.isAdmin, hashPassword(b.password)]); }
@@ -210,9 +210,11 @@ export async function handle(req, res) {
     m = path.match(/^\/users\/([\w-]+)$/);
     if (m && method === 'PATCH') {
       const b = await readBody(req), self = m[1] === user.id;
-      if (!admin && !self) throw new Rule('Only an admin can change other people.', 403);
       const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
-      const next = { name: b.name ?? u.name, phone: b.phone ?? u.phone, title: admin ? (b.title ?? u.title) : u.title, active: admin ? (b.active ?? u.active) : u.active, is_admin: admin ? (b.isAdmin ?? u.is_admin) : u.is_admin };
+      const lead = !admin && !self && juniors.includes(u.title) && !u.is_admin; // a manager looking after their own team member
+      if (!admin && !self && !lead) throw new Rule('You can change members of your own team only.', 403);
+      if (lead && b.title && !juniors.includes(b.title)) throw new Rule('You can give roles of your own team only.', 403);
+      const next = { name: b.name ?? u.name, phone: b.phone ?? u.phone, title: admin || lead ? (b.title ?? u.title) : u.title, active: admin || lead ? (b.active ?? u.active) : u.active, is_admin: admin ? (b.isAdmin ?? u.is_admin) : u.is_admin };
       if (self && next.active === false) throw new Rule("You can't switch off your own account.");
       await db.query('update users set name=$2, phone=$3, title=$4, team=$5, active=$6, is_admin=$7, updated_at=now() where id=$1',
         [u.id, next.name, next.phone, next.title, TITLE_TEAM[next.title] || u.team, next.active, next.is_admin]);

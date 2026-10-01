@@ -158,3 +158,23 @@ test('daily reports: top management does not write one; IT Team Lead switch', as
   assert.equal((await call('PUT', '/settings/leadSeesReports', { value: false }, ops)).status, 200);
   assert.equal(await sees(tl, r.id), false);
 });
+
+test('managers add and look after members of their own team only', async () => {
+  const login = async (e, p = 'password123') => (await call('POST', '/auth/login', { email: e, password: p })).cookie;
+  const sm = await login('sm@test.in'), it = await login('it@test.in');
+  const mk = (c, title, email, extra = {}) => call('POST', '/users', { name: 'New ' + title, email, password: 'password123', title, ...extra }, c);
+  assert.equal((await mk(bde1, 'bde', 'x1@test.in')).status, 403, 'a BDE cannot add people');
+  const nb = await mk(sm, 'bde', 'nb@test.in'); assert.equal(nb.status, 200); assert.equal(nb.body.user.team, 'sales');
+  assert.equal((await mk(sm, 'dev', 'x2@test.in')).status, 403, 'not into another team');
+  assert.equal((await mk(sm, 'salesmgr', 'x3@test.in')).status, 403, 'not another manager');
+  assert.equal((await mk(sm, 'bde', 'x4@test.in', { isAdmin: true })).status, 403, 'not an admin');
+  assert.equal((await mk(it, 'dev', 'nd@test.in')).status, 200);
+  const id = nb.body.user.id;
+  assert.equal((await call('PATCH', '/users/' + id, { password: 'changed-pass1' }, sm)).status, 200);
+  assert.ok(await login('nb@test.in', 'changed-pass1'));
+  assert.equal((await call('PATCH', '/users/' + id, { active: false }, it)).status, 403, 'the IT manager cannot touch a BDE');
+  assert.equal((await call('PATCH', '/users/' + id, { title: 'salesmgr' }, sm)).status, 403);
+  assert.equal((await call('PATCH', '/users/' + id, { isAdmin: true }, sm)).body.user.isAdmin, false);
+  assert.equal((await call('PATCH', '/users/' + id, { active: false }, sm)).body.user.active, false);
+  assert.equal((await call('PATCH', '/users/u_it', { active: false }, sm)).status, 403);
+});

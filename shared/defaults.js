@@ -8,6 +8,8 @@ export const TITLE_TEAM = { admin: 'management', chairman: 'management', ops: 'm
 export const TEAMS = { sales: 'Sales', it: 'IT', management: 'Management' };
 export const MANAGER_TITLES = ['salesmgr', 'itmgr', 'ops', 'cs', 'chairman', 'admin'];
 export const TOP_TITLES = ['ops', 'cs', 'chairman'];
+// Roles a department manager may add and look after in their own team.
+export const MANAGER_ADDS = { salesmgr: ['bde'], itmgr: ['itlead', 'dev'] };
 
 export const DEFAULT_SETTINGS = {
   business: {

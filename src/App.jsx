@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list } from './api.js';
 import { Toaster, In, Field, attempt, toast } from './ui.jsx';
-import { TITLES, feedItems, forScope, diff, isManager } from './lib.js';
+import { TITLES, feedItems, forScope, diff, isManager, canAddPeople } from './lib.js';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
 const Leads = lazy(() => import('./pages/Leads.jsx'));
@@ -101,7 +101,7 @@ function Shell() {
           <div className="sec">Sales</div><L to="/leads">Leads & enquiries</L><L to="/deals">Deals pipeline</L><L to="/clients">Clients</L><L to="/quotes">Quotations</L>
           <div className="sec">Delivery</div><L to="/projects">Projects</L><L to="/tasks">Tasks</L><L to="/support">Support</L>
           <div className="sec">Money</div><L to="/payments">Payments & receipts</L>
-          <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L>{me.isAdmin && <L to="/settings/people">People & teams</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
+          <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L>{canAddPeople() && <L to="/settings/people">{me.isAdmin ? 'People & teams' : 'My team members'}</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
         </nav>
         <div className="me"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b>{me.name}</b><div className="faint">{TITLES[me.title]}</div></div>
           <button className="btn ghost sm" type="button" onClick={logout}>Sign out</button></div>

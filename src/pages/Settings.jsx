@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
 import { useStore, store, http, saveSetting, setMe, upsertUser, poll } from '../api.js';
-import { settings, isManager, TITLES, TEAMS, uname, fmtDT, waLink } from '../lib.js';
+import { settings, isManager, TITLES, TEAMS, uname, fmtDT, waLink, myJuniors, canAddPeople } from '../lib.js';
 import { Field, In, Sel, Area, Pill, Empty, Modal, attempt, toast } from '../ui.jsx';
 
 export default function Settings() {
@@ -9,7 +9,7 @@ export default function Settings() {
   const L = ({ to, children }) => <NavLink to={'/settings/' + to} className={({ isActive }) => 'btn sm' + (isActive ? ' primary' : '')}>{children}</NavLink>;
   return <>
     <div className="topbar"><h1>Settings</h1></div>
-    <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{admin && <L to="people">People & teams</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales setup</L>}
+    <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{canAddPeople() && <L to="people">{admin ? 'People & teams' : 'My team members'}</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales setup</L>}
       {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{admin && <L to="projects">Project templates</L>}<L to="connections">Connections</L>
       {isManager() && <L to="audit">Audit log</L>}{admin && <L to="trash">Recycle bin</L>}{admin && <L to="data">Sample data</L>}<L to="help">Help</L></div>
     <Routes>
@@ -38,6 +38,8 @@ const newPassword = () => { const a = new Uint32Array(2); crypto.getRandomValues
 // People are added here, team by team. Nothing needs to be done in the database.
 function People() {
   const [add, setAdd] = useState(null), [pw, setPw] = useState(null), [made, setMade] = useState(null), [busy, setBusy] = useState(false);
+  const me = store.me, adm = me.isAdmin, jun = myJuniors(), can = (u) => adm || (u.id !== me.id && jun.includes(u.title) && !u.isAdmin);
+  if (!canAddPeople()) return <Empty>Only an admin or a department manager can add people.</Empty>;
   const patch = (u, data, ok) => attempt(async () => upsertUser((await http('PATCH', '/users/' + u.id, data)).user), ok);
   async function save() {
     setBusy(true); const r = await attempt(() => http('POST', '/users', add)); setBusy(false);
@@ -45,29 +47,29 @@ function People() {
   }
   const loginText = (u) => `Hi ${u.name.split(' ')[0]}, your Aali One login:\n${location.origin}\nEmail: ${u.email}\nPassword: ${u.password}\nPlease change the password after you sign in (Settings → My profile).`;
   return <div className="stack gap16">
-    <p className="small muted" style={{ margin: 0 }}>Add each person under their team. The role decides what they see: a manager sees the whole team; the Operations Manager, Company Secretary and Chairman see every department.</p>
-    {Object.entries(TEAMS).map(([team, label]) => { const us = store.users.filter((u) => u.team === team).sort((x, y) => TEAM_ROLES[team].indexOf(x.title) - TEAM_ROLES[team].indexOf(y.title) || x.name.localeCompare(y.name));
+    <p className="small muted" style={{ margin: 0 }}>{adm ? 'Add each person under their team. The role decides what they see: a manager sees the whole team; the Operations Manager, Company Secretary and Chairman see every department.' : 'Add and look after the members of your own team. Other teams and manager roles are handled by the Operations Manager or Company Secretary.'}</p>
+    {Object.entries(TEAMS).filter(([team]) => adm || team === me.team).map(([team, label]) => { const us = store.users.filter((u) => u.team === team).sort((x, y) => TEAM_ROLES[team].indexOf(x.title) - TEAM_ROLES[team].indexOf(y.title) || x.name.localeCompare(y.name));
       return <section key={team} className="stack" style={{ gap: 8 }}>
         <div className="row between"><div><h2 style={{ margin: 0 }}>{label} team <span className="small muted">{us.filter((u) => u.active).length} active</span></h2><span className="small muted">{TEAM_NOTE[team]}</span></div>
-          <button className="btn primary" type="button" onClick={() => setAdd({ team, title: TEAM_ROLES[team].at(-1), password: newPassword() })}>+ Add {label} member</button></div>
+          <button className="btn primary" type="button" onClick={() => setAdd({ team, title: (adm ? TEAM_ROLES[team] : jun).at(-1), password: newPassword() })}>+ Add {label} member</button></div>
         {us.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Email (login)</th><th>Role</th><th>Mobile</th><th>Admin</th><th>Active</th><th /></tr></thead><tbody>
           {us.map((u) => <tr key={u.id} style={{ opacity: u.active ? 1 : 0.55 }}><td><b>{u.name}</b></td><td>{u.email}</td>
-            <td><Sel value={u.title} onChange={(v) => patch(u, { title: v }, 'Role changed.')} style={{ minWidth: 150 }} options={Object.entries(TEAMS).flatMap(([t, l]) => TEAM_ROLES[t].map((k) => [k, t === team ? TITLES[k] : `${TITLES[k]} (move to ${l})`])).concat(u.title === 'admin' ? [['admin', TITLES.admin]] : [])} /></td>
-            <td>{u.phone || '—'}</td><td><input type="checkbox" aria-label="Admin" checked={u.isAdmin} disabled={u.id === store.me.id} onChange={(e) => patch(u, { isAdmin: e.target.checked })} /></td>
-            <td><input type="checkbox" aria-label="Active" checked={u.active} disabled={u.id === store.me.id} onChange={(e) => patch(u, { active: e.target.checked }, e.target.checked ? 'Switched on.' : 'Switched off. They can no longer sign in.')} /></td>
-            <td><button className="btn sm" type="button" onClick={() => setPw({ ...u, p: newPassword() })}>Set password</button></td></tr>)}</tbody></table></div>
+            <td><Sel value={u.title} disabled={!can(u)} onChange={(v) => patch(u, { title: v }, 'Role changed.')} style={{ minWidth: 150 }} options={!adm ? (can(u) ? jun : [u.title]).map((k) => [k, TITLES[k]]) : Object.entries(TEAMS).flatMap(([t, l]) => TEAM_ROLES[t].map((k) => [k, t === team ? TITLES[k] : `${TITLES[k]} (move to ${l})`])).concat(u.title === 'admin' ? [['admin', TITLES.admin]] : [])} /></td>
+            <td>{u.phone || '—'}</td><td><input type="checkbox" aria-label="Admin" checked={u.isAdmin} disabled={!adm || u.id === store.me.id} onChange={(e) => patch(u, { isAdmin: e.target.checked })} /></td>
+            <td><input type="checkbox" aria-label="Active" checked={u.active} disabled={!can(u) || u.id === store.me.id} onChange={(e) => patch(u, { active: e.target.checked }, e.target.checked ? 'Switched on.' : 'Switched off. They can no longer sign in.')} /></td>
+            <td>{can(u) && <button className="btn sm" type="button" onClick={() => setPw({ ...u, p: newPassword() })}>Set password</button>}</td></tr>)}</tbody></table></div>
           : <Empty>No one in the {label} team yet.</Empty>}
       </section>; })}
     {add && <Modal title={`Add ${TEAMS[add.team]} member`} onClose={() => setAdd(null)} footer={<><button className="btn" type="button" onClick={() => setAdd(null)}>Cancel</button>
       <button className="btn primary" type="button" disabled={busy || !add.name?.trim() || !add.email?.trim() || (add.password || '').length < 8} onClick={save}>{busy ? 'Adding…' : 'Add member'}</button></>}>
-      <div className="form"><Field label="Team"><Sel value={add.team} onChange={(v) => setAdd({ ...add, team: v, title: TEAM_ROLES[v].at(-1) })} options={TEAMS} /></Field>
-        <Field label="Role"><Sel value={add.title} onChange={(v) => setAdd({ ...add, title: v })} options={TEAM_ROLES[add.team].map((k) => [k, TITLES[k]])} /></Field>
+      <div className="form"><Field label="Team"><Sel value={add.team} disabled={!adm} onChange={(v) => setAdd({ ...add, team: v, title: TEAM_ROLES[v].at(-1) })} options={TEAMS} /></Field>
+        <Field label="Role"><Sel value={add.title} onChange={(v) => setAdd({ ...add, title: v })} options={(adm ? TEAM_ROLES[add.team] : jun).map((k) => [k, TITLES[k]])} /></Field>
         <Field label="Full name"><In value={add.name || ''} onChange={(e) => setAdd({ ...add, name: e.target.value })} autoFocus /></Field>
         <Field label="Mobile (for WhatsApp)"><In value={add.phone || ''} inputMode="tel" onChange={(e) => setAdd({ ...add, phone: e.target.value })} /></Field>
         <Field label="Email (this is their login)" full><In type="email" value={add.email || ''} onChange={(e) => setAdd({ ...add, email: e.target.value })} autoComplete="off" /></Field>
         <Field label="First password (8+ characters)" full hint="They can change it after signing in."><div className="row"><In className="in grow" value={add.password || ''} onChange={(e) => setAdd({ ...add, password: e.target.value })} autoComplete="new-password" />
           <button className="btn sm" type="button" onClick={() => setAdd({ ...add, password: newPassword() })}>New one</button></div></Field>
-        {add.team === 'management' && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> Administrator (can change settings and add people)</label>}</div></Modal>}
+        {adm && add.team === 'management' && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> Administrator (can change settings and add people)</label>}</div></Modal>}
     {made && <Modal title={`${made.name} is added`} onClose={() => setMade(null)} footer={<button className="btn primary" type="button" onClick={() => setMade(null)}>Done</button>}>
       <div className="stack"><div className="banner ok">Added to the {TEAMS[made.team]} team as {TITLES[made.title]}. Share this login with them privately. The password is shown only now.</div>
         <textarea className="in" readOnly value={loginText(made)} style={{ minHeight: 120 }} />

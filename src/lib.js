@@ -1,6 +1,6 @@
 // Small shared helpers: dates, people, labels, and the "what needs me" feed.
 import { store, list, get } from './api.js';
-import { TITLES, TEAMS, MANAGER_TITLES, TOP_TITLES } from '../shared/defaults.js';
+import { TITLES, TEAMS, MANAGER_TITLES, TOP_TITLES, MANAGER_ADDS } from '../shared/defaults.js';
 export { inr, inr2, num, mobile10 } from '../shared/money.js';
 export { TITLES, TEAMS };
 
@@ -24,6 +24,8 @@ export const uname = (id) => (!id ? 'Unassigned' : id === store.me?.id ? 'You' :
 export const realName = (id) => user(id)?.name || '';
 export const isManager = (u = store.me) => !!u && (u.isAdmin || MANAGER_TITLES.includes(u.title));
 export const isTop = (u = store.me) => !!u && (TOP_TITLES.includes(u.title) || u.isAdmin);
+export const myJuniors = (u = store.me) => MANAGER_ADDS[u?.title] || [];
+export const canAddPeople = (u = store.me) => !!u && (u.isAdmin || myJuniors(u).length > 0);
 export const teamOf = (id) => user(id)?.team || '';
 export const initials = (n) => (n || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 export const stageLabel = (k) => settings().pipeline.find((s) => s.key === k)?.label || k;
