@@ -69,7 +69,7 @@ button{cursor:pointer}
 .scrim{position:fixed;inset:0;background:rgba(40,30,10,.35);z-index:35}
 
 /* controls */
-.btn{border:1px solid var(--line-2);background:var(--paper);padding:7px 13px;border-radius:8px;font-weight:600;font-size:13.5px;display:inline-flex;gap:6px;align-items:center;text-decoration:none;color:var(--ink);white-space:nowrap}
+.btn{border:1px solid var(--line-2);background:var(--paper);padding:7px 13px;border-radius:8px;font-weight:600;font-size:13.5px;display:inline-flex;gap:6px;align-items:center;justify-content:center;text-decoration:none;color:var(--ink);white-space:nowrap}
 .btn:hover{border-color:var(--gold)}
 .btn.primary{background:var(--gold);border-color:var(--gold);color:#fff}
 .btn.primary:hover{background:var(--gold-strong)}
