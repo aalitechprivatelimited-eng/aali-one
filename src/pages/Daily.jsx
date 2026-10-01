@@ -2,10 +2,27 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore, store, list, create, update, poll, saveSetting } from '../api.js';
-import { today, addDays, fmtDate, fmtDT, iso, parse, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings, desig, user } from '../lib.js';
+import { today, addDays, fmtDate, fmtDT, iso, parse, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings, desig, user, mobile10 } from '../lib.js';
 import { Tabs, Seg, Pill, Av, Empty, Field, In, Area, Sel, Sample, DeleteButton, attempt, toast } from '../ui.jsx';
 
-const NUMS = { sales: [['calls', 'Calls made'], ['connected', 'Calls connected'], ['meetings', 'Meetings / visits'], ['leads', 'New leads found']], it: [['hours', 'Hours worked']], management: [] };
+// Call sheet: the responses a BDE can pick, and what counts as positive.
+const RESP = [['Interested', 'ok'], ['Call back', 'warn'], ['Not interested', ''], ['No answer', ''], ['Busy', ''], ['Not reachable', ''], ['Wrong number', '']];
+const respKind = (x) => RESP.find((r) => r[0] === x)?.[1] ?? '';
+const callStats = (r) => { const c = r?.calls || []; return { n: c.length, pos: c.filter((x) => x.resp === 'Interested').length, back: c.filter((x) => x.resp === 'Call back').length, meet: c.filter((x) => x.meeting).length, met: c.filter((x) => x.met).length }; };
+const callLine = (k) => `${k.n} call${k.n === 1 ? '' : 's'} · ${k.pos} interested · ${k.back} to call back · ${k.meet} meeting${k.meet === 1 ? '' : 's'} fixed · ${k.met} met in person`;
+// Turn whatever was typed in Excel ("NOT INTEREST", "follow up tomorrow", "not lifting") into one of our responses.
+function guessResp(t) {
+  const x = String(t || '').toLowerCase();
+  if (!x.trim()) return '';
+  if (/wrong/.test(x)) return 'Wrong number';
+  if (/not\s*reach|switch/.test(x)) return 'Not reachable';
+  if (/busy/.test(x)) return 'Busy';
+  if (/not\s*(answer|lift)|no\s*(answer|response)|call cut/.test(x)) return 'No answer';
+  if (/^(no|not)$|not\s*int/.test(x.trim())) return 'Not interested';
+  if (/follow|call|tomorrow|later|after|next|confirm/.test(x)) return 'Call back';
+  if (/int|yes|meet|quot/.test(x)) return 'Interested';
+  return '';
+}
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const fmtMins = (m) => (!m ? '0 min' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
 const typesFor = (team) => settings().workTypes?.[team] || [...new Set(Object.values(settings().workTypes || {}).flat())];
@@ -52,8 +69,9 @@ const dayText = (d) => `Day ${hm(d.start)} – ${d.open ? 'still on' : hm(d.end)
 function reportText(r) {
   const u = user(r.owner), d = dayLine(r), t = timeByType([r]);
   const out = [`*Daily report · ${u?.name || ''}* (${desig(u)})`, fullDate(r.date), d.start ? dayText(d) : '', '', '*Tasks*'];
-  for (const x of d.rows.slice(0, 30)) out.push(x.gap ? `• ${hm(x.s)}–${hm(x.en)} _Nothing recorded (${fmtMins(Math.round((x.en - x.s) / 60000))})_` : x.e.brk ? `• ${hm(x.s)}–${hm(x.en)} Break` : `• ${hm(x.s)}–${x.e.state === 'running' ? 'now' : hm(x.en)} ${x.e.kind ? x.e.kind + ': ' : ''}${x.e.text} (${fmtMins(Math.round((x.en - x.s) / 60000))}${x.e.state === 'running' ? ', in progress' : ''})`);
+  for (const x of d.rows.slice(0, 30)) out.push(x.gap ? `• ${hm(x.s)}–${hm(x.en)} _Nothing recorded (${fmtMins(Math.round((x.en - x.s) / 60000))})_` : x.e.brk ? `• ${hm(x.s)}–${hm(x.en)} Break` : `• ${hm(x.s)}–${x.e.state === 'running' ? 'now' : hm(x.en)} ${x.e.kind ? x.e.kind + ': ' : ''}${x.e.text}${x.e.proj ? ' [' + x.e.proj + ']' : ''}${x.e.note ? ' – ' + x.e.note : ''} (${fmtMins(Math.round((x.en - x.s) / 60000))}${x.e.state === 'running' ? ', in progress' : ''})`);
   if (t.total) out.push('', '*Time by kind of work*', ...t.rows.map(([k, m]) => `• ${k}: ${fmtMins(m)}`));
+  if (r.calls?.length) out.push('', `*Calls:* ${callLine(callStats(r))}`, ...r.calls.filter((c) => ['Interested', 'Call back'].includes(c.resp) || c.met).slice(0, 15).map((c) => `• ${c.org}${c.place ? ', ' + c.place : ''} – ${c.resp}${c.meeting ? ', meeting: ' + c.meeting : ''}${c.note ? ' – ' + c.note : ''}`));
   if (r.blockers?.trim()) out.push('', `*Problems / help needed:* ${r.blockers.trim()}`);
   if (r.plan?.trim()) out.push('', `*Plan for tomorrow:* ${r.plan.trim()}`);
   out.push('', r.status === 'submitted' ? 'Status: submitted' : 'Status: still being written', `Aali One: ${location.origin}/daily`);
@@ -63,7 +81,7 @@ function teamText(rows, date, label) {
   const got = rows.filter((x) => x.r), t = timeByType(got.map((x) => x.r));
   const out = [`*${label} · daily work report*`, fullDate(date), `${got.filter((x) => x.r.status === 'submitted').length} of ${rows.length} submitted · ${got.filter((x) => x.r.status !== 'submitted').length} still writing · ${rows.length - got.length} not started`, ''];
   for (const { u, r } of rows) { out.push(`*${u.name}* (${desig(u)})`); if (!r) { out.push('No report', ''); continue; } const d = dayLine(r);
-    out.push(d.start ? dayText(d) : 'No time recorded', ...timeByType([r]).rows.slice(0, 4).map(([k, m]) => `• ${k}: ${fmtMins(m)}`), ...(r.blockers?.trim() ? [`Problem: ${r.blockers.trim()}`] : []), ''); }
+    out.push(d.start ? dayText(d) : 'No time recorded', ...(r.calls?.length ? [callLine(callStats(r))] : []), ...timeByType([r]).rows.slice(0, 4).map(([k, m]) => `• ${k}: ${fmtMins(m)}`), ...(r.blockers?.trim() ? [`Problem: ${r.blockers.trim()}`] : []), ''); }
   if (t.total) out.push('*Team time by kind of work*', ...t.rows.map(([k, m]) => `• ${k}: ${fmtMins(m)}`), `Total: ${fmtMins(t.total)}`, '');
   out.push(`Aali One: ${location.origin}/daily`);
   return out.join('\n');
@@ -105,25 +123,72 @@ function autoStats(uid, date) {
   if (got) out.push(`${inr(got)} collected`);
   return out;
 }
-function refOptions(me) {
-  const mine = (x, k) => isManager(me) || x[k] === me.id || (x.people || []).includes(me.id);
-  const taskProjects = new Set(list('task').filter((t) => t.owner === me.id).map((t) => t.projectId));
-  return [
-    ...list('project').filter((p) => p.stage !== 'live' && (mine(p, 'lead') || taskProjects.has(p.id))).map((p) => [p.id, 'Project: ' + p.name, '/projects/' + p.id]),
-    ...list('deal').filter((d) => !['won', 'lost'].includes(d.stage) && mine(d, 'owner')).map((d) => [d.id, 'Deal: ' + d.title, '/deals/' + d.id]),
-  ];
-}
 
 // The department in one box: goes with the manager's own report, so top management reads one page per team.
 function TeamSummary({ team, date }) {
-  const people = expected().filter((u) => u.team === team && !isManager(u)), rs = people.map((u) => reportOf(u.id, date)).filter(Boolean);
-  const sum = (k) => rs.reduce((t, r) => t + (+r.nums?.[k] || 0), 0), help = rs.filter((r) => r.blockers?.trim());
+  const people = expected().filter((u) => u.team === team && !isManager(u)), rows = people.map((u) => ({ u, r: reportOf(u.id, date) })), rs = rows.map((x) => x.r).filter(Boolean);
+  const help = rs.filter((r) => r.blockers?.trim()), tot = rs.reduce((t, r) => { const k = callStats(r); for (const x in k) t[x] += k[x]; return t; }, { n: 0, pos: 0, back: 0, meet: 0, met: 0 });
   return <div className="card stack"><div className="row between"><h3 style={{ margin: 0 }}>{TEAMS[team]} team summary · {dayName(date)}</h3>
-    <span className="small muted">{rs.filter((r) => r.status === 'submitted').length} of {people.length} submitted · {rs.filter((r) => r.status === 'open').length} still writing · {people.length - rs.length} not started</span></div>
-    <div className="row small">{(NUMS[team] || []).map(([k, lb]) => <Pill key={k} k="gold">{lb}: {sum(k)}</Pill>)}</div>
+    <span className="small muted">{rs.length} present · {people.length - rs.length} not started · {rs.filter((r) => r.status === 'submitted').length} submitted</span></div>
+    {team === 'sales' && <div className="row small"><Pill k="gold">Calls made: {tot.n}</Pill><Pill k="ok">Interested: {tot.pos}</Pill><Pill k="warn">Call back: {tot.back}</Pill><Pill k="gold">Meetings fixed: {tot.meet}</Pill><Pill k="gold">Met in person: {tot.met}</Pill></div>}
+    <div className="tbl"><table><thead><tr><th>Name</th><th>Attendance</th>{team === 'sales' && <><th className="n">Calls</th><th className="n">Interested</th><th className="n">Call back</th><th className="n">Meetings</th><th className="n">Met</th></>}<th className="n">Worked</th><th className="n">Nothing recorded</th></tr></thead>
+      <tbody>{rows.map(({ u, r }) => { const k = callStats(r), d = r ? dayLine(r) : null; return <tr key={u.id}><td><b>{u.name}</b><div className="small muted">{desig(u)}</div></td><td>{r ? <Pill k="ok">Present{d.start ? ' · ' + hm(d.start) : ''}</Pill> : <Pill k="bad">No report</Pill>}</td>
+        {team === 'sales' && <><td className="n">{k.n}</td><td className="n">{k.pos}</td><td className="n">{k.back}</td><td className="n">{k.meet}</td><td className="n">{k.met}</td></>}<td className="n">{d ? fmtMins(d.worked) : '—'}</td><td className="n">{d ? fmtMins(d.idle) : '—'}</td></tr>; })}</tbody></table></div>
     <TimeBars reports={rs} empty="The team has not written any timed work for this day yet." />
     {help.length > 0 && <div className="banner bad">{help.map((r) => <div key={r.id}><b>{uname(r.owner)}:</b> {r.blockers}</div>)}</div>}
     <span className="small muted">Filled by itself from the team’s reports. It updates as they write.</span></div>;
+}
+
+// ---------- call sheet (sales team) ----------
+function CallTable({ calls, onDrop }) {
+  if (!calls.length) return <p className="muted small" style={{ margin: 0 }}>No calls written yet.</p>;
+  return <div className="tbl"><table><thead><tr><th className="n">#</th><th>Organisation</th><th>Contact no.</th><th>Location</th><th>Response</th><th>Meeting fixed</th><th>Met</th><th>Status / remark</th>{onDrop && <th />}</tr></thead>
+    <tbody>{calls.map((c, i) => <tr key={c.id}><td className="n">{i + 1}</td><td><b>{c.org}</b></td><td className="num">{c.phone || '—'}</td><td>{c.place || '—'}</td><td>{c.resp ? <Pill k={respKind(c.resp)}>{c.resp}</Pill> : '—'}</td>
+      <td>{c.meeting || '—'}</td><td>{c.met ? 'Yes' : '—'}</td><td style={{ maxWidth: 260 }}>{c.note || '—'}</td>{onDrop && <td><button className="btn ghost sm" type="button" aria-label={`Remove ${c.org}`} onClick={() => onDrop(c.id)}>Remove</button></td>}</tr>)}</tbody></table></div>;
+}
+function CallSheet({ r, locked, save }) {
+  const blank = { org: '', phone: '', place: '', resp: '', meeting: '', met: false, note: '' };
+  const [c, setC] = useState(() => { try { return { ...blank, place: localStorage.getItem('aali-callplace') || '' }; } catch { return blank; } }), [busy, setBusy] = useState(false), [paste, setPaste] = useState(null);
+  const calls = r?.calls || [], k = callStats(r), up = (key) => (e) => setC({ ...c, [key]: e.target.value });
+  const row = (x) => ({ id: Math.random().toString(36).slice(2, 10), at: new Date().toISOString(), ...x });
+  // Was this number called before (in my own earlier reports or today)?
+  const m10 = mobile10(c.phone), before = m10.length === 10 && list('report').filter((x) => x.owner === store.me.id).flatMap((x) => (x.calls || []).map((y) => ({ ...y, date: x.date }))).find((y) => mobile10(y.phone) === m10);
+  async function add(e) {
+    e?.preventDefault(); if (!c.org.trim() || !c.resp || busy) return; setBusy(true);
+    try { localStorage.setItem('aali-callplace', c.place); } catch {}
+    if (await attempt(() => save({ calls: [...calls, row(c)] }))) setC({ ...blank, place: c.place });
+    setBusy(false);
+  }
+  // Rows copied from Excel: find the phone number in each row; the organisation is the cell before it, and location, response, meeting, physical meet and status follow it.
+  const parsed = (paste || '').split(/\r?\n/).map((l) => l.split('\t').map((x) => x.trim())).map((p) => {
+    let i = p.findIndex((x, n) => n > 0 && x.replace(/\D/g, '').length >= 6 && !/[a-z]{3}/i.test(x));
+    if (i < 0) { const o = p.findIndex((x) => x && !/^\d{1,3}$/.test(x)); if (o < 0) return null; i = o + 1; }
+    const org = p[i - 1], raw = p[i + 2] || '', resp = guessResp(raw), blank = (x) => /^(no|nil|"|-|—)?$/i.test(x || '');
+    if (!org || /^(name of|business|company|organi|s\.?\s*no)/i.test(org)) return null;
+    return { org, phone: /\d/.test(p[i] || '') ? p[i] : '', place: p[i + 1] || '', resp, meeting: blank(p[i + 3]) ? '' : p[i + 3], met: /^(yes|y|1|met)/i.test(p[i + 4] || ''),
+      note: [raw && raw.toLowerCase() !== resp.toLowerCase() ? raw : '', blank(p[i + 5]) ? '' : p[i + 5]].filter(Boolean).join(' · ') };
+  }).filter(Boolean);
+  return <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+    <div className="row between"><h3 style={{ margin: 0 }}>Call sheet <span className="small muted">one row for every call</span></h3>
+      <div className="row small"><Pill k="gold">Calls made: {k.n}</Pill><Pill k="ok">Interested: {k.pos}</Pill><Pill k="warn">Call back: {k.back}</Pill><Pill k="gold">Meetings fixed: {k.meet}</Pill><Pill k="gold">Met in person: {k.met}</Pill></div></div>
+    {!locked && <form className="stack gap4" onSubmit={add}>
+      <div className="row"><input className="in" style={{ flex: '2 1 200px' }} value={c.org} onChange={up('org')} placeholder="Organisation / person called" maxLength={120} />
+        <input className="in" style={{ flex: '1 1 130px' }} value={c.phone} onChange={up('phone')} placeholder="Contact no." inputMode="tel" maxLength={40} />
+        <input className="in" style={{ flex: '1 1 120px' }} value={c.place} onChange={up('place')} placeholder="Location" maxLength={60} /></div>
+      {before && <div className="banner">You called this number on {fmtDate(before.date)} ({before.org}): {before.resp || 'no response written'}.</div>}
+      <div className="row"><span className="small muted">Response:</span>{RESP.map(([x]) => <button key={x} type="button" className={'chip' + (c.resp === x ? ' on' : '')} aria-pressed={c.resp === x} onClick={() => setC({ ...c, resp: x })}>{x}</button>)}</div>
+      <div className="row"><input className="in" style={{ flex: '1 1 160px' }} value={c.meeting} onChange={up('meeting')} placeholder="Meeting fixed for… (if any)" maxLength={80} />
+        <label className="check" style={{ alignItems: 'center' }}><input type="checkbox" style={{ margin: 0 }} checked={c.met} onChange={(e) => setC({ ...c, met: e.target.checked })} /> Met in person</label>
+        <input className="in" style={{ flex: '2 1 200px' }} value={c.note} onChange={up('note')} placeholder="Status / remark, e.g. wants quotation for 5 pages" maxLength={300} />
+        <button className="btn primary" type="submit" disabled={!c.org.trim() || !c.resp || busy}>Add call</button>
+        <button className="btn" type="button" onClick={() => setPaste(paste === null ? '' : null)}>{paste === null ? 'Paste from Excel' : 'Close paste'}</button></div>
+      {paste !== null && <div className="stack gap4"><span className="small muted">Copy the rows in Excel (organisation, contact no., location, response, meeting, physical meet, status) and paste them here.</span>
+        <textarea className="in" style={{ minHeight: 90, fontFamily: 'var(--num)', fontSize: 12 }} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="Paste rows here" />
+        <div className="row"><button className="btn primary sm" type="button" disabled={!parsed.length || busy} onClick={async () => { setBusy(true); if (await attempt(() => save({ calls: [...calls, ...parsed.map(row)] }), `${parsed.length} calls added.`)) setPaste(null); setBusy(false); }}>Add {parsed.length} call{parsed.length === 1 ? '' : 's'}</button>
+          {parsed.length > 0 && <span className="small muted">First row: {parsed[0].org} · {parsed[0].phone || 'no number'} · {parsed[0].resp || 'response not understood – it will be kept in the remark'}</span>}</div></div>}
+    </form>}
+    <CallTable calls={calls} onDrop={!locked && ((id) => attempt(() => save({ calls: calls.filter((x) => x.id !== id) })))} />
+  </div>;
 }
 
 export default function Daily() {
@@ -152,8 +217,8 @@ function Mine() {
   </div>;
 }
 function Editor({ date, r }) {
-  const me = store.me, locked = r?.status === 'submitted', refs = refOptions(me), fields = NUMS[me.team] || [];
-  const [text, setText] = useState(''), [ref, setRef] = useState(''), [busy, setBusy] = useState(false), [mins, setMins] = useState(''), [from, setFrom] = useState('');
+  const me = store.me, locked = r?.status === 'submitted';
+  const [text, setText] = useState(''), [proj, setProj] = useState(''), [busy, setBusy] = useState(false), [mins, setMins] = useState(''), [from, setFrom] = useState('');
   const lastEnd = r ? (r.entries || []).reduce((m, e) => Math.max(m, bounds(e)[1]), r.dayStart ? new Date(r.dayStart).getTime() : 0) : 0, fromV = from || (lastEnd ? hm24(lastEnd) : '');
   const onBreak = r?.entries?.some((e) => e.brk && e.state === 'running');
   const types = typesFor(me.team), [kind, setKind] = useState(() => { try { const k = localStorage.getItem('aali-worktype'); return types.includes(k) ? k : ''; } catch { return ''; } });
@@ -168,14 +233,15 @@ function Editor({ date, r }) {
   async function add(running) {
     const t = text.trim(); if (!ready || busy || (!running && !timed)) return; setBusy(true);
     try { localStorage.setItem('aali-worktype', kind); } catch {}
-    const o = refs.find((x) => x[0] === ref), now = new Date().toISOString(), st = running ? 0 : new Date(`${date}T${fromV}:00`).getTime(), m = Math.round(+mins);
-    const line = { id: Math.random().toString(36).slice(2, 10), at: now, text: t, kind, ...(running ? { state: 'running', start: now } : { mins: m, start: new Date(st).toISOString(), end: new Date(st + m * 60000).toISOString() }), ...(o ? { refId: o[0], refLabel: o[1], refLink: o[2] } : {}) };
-    if (await attempt(() => save({ ...f, entries: [...(running ? closeRunning(r?.entries || []) : r?.entries || []), line] }), running ? 'Task started. The earlier task is closed.' : '')) { setText(''); setMins(''); setFrom(''); }
+    const now = new Date().toISOString(), st = running ? 0 : new Date(`${date}T${fromV}:00`).getTime(), m = Math.round(+mins);
+    const line = { id: Math.random().toString(36).slice(2, 10), at: now, text: t, kind, ...(running ? { state: 'running', start: now } : { mins: m, start: new Date(st).toISOString(), end: new Date(st + m * 60000).toISOString() }), ...(proj.trim() ? { proj: proj.trim() } : {}) };
+    if (await attempt(() => save({ ...f, entries: [...(running ? closeRunning(r?.entries || []) : r?.entries || []), line] }), running ? 'Task started. The earlier task is closed.' : '')) { setText(''); setMins(''); setFrom(''); setProj(''); }
     setBusy(false);
   }
   const change = (id, fn, ok) => attempt(() => update(r.id, { ...f, entries: r.entries.map((x) => (x.id === id ? fn(x) : x)) }), ok);
   const finish = (id) => change(id, (x) => ({ ...x, state: 'done', end: new Date().toISOString(), mins: Math.max(1, Math.round((Date.now() - new Date(x.start)) / 60000)) }), 'Task finished. Time saved.');
   const fix = (id, m) => change(id, (x) => { const n = Math.max(1, Math.round(m)), st = bounds(x)[0]; return { ...x, mins: n, start: new Date(st).toISOString(), end: new Date(st + n * 60000).toISOString() }; }, 'Time corrected.');
+  const remark = (id, note) => change(id, (x) => ({ ...x, note }), 'Remark saved.');
   const startBreak = () => { const now = new Date().toISOString(); return attempt(() => save({ ...f, entries: [...closeRunning(r?.entries || []), { id: Math.random().toString(36).slice(2, 10), at: now, text: 'Break', kind: 'Break', brk: true, state: 'running', start: now }] }), 'Break started. Press Finish when you are back.'); };
   const startDay = () => attempt(() => create('report', { date }), 'Your day has started. Add each task as you take it up.');
   const drop = (id) => attempt(() => update(r.id, { ...f, entries: r.entries.filter((x) => x.id !== id) }));
@@ -194,10 +260,10 @@ function Editor({ date, r }) {
     {!locked && <form className="stack gap4" onSubmit={(e) => { e.preventDefault(); add(!timed); }}>
       <span className="lbl">1. Kind of work</span>
       <div className="row">{types.map((t) => <button key={t} type="button" className={'chip' + (kind === t ? ' on' : '')} aria-pressed={kind === t} onClick={() => setKind(t)}>{t}</button>)}</div>
-      <span className="lbl" style={{ marginTop: 6 }}>2. The task</span>
+      <span className="lbl" style={{ marginTop: 6 }}>2. The task – write exactly what you are doing</span>
       <div className="row">
-        <input className="in grow" style={{ minWidth: 220 }} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Poster for Vaaradhi Cafe opening offer" autoFocus maxLength={500} />
-        {refs.length > 0 && <Sel value={ref} onChange={setRef} blank="About… (optional)" options={refs.map(([v, lb]) => [v, lb])} style={{ width: 'auto', maxWidth: 240 }} />}</div>
+        <input className="in" style={{ flex: '3 1 260px' }} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Editing 6 photos for Hotel Leela Imperial gallery page" autoFocus maxLength={500} />
+        <input className="in" style={{ flex: '1 1 170px' }} value={proj} onChange={(e) => setProj(e.target.value)} placeholder="Client / project" maxLength={120} /></div>
       <span className="lbl" style={{ marginTop: 6 }}>3. Time</span>
       <div className="row">
         <button className="btn primary" type="button" disabled={!ready || busy} onClick={() => add(true)}>▶ Start this task now</button>
@@ -208,22 +274,21 @@ function Editor({ date, r }) {
         <input className="in" style={{ width: 100 }} type="number" min="1" max="1440" inputMode="numeric" value={mins} onChange={(e) => setMins(e.target.value)} placeholder="Minutes" aria-label="Minutes the task took" />
         <button className="btn" type="button" disabled={!ready || !timed || busy} onClick={() => add(false)}>Add finished task</button></div>
       <span className="small muted">Start a task when you begin it. When you start the next task or a break, the earlier one is closed by itself and its time is saved.</span></form>}
-    <Entries r={r} onDrop={!locked && drop} onFinish={!locked && finish} onFix={!locked && fix} />
+    <Entries r={r} onDrop={!locked && drop} onFinish={!locked && finish} onFix={!locked && fix} onNote={!locked && remark} />
+    {me.team === 'sales' && r && <CallSheet r={r} locked={locked} save={(data) => update(r.id, { ...f, ...data })} />}
     {r && <div><span className="lbl">Time by kind of work</span><TimeBars reports={[r]} empty="No timed work yet." /></div>}
     {auto.length > 0 && <div className="row small"><span className="lbl">Recorded by Aali One</span>{auto.map((a) => <Pill key={a} k="gold">{a}</Pill>)}</div>}
-    {r?.entries?.length > 0 && <WaSend text={reportText(r)} to={activeUsers().filter((u) => u.id !== me.id && (['ops', 'cs', 'chairman'].includes(u.title) || (isManager(u) && u.team === me.team)))} title="Send my report on WhatsApp to" />}
+    {(r?.entries?.length > 0 || r?.calls?.length > 0) && <WaSend text={reportText(r)} to={activeUsers().filter((u) => u.id !== me.id && (['ops', 'cs', 'chairman'].includes(u.title) || (isManager(u) && u.team === me.team)))} title="Send my report on WhatsApp to" />}
     <div className="form">
-      {fields.map(([key, lb]) => <Field key={key} label={lb}><In type="number" min="0" inputMode="numeric" disabled={locked} value={f.nums[key] ?? ''} onBlur={blur}
-        onChange={(e) => setF({ ...f, nums: { ...f.nums, [key]: e.target.value === '' ? undefined : Math.max(0, +e.target.value) } })} /></Field>)}
       <Field label="Plan for tomorrow" full><Area disabled={locked} value={f.plan} onChange={(e) => setF({ ...f, plan: e.target.value })} onBlur={blur} placeholder="What you will do next" /></Field>
       <Field label="Problems / help needed" full><Area disabled={locked} value={f.blockers} onChange={(e) => setF({ ...f, blockers: e.target.value })} onBlur={blur} placeholder="Anything stopping your work. Leave empty if none." /></Field>
     </div>
     {!locked && <div className="row between"><span className="small muted">{dirty ? 'Not saved yet – click outside the box to save.' : r ? 'All changes saved.' : 'Nothing written yet.'}</span>
-      <div className="row">{r && <DeleteButton id={r.id} label="Delete report" />}<button className="btn primary" type="button" disabled={!r?.entries?.length || r.entries.some((e) => e.state === 'running')} title={r?.entries?.some((e) => e.state === 'running') ? 'Finish the running task first' : ''} onClick={submit}>Submit for the day</button></div></div>}
+      <div className="row">{r && <DeleteButton id={r.id} label="Delete report" />}<button className="btn primary" type="button" disabled={!(r?.entries?.length || r?.calls?.length) || r.entries.some((e) => e.state === 'running')} title={r?.entries?.some((e) => e.state === 'running') ? 'Finish the running task first' : ''} onClick={submit}>Submit for the day</button></div></div>}
   </div>;
 }
-function Entries({ r, onDrop, onFinish, onFix }) {
-  const [edit, setEdit] = useState(null), d = dayLine(r), mark = { padding: '6px 12px', fontSize: 12.5 };
+function Entries({ r, onDrop, onFinish, onFix, onNote }) {
+  const [edit, setEdit] = useState(null), [rem, setRem] = useState(null), d = dayLine(r), mark = { padding: '6px 12px', fontSize: 12.5 };
   if (!r || (!d.rows.length && !r.dayStart)) return <p className="muted small" style={{ margin: 0 }}>No tasks yet.</p>;
   return <div className="list">
     {r.dayStart && <div className="li" style={mark}><span className="num muted" style={{ width: 132, flex: 'none' }}>{hm(d.start)}</span><b>Day started</b></div>}
@@ -232,12 +297,15 @@ function Entries({ r, onDrop, onFinish, onFix }) {
       const e = x.e, run = e.state === 'running';
       return <div className="li" key={e.id} style={{ padding: '7px 12px', background: run ? 'var(--warn-bg)' : '' }}>
         <span className="num small muted" style={{ width: 118, flex: 'none' }}>{hm(x.s)} – {run ? 'now' : hm(x.en)}</span>
-        <div className="grow">{e.brk ? <Pill>Break</Pill> : <>{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.text}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</>}</div>
+        <div className="grow">{e.brk ? <Pill>Break</Pill> : <>{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.text}{e.proj && <> <Pill k="gold">{e.proj}</Pill></>}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</>}
+          {rem?.id === e.id ? <div className="row" style={{ marginTop: 4 }}><input className="in grow" value={rem.v} onChange={(ev) => setRem({ id: e.id, v: ev.target.value })} placeholder="Result, issue or remark" maxLength={300} autoFocus /><button className="btn sm" type="button" onClick={() => { onNote(e.id, rem.v.trim()); setRem(null); }}>Save</button></div>
+            : e.note ? <div className="small muted">Remark: {e.note}</div> : null}</div>
         {run ? <><Pill k="warn">{e.brk ? 'On break' : 'In progress'} · {fmtMins(dur)} so far</Pill>{onFinish && <button className="btn primary sm" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}</>
           : edit?.id === e.id ? <><input className="in" style={{ width: 80 }} type="number" min="1" max="1440" value={edit.v} onChange={(ev) => setEdit({ id: e.id, v: ev.target.value })} aria-label="Minutes" autoFocus />
               <button className="btn sm" type="button" disabled={!(+edit.v > 0)} onClick={() => { onFix(e.id, +edit.v); setEdit(null); }}>Save</button></>
             : <>{!e.brk && <Pill k="ok">Done</Pill>}<span className="num small" style={{ minWidth: 64, textAlign: 'right' }}>{fmtMins(e.mins || dur)}</span>
               {onFix && <button className="btn ghost sm" type="button" title="Use this if you forgot to press Finish on time" onClick={() => setEdit({ id: e.id, v: e.mins || dur || '' })}>Fix time</button>}</>}
+        {onNote && !e.brk && <button className="btn ghost sm" type="button" onClick={() => setRem({ id: e.id, v: e.note || '' })}>{e.note ? 'Edit remark' : 'Add remark'}</button>}
         {onDrop && <button className="btn ghost sm" type="button" aria-label="Remove this line" onClick={() => onDrop(e.id)}>Remove</button>}</div>; })}
     {r.dayEnd && <div className="li" style={mark}><span className="num muted" style={{ width: 132, flex: 'none' }}>{hm(d.end)}</span><b>Day ended</b></div>}
   </div>;
@@ -284,13 +352,13 @@ function Team() {
   </>;
 }
 function PersonRow({ u, r, date, open, toggle, first }) {
-  const me = store.me, [l, k] = status(r), nums = (NUMS[u.team] || []).filter(([key]) => r?.nums?.[key] != null);
+  const me = store.me, [l, k] = status(r), cs = callStats(r);
   const nudge = waLink(u.phone, `Hi ${u.name.split(' ')[0]}, please update your daily work report for ${fmtDate(date)} in Aali One: ${location.origin}/daily`);
   return <div style={{ borderTop: first ? 'none' : '1px solid var(--line)' }}>
     <button type="button" className="li" onClick={toggle} aria-expanded={open} style={{ width: '100%', border: 'none', background: 'none', textAlign: 'left' }}>
-      <Av id={u.id} /><div className="grow"><div className="t">{u.name}</div><div className="small muted">{desig(u)} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} update${r.entries?.length === 1 ? '' : 's'} · last ${ago(r.updatedAt)}` : ''}</div></div>
+      <Av id={u.id} /><div className="grow"><div className="t">{u.name}</div><div className="small muted">{desig(u)} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} task${r.entries?.length === 1 ? '' : 's'} · last ${ago(r.updatedAt)}` : ''}</div></div>
       <DaySummary r={r} small />
-      {nums.map(([key, lb]) => <span key={key} className="small muted"><span className="num">{r.nums[key]}</span> {lb.toLowerCase()}</span>)}
+      {cs.n > 0 && <span className="small muted"><span className="num">{cs.n}</span> calls · <span className="num">{cs.pos}</span> interested</span>}
       {r?.blockers?.trim() && <Pill k="bad">Needs help</Pill>}<Pill k={k}>{l}</Pill><Sample on={r?.sample} /><span className="faint" aria-hidden>{open ? '▾' : '▸'}</span></button>
     {open && <div className="stack" style={{ padding: '4px 14px 14px 52px' }}>
       {!r ? <div className="row"><span className="muted small">No report for {dayName(date).toLowerCase()} yet.</span>{nudge && <a className="btn wa sm" href={nudge} target="_blank" rel="noreferrer">Remind on WhatsApp</a>}</div>
@@ -303,6 +371,7 @@ function ReportView({ r, me }) {
   return <>
     <DaySummary r={r} />
     <Entries r={r} />
+    {r.calls?.length > 0 && <div className="stack gap4"><span className="lbl">Call sheet · {callLine(callStats(r))}</span><CallTable calls={r.calls} /></div>}
     <div><span className="lbl">Time by kind of work</span><TimeBars reports={[r]} empty="No timed work in this report." /></div>
     {['salesmgr', 'itmgr'].includes(r.ownerTitle) && <TeamSummary team={r.team} date={r.date} />}
     {auto.length > 0 && <div className="row small"><span className="lbl">Recorded by Aali One</span>{auto.map((a) => <Pill key={a} k="gold">{a}</Pill>)}</div>}

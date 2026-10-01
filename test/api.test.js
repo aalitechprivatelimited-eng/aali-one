@@ -205,6 +205,9 @@ test('company on staff; collaborations are for management only; task timing', as
   assert.equal((await patch(bde2, r.id, { status: 'submitted' })).status, 400, 'a running task blocks submit');
   const done = await patch(bde2, r.id, { entries: [{ ...r.entries[0], state: 'done', end: new Date().toISOString(), mins: 42 }] });
   assert.equal(done.body.record.entries[0].mins, 42); assert.equal(done.body.record.entries[0].state, undefined);
+  const cs = await patch(bde2, r.id, { calls: [{ org: 'Gems High School', phone: '9963522158', place: 'Bapatla', resp: 'Interested', meeting: 'Tomorrow', met: 1, note: 'Wants quotation' }, { org: '  ' }] });
+  assert.equal(cs.body.record.calls.length, 1); assert.equal(cs.body.record.calls[0].met, true);
   const fin = await patch(bde2, r.id, { status: 'submitted' });
+  assert.equal((await patch(bde2, r.id, { calls: [] })).status, 400, 'the call sheet is locked after submit');
   assert.equal(fin.status, 200); assert.ok(fin.body.record.dayEnd, 'the day ends at submit');
 });
