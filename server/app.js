@@ -30,6 +30,13 @@ const audit = (db, user, rec, action, summary) => db.query('insert into audit (u
   [user?.id || null, rec?.id || null, rec?.type || null, action, summary || '']);
 const label = (d) => d.number || d.certNo || d.title || d.name || d.signerName || d.text?.slice(0, 40) || '';
 
+async function userWork(db, id) {
+  const r = (await db.query(`select type, count(*)::int n from records where deleted_at is null and type not in ('notice', 'comment')
+    and (created_by = $1 or data->>'owner' = $1 or data->>'lead' = $1 or data->>'userId' = $1 or data->'people' ? $1) group by type`, [id])).rows;
+  const reports = r.find((x) => x.type === 'report')?.n || 0;
+  return { reports, work: r.filter((x) => x.type !== 'report').reduce((n, x) => n + x.n, 0), types: r.filter((x) => x.type !== 'report') };
+}
+
 export async function handle(req, res) {
   const url = new URL(req.url, 'http://x'), path = url.pathname.replace(/^\/api/, ''), method = req.method;
   const secure = (req.headers['x-forwarded-proto'] || '').includes('https');
@@ -239,6 +246,37 @@ export async function handle(req, res) {
       }
       await audit(db, user, null, 'user', `Updated ${u.email}`);
       return send(res, 200, { user: publicUser((await db.query('select * from users where id = $1', [u.id])).rows[0]) });
+    }
+    // Sign a person out of every device (for example a lost phone).
+    m = path.match(/^\/users\/([\w-]+)\/signout$/);
+    if (m && method === 'POST') {
+      const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
+      if (!admin && !(juniors.includes(u.title) && !u.is_admin)) throw new Rule('You can do this for members of your own team only.', 403);
+      await db.query('delete from sessions where user_id = $1', [u.id]); await audit(db, user, null, 'user', `Signed out ${u.email} everywhere`);
+      return send(res, 200, { ok: true });
+    }
+    // What a person has in the system, so the screen can say whether they can be removed.
+    m = path.match(/^\/users\/([\w-]+)\/work$/);
+    if (m && method === 'GET') {
+      if (!admin) throw new Rule('Only an admin can check this.', 403);
+      return send(res, 200, await userWork(db, m[1]));
+    }
+    // Remove a person for good. Only for someone with no real work in the system (a test entry or a mistake);
+    // anyone with leads, deals, projects, payments and so on is deactivated instead, so the history keeps their name.
+    m = path.match(/^\/users\/([\w-]+)$/);
+    if (m && method === 'DELETE') {
+      if (!admin) throw new Rule('Only an admin can remove a person.', 403);
+      if (m[1] === user.id) throw new Rule("You can't remove your own account.");
+      const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
+      const w = await userWork(db, u.id);
+      if (w.work) throw new Rule(`${u.name} has ${w.work} item${w.work === 1 ? '' : 's'} of work in the system. Deactivate them instead, so the history keeps their name.`, 409);
+      await db.tx(async (t) => {
+        await t.query('delete from sessions where user_id = $1', [u.id]);
+        await t.query("update records set deleted_at = now(), deleted_by = $2, delete_reason = 'Person removed', updated_at = now() where deleted_at is null and ((type = 'report' and data->>'owner' = $1) or (type = 'notice' and data->>'to' = $1))", [u.id, user.id]);
+        await t.query('delete from users where id = $1', [u.id]);
+      });
+      await audit(db, user, null, 'user', `Removed ${u.email} (${u.name})`);
+      return send(res, 200, { ok: true, reports: w.reports });
     }
     if (path === '/sample/clear' && method === 'POST') {
       if (!admin) throw new Rule('Only an admin can clear sample data.', 403);

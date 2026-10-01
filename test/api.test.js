@@ -227,3 +227,19 @@ test('name and surname; a salesperson keeps the leads they find', async () => {
   const two = await add(bde1, 'lead', { name: 'Lotus Saloon', mobile: '9000120405', service: 'Website – 5 pages', source: 'Phone call' });
   assert.equal(two.record.owner, 'u_b1');
 });
+
+test('removing a person: only when they have no work; otherwise deactivate', async () => {
+  const mk = async (e) => (await call('POST', '/users', { firstName: 'Test', surname: 'Person', email: e, password: 'password123', title: 'bde', company: 'Aali Conssultancy', designation: 'BDE' }, admin)).body.user;
+  const t1 = await mk('gone1@test.in'), c1 = (await call('POST', '/auth/login', { email: 'gone1@test.in', password: 'password123' })).cookie;
+  await add(c1, 'report', { entries: [{ text: 'Trying the app', kind: 'Other', mins: 5 }] });
+  assert.equal((await call('DELETE', '/users/' + t1.id, null, bde1)).status, 403);
+  assert.equal((await call('POST', '/users/' + t1.id + '/signout', null, admin)).status, 200);
+  assert.equal((await call('GET', '/bootstrap', null, c1)).status, 401, 'signed out everywhere');
+  assert.equal((await call('GET', '/users/' + t1.id + '/work', null, admin)).body.reports, 1);
+  assert.equal((await call('DELETE', '/users/' + t1.id, null, admin)).status, 200, 'a test person with only a report can be removed');
+  const boot = (await call('GET', '/bootstrap', null, admin)).body;
+  assert.ok(!boot.users.some((u) => u.id === t1.id)); assert.ok(!boot.records.some((r) => r.type === 'report' && r.owner === t1.id));
+  assert.equal((await call('POST', '/auth/login', { email: 'gone1@test.in', password: 'password123' })).status, 401);
+  const busy = await call('DELETE', '/users/u_b1', null, admin);
+  assert.equal(busy.status, 409); assert.match(busy.body.error, /Deactivate/);
+});

@@ -178,6 +178,13 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 .deptcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:14px;align-items:start}
 .deptcol{background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:12px 12px 4px;min-width:0}
 
+.menu-wrap{position:relative;display:inline-block}
+.menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:250px;background:var(--paper);border:1px solid var(--line-2);border-radius:10px;box-shadow:var(--shadow);padding:4px;text-align:left}
+.menu-i{display:flex;flex-direction:column;gap:1px;width:100%;border:none;background:none;text-align:left;padding:7px 10px;border-radius:7px;color:var(--ink)}
+.menu-i:hover{background:var(--gold-50)} .menu-i b{font-size:13.5px} .menu-i span{font-size:12px;color:var(--ink-soft)}
+.menu-i.danger b{color:var(--bad)}
+.tbl:has(.menu){overflow:visible}
+
 /* calendar + project progress */
 .calhead{padding:6px 8px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--line);background:var(--gold-50)}
 .calday{min-height:108px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:5px;cursor:pointer;overflow:hidden}

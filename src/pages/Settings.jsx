@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
-import { useStore, store, http, saveSetting, setMe, upsertUser, poll } from '../api.js';
+import { useStore, store, http, saveSetting, setMe, upsertUser, dropUser, poll } from '../api.js';
 import { settings, isManager, TITLES, TEAMS, uname, fmtDT, waLink, myJuniors, canAddPeople, COMPANIES, GROUP, desig } from '../lib.js';
 import { Field, In, Sel, Area, Pill, Empty, Modal, attempt, toast } from '../ui.jsx';
 import { TITLE_TEAM } from '../../shared/defaults.js';
@@ -66,6 +66,21 @@ function Confetti() {
   return <div className="confetti" aria-hidden="true">{bits.map((b, i) => <i key={i} style={{ left: b.left + '%', width: b.size, height: b.round ? b.size : b.size * 0.45, borderRadius: b.round ? '50%' : 2, background: b.color,
     animationDelay: b.delay + 's', animationDuration: b.time + 's', '--turn': b.turn + 'deg', '--drift': b.drift + 'px' }} />)}</div>;
 }
+// One button per person that opens every action for them.
+function Actions({ u, self, adm, on }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (!open) return; const close = () => setOpen(false); const t = setTimeout(() => addEventListener('click', close), 0); return () => { clearTimeout(t); removeEventListener('click', close); }; }, [open]);
+  const Item = ({ a, children, danger, hint }) => <button type="button" role="menuitem" className={'menu-i' + (danger ? ' danger' : '')} onClick={() => { setOpen(false); on(a); }}><b>{children}</b>{hint && <span>{hint}</span>}</button>;
+  return <div className="menu-wrap"><button className="btn sm" type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>Actions ▾</button>
+    {open && <div className="menu" role="menu">
+      <Item a="edit" hint="Name, designation, company, access">Edit details</Item>
+      <Item a="password" hint="Give them a new password">Set new password</Item>
+      {u.phone && <Item a="whatsapp" hint="Send the link and their login email">Send login on WhatsApp</Item>}
+      {!self && <Item a="signout" hint="For a lost or shared phone">Sign out everywhere</Item>}
+      {!self && (u.active ? <Item a="off" danger hint="They left: block sign-in, keep their work">Deactivate</Item> : <Item a="on" hint="Let them sign in again">Reactivate</Item>)}
+      {!self && adm && <Item a="remove" danger hint="Only for a test entry or a mistake">Remove from the system</Item>}
+    </div>}</div>;
+}
 // Pick a role by reading what it can do, instead of a bare dropdown.
 function RolePicker({ roles, value, onChange }) {
   return <div className="roles" role="radiogroup" aria-label="Access level">{roles.map((k) => <label key={k} className={'rolecard' + (value === k ? ' on' : '')}>
@@ -79,6 +94,22 @@ function People() {
   if (!canAddPeople()) return <Empty>Only an admin or a department manager can add people.</Empty>;
   const patch = (u, data, ok) => attempt(async () => upsertUser((await http('PATCH', '/users/' + u.id, data)).user), ok);
   const rolesFor = (team) => (adm ? TEAM_ROLES[team] : jun);
+  const [ask, setAsk] = useState(null); // a confirm window: { kind: 'off' | 'remove', u, work }
+  async function act(a, u) {
+    if (a === 'edit') setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '', firstName: u.firstName || u.name, surname: u.surname || '' });
+    if (a === 'password') setPw({ ...u, p: newPassword() });
+    if (a === 'on') patch(u, { active: true }, `${u.name} can sign in again.`);
+    if (a === 'off') setAsk({ kind: 'off', u });
+    if (a === 'signout') attempt(() => http('POST', `/users/${u.id}/signout`), `${u.name} is signed out on every device.`);
+    if (a === 'whatsapp') window.open(waLink(u.phone, `Hi ${u.name.split(' ')[0]}, this is your Aali One link: ${location.origin}\nYour login email is ${u.email}. If you forgot the password, tell me and I will set a new one.`), '_blank', 'noopener');
+    if (a === 'remove') { const work = await attempt(() => http('GET', `/users/${u.id}/work`)); if (work) setAsk({ kind: 'remove', u, work }); }
+  }
+  async function confirmAsk() {
+    setBusy(true); const { kind, u } = ask;
+    const ok = kind === 'off' ? await patch(u, { active: false }, `${u.name} is deactivated and signed out. Their work stays in the system.`).then(async (r) => { if (r) await http('POST', `/users/${u.id}/signout`).catch(() => {}); return r; })
+      : await attempt(async () => { await http('DELETE', '/users/' + u.id); dropUser(u.id); }, `${u.name} is removed.`);
+    setBusy(false); if (ok) setAsk(null);
+  }
   async function save() {
     setBusy(true); const r = await attempt(() => http('POST', '/users', add)); setBusy(false);
     if (r) { upsertUser(r.user); setMade({ ...r.user, password: add.password }); setAdd(null); }
@@ -93,15 +124,14 @@ function People() {
       return <section key={team} className="stack" style={{ gap: 8 }}>
         <div className="row between"><div><h2 style={{ margin: 0 }}>{label} team <span className="small muted">{us.filter((u) => u.active).length} active</span></h2><span className="small muted">{TEAM_NOTE[team]}</span></div>
           <button className="btn primary" type="button" onClick={() => setAdd({ team, title: rolesFor(team).at(-1), password: newPassword(), company: team === 'management' ? GROUP : me.team === 'management' ? '' : me.company })}>+ Add {label} member</button></div>
-        {us.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Surname</th><th>Designation</th><th>What they can see and do</th><th>Active</th><th /></tr></thead><tbody>
+        {us.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Surname</th><th>Designation</th><th>What they can see and do</th><th>Status</th><th /></tr></thead><tbody>
           {us.map((u) => <tr key={u.id} style={{ opacity: u.active ? 1 : 0.55 }}>
             <td><b>{u.firstName || u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}<div className="small"><Pill>{u.company}</Pill></div><div className="small muted">{u.email}</div><div className="small muted num">{u.phone || 'No mobile'}</div></td>
             <td><b>{u.surname || '—'}</b></td>
             <td><b>{desig(u)}</b><div className="small muted">Access: {LEVEL[u.title] || u.title}</div>{u.isAdmin && <Pill k="info">Admin</Pill>}</td>
             <td><ul className="access">{accessOf(u).map((x) => <li key={x}>{x}</li>)}</ul></td>
-            <td><input type="checkbox" aria-label={`${u.name} can sign in`} checked={u.active} disabled={!can(u) || u.id === me.id} onChange={(e) => patch(u, { active: e.target.checked }, e.target.checked ? 'Switched on.' : 'Switched off. They can no longer sign in.')} /></td>
-            <td>{can(u) && <div className="row" style={{ justifyContent: 'flex-end' }}>{<button className="btn sm" type="button" onClick={() => setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '', firstName: u.firstName || u.name, surname: u.surname || '' })}>Edit</button>}
-              <button className="btn sm" type="button" onClick={() => setPw({ ...u, p: newPassword() })}>Set password</button></div>}</td></tr>)}</tbody></table></div>
+            <td>{u.active ? <Pill k="ok">Active</Pill> : <Pill k="bad">Deactivated</Pill>}</td>
+            <td style={{ textAlign: 'right' }}>{can(u) || u.id === me.id ? <Actions u={u} self={u.id === me.id} adm={adm} on={(a) => act(a, u)} /> : null}</td></tr>)}</tbody></table></div>
           : <Empty>No one in the {label} team yet.</Empty>}
       </section>; })}
     {add && <Modal wide title={`Add ${TEAMS[add.team]} member`} onClose={() => setAdd(null)} footer={<><button className="btn" type="button" onClick={() => setAdd(null)}>Cancel</button>
@@ -135,6 +165,15 @@ function People() {
         <textarea className="in" readOnly value={loginText(made)} style={{ minHeight: 120 }} />
         <div className="row"><button className="btn" type="button" onClick={() => navigator.clipboard?.writeText(loginText(made)).then(() => toast('Copied.'), () => toast('Select the text and copy it.', true))}>Copy</button>
           {waLink(made.phone, loginText(made)) ? <a className="btn wa" href={waLink(made.phone, loginText(made))} target="_blank" rel="noreferrer">Send on WhatsApp</a> : <span className="small muted">Add a mobile number to send it on WhatsApp.</span>}</div></div></Modal>}
+    {ask && <Modal title={ask.kind === 'off' ? `Deactivate ${ask.u.name}?` : `Remove ${ask.u.name}?`} onClose={() => setAsk(null)} footer={<><button className="btn" type="button" onClick={() => setAsk(null)}>Cancel</button>
+      {ask.kind === 'off' ? <button className="btn danger" type="button" disabled={busy} onClick={confirmAsk}>Deactivate</button>
+        : ask.work.work ? <button className="btn danger" type="button" disabled={busy} onClick={() => setAsk({ kind: 'off', u: ask.u })}>Deactivate instead</button>
+          : <button className="btn danger" type="button" disabled={busy} onClick={confirmAsk}>Remove for good</button>}</>}>
+      {ask.kind === 'off' ? <div className="stack"><p style={{ margin: 0 }}>Use this when someone leaves the company.</p><ul className="access" style={{ fontSize: 13.5 }}><li>They are signed out and cannot sign in again.</li><li>Everything they did stays in the system with their name.</li><li>You can reactivate them any time.</li></ul></div>
+        : ask.work.work ? <div className="stack"><div className="banner bad">{ask.u.name} cannot be removed: they have {ask.work.work} item{ask.work.work === 1 ? '' : 's'} of work in the system ({ask.work.types.map((x) => `${x.n} ${x.type}${x.n === 1 ? '' : 's'}`).join(', ')}).</div>
+            <p style={{ margin: 0 }}>Removing them would leave that work without an owner. Deactivate them instead: they cannot sign in, and the history keeps their name.</p></div>
+          : <div className="stack"><p style={{ margin: 0 }}>Use this for a test entry or a person added by mistake. This cannot be undone.</p><ul className="access" style={{ fontSize: 13.5 }}><li>Their login is deleted.</li>
+            <li>{ask.work.reports ? `Their ${ask.work.reports} daily report${ask.work.reports === 1 ? '' : 's'} go to the recycle bin.` : 'They have no daily reports.'}</li><li>They have no leads, deals, projects or payments, so nothing else is affected.</li></ul></div>}</Modal>}
     {pw && <Modal title={`New password for ${pw.name}`} onClose={() => setPw(null)} footer={<button className="btn primary" type="button" disabled={(pw.p || '').length < 8} onClick={async () => (await attempt(() => http('PATCH', '/users/' + pw.id, { password: pw.p }), 'Password set. They are signed out everywhere.')) && setPw(null)}>Set password</button>}>
       <Field label="New password (8+ characters)" hint="Note it down and share it with them privately before you press Set password."><In value={pw.p || ''} onChange={(e) => setPw({ ...pw, p: e.target.value })} autoComplete="new-password" /></Field></Modal>}
   </div>;

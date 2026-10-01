@@ -60,4 +60,5 @@ export async function upload(file) {
   return http('POST', '/files', { name: file.name, mime: file.type || 'application/octet-stream', data });
 }
 export function setMe(u) { S.me = u; S.users = S.users.map((x) => (x.id === u.id ? u : x)); emit(); }
+export function dropUser(id) { S.users = S.users.filter((x) => x.id !== id); for (const [k, r] of S.recs) if ((r.type === 'report' && r.owner === id) || (r.type === 'notice' && r.to === id)) S.recs.delete(k); emit(); }
 export function upsertUser(u) { const m = new Map(S.users.map((x) => [x.id, x])); m.set(u.id, u); S.users = [...m.values()].sort((a, b) => a.name.localeCompare(b.name)); emit(); }
