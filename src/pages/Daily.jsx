@@ -87,7 +87,9 @@ function teamText(rows, date, label) {
   return out.join('\n');
 }
 const management = (me) => activeUsers().filter((u) => u.id !== me.id && ['ops', 'cs', 'chairman'].includes(u.title));
+// WhatsApp sending is for management only.
 function WaSend({ text, to, title = 'Send on WhatsApp to' }) {
+  if (!isTop(store.me)) return null;
   const ok = to.filter((u) => waLink(u.phone, text)), missing = to.filter((u) => !waLink(u.phone, text));
   return <div className="row small"><span className="lbl">{title}</span>
     {ok.map((u) => <a key={u.id} className="btn wa sm" href={waLink(u.phone, text)} target="_blank" rel="noreferrer">{u.name.split(' ')[0]} · {desig(u)}</a>)}
@@ -347,7 +349,7 @@ function Team() {
     {me.title === 'ops' && <label className="check card" style={{ marginBottom: 12 }}><input type="checkbox" checked={!!settings().leadSeesReports}
       onChange={(e) => attempt(() => saveSetting('leadSeesReports', e.target.checked), e.target.checked ? "On: the IT Team Lead can now read the developers' reports." : "Off: only the IT Manager and top management read the developers' reports.")} />
       <span><b>IT Team Lead can read the developers' daily reports</b><br /><span className="small muted">Off for now. Switch it on when the IT team grows. The Team Lead can read and remark; review and send-back stay with the IT Manager.</span></span></label>}
-    {rows.length > 0 && <div className="card" style={{ marginBottom: 12 }}><WaSend text={teamText(rows, date, team === 'all' ? (isTop(me) ? 'All departments' : TEAMS[me.team] + ' team') : TEAMS[team] + ' team')} to={management(me)} title={`Send the ${dayName(date).toLowerCase()} team report on WhatsApp to`} />
+    {rows.length > 0 && isTop(me) && <div className="card" style={{ marginBottom: 12 }}><WaSend text={teamText(rows, date, team === 'all' ? (isTop(me) ? 'All departments' : TEAMS[me.team] + ' team') : TEAMS[team] + ' team')} to={management(me)} title={`Send the ${dayName(date).toLowerCase()} team report on WhatsApp to`} />
       <span className="small muted">One tap opens WhatsApp with the report typed in; you press send. Sending by itself every evening needs a WhatsApp Business account (Settings → Connections).</span></div>}
     {!rows.length && <Empty>No people in this view. Add people in Settings → People.</Empty>}
     {view === 'week' ? <Week people={people} end={date} pick={(d, id) => { setDate(d); setView('day'); setOpen(id); }} />
@@ -377,7 +379,7 @@ function PersonRow({ u, r, date, open, toggle, first }) {
       {cs.n > 0 && <span className="small muted"><span className="num">{cs.n}</span> calls · <span className="num">{cs.pos}</span> interested</span>}
       {r?.blockers?.trim() && <Pill k="bad">Needs help</Pill>}<Pill k={k}>{l}</Pill><Sample on={r?.sample} /><span className="faint" aria-hidden>{open ? '▾' : '▸'}</span></button>
     {open && <div className="stack" style={{ padding: '4px 14px 14px 52px' }}>
-      {!r ? <div className="row"><span className="muted small">No report for {dayName(date).toLowerCase()} yet.</span>{nudge && <a className="btn wa sm" href={nudge} target="_blank" rel="noreferrer">Remind on WhatsApp</a>}</div>
+      {!r ? <div className="row"><span className="muted small">No report for {dayName(date).toLowerCase()} yet.</span>{nudge && isTop(me) && <a className="btn wa sm" href={nudge} target="_blank" rel="noreferrer">Remind on WhatsApp</a>}</div>
         : <ReportView r={r} me={me} />}</div>}
   </div>;
 }
