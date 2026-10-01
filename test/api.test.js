@@ -94,6 +94,41 @@ test('recurring task makes the next one; mentions notify', async () => {
   assert.ok(mine.some((n) => /mentioned you/.test(n.text)));
 });
 
+test('daily reports: one per day, private to writer + manager + top, submit locks, send back', async () => {
+  const db = await getDb();
+  for (const [id, email, title, team] of [['u_sm', 'sm@test.in', 'salesmgr', 'sales'], ['u_ch', 'ch@test.in', 'chairman', 'management']])
+    await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', [id, email, email, title, team, hashPassword('password123')]);
+  const login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  const sm = await login('sm@test.in'), ch = await login('ch@test.in'), it = await login('it@test.in');
+  const r = (await add(bde1, 'report', { entries: [], owner: 'u_b2', status: 'submitted' })).record;
+  assert.equal(r.owner, 'u_b1'); assert.equal(r.team, 'sales'); assert.equal(r.status, 'open');
+  assert.equal((await add(bde1, 'report', {})).record.id, r.id, 'second report the same day is the same one');
+  assert.equal((await call('POST', '/records', { type: 'report', data: { date: '2999-01-01' } }, bde1)).status, 400);
+  const sees = async (c) => (await call('GET', '/bootstrap', null, c)).body.records.some((x) => x.id === r.id);
+  assert.equal(await sees(bde1), true); assert.equal(await sees(bde2), false, 'another BDE cannot read it');
+  assert.equal(await sees(it), false, 'the IT manager cannot read a sales report');
+  assert.equal(await sees(sm), true); assert.equal(await sees(ch), true); assert.equal(await sees(admin), true);
+  assert.equal((await patch(bde2, r.id, { plan: 'x' })).status, 403);
+  assert.equal((await patch(sm, r.id, { plan: 'x' })).status, 403, 'a manager cannot rewrite it');
+  assert.equal((await patch(bde1, r.id, { status: 'submitted' })).status, 400, 'empty report cannot be submitted');
+  const up = await patch(bde1, r.id, { entries: [{ text: 'Called 20 clinics' }], nums: { calls: 20 } });
+  assert.equal(up.status, 200); assert.equal(up.body.record.entries.length, 1);
+  const since = new Date(Date.now() - 5e3).toISOString();
+  assert.ok((await call('GET', '/changes?since=' + encodeURIComponent(since), null, sm)).body.records.some((x) => x.id === r.id), 'the manager gets the update live');
+  assert.ok(!(await call('GET', '/changes?since=' + encodeURIComponent(since), null, bde2)).body.records.some((x) => x.id === r.id));
+  assert.equal((await patch(sm, r.id, { _reviewed: true })).status, 400, 'review only after submit');
+  assert.equal((await patch(bde1, r.id, { status: 'submitted' })).status, 200);
+  assert.equal((await patch(bde1, r.id, { entries: [] })).status, 400, 'locked after submit');
+  assert.ok((await call('GET', '/bootstrap', null, sm)).body.records.some((x) => x.type === 'notice' && x.relId === r.id));
+  assert.equal((await patch(ch, r.id, { _remark: 'Good' })).status, 200);
+  assert.equal((await patch(ch, r.id, { status: 'open', _remark: 'Redo' })).status, 403, 'the Chairman reads and remarks only');
+  assert.equal((await patch(sm, r.id, { _reviewed: true })).body.record.reviewed.by, 'u_sm');
+  assert.equal((await patch(sm, r.id, { status: 'open' })).status, 400, 'send back needs a remark');
+  const back = await patch(admin, r.id, { status: 'open', _remark: 'Add the numbers' });
+  assert.equal(back.status, 200); assert.equal(back.body.record.reviewed, undefined); assert.equal(back.body.record.remarks.length, 2);
+  assert.equal((await call('DELETE', '/records/' + r.id, {}, bde2)).status, 403);
+});
+
 test('changes feed and admin-only actions', async () => {
   const since = new Date(Date.now() - 60e3).toISOString();
   const ch = await call('GET', '/changes?since=' + encodeURIComponent(since), null, bde1);

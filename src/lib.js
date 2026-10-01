@@ -66,5 +66,13 @@ export function forScope(items, scope, m = store.me) {
     return false;
   });
 }
+// How far a project has come: done tasks out of all tasks; with no tasks yet, a rough figure from its stage.
+const STAGE_PCT = { awaiting: 0, planning: 10, design: 30, development: 55, testing: 85, live: 100 };
+export function projectProgress(p) {
+  if (p.stage === 'live') return 100;
+  const ts = list('task').filter((t) => t.projectId === p.id);
+  return ts.length ? Math.round(100 * ts.filter((t) => t.status === 'done').length / ts.length) : STAGE_PCT[p.stage] ?? 0;
+}
+export const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
 export const escalated = (d) => diff(d) <= -(settings().escalateDays ?? 3);
 export const dealReceived = (dealId) => list('receipt').filter((r) => r.dealId === dealId).reduce((s, r) => s + (r.totals?.received || 0), 0);

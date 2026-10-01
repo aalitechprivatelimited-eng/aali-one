@@ -2,7 +2,7 @@
 import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, createSession, userFromToken, dropSession, sessionCookie, readCookie,
   publicUser, tooManyFails, noteFail, clearFails } from './auth.js';
-import { beforeCreate, afterCreate, beforeUpdate, insertRec, getSetting, setSetting, isManager, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE } from './logic.js';
+import { beforeCreate, afterCreate, beforeUpdate, insertRec, getSetting, setSetting, isManager, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
 import { DEFAULT_SETTINGS, TITLE_TEAM } from '../shared/defaults.js';
 
 const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
@@ -87,19 +87,20 @@ export async function handle(req, res) {
     const user = await userFromToken(db, readCookie(req, 'aali_session'));
     if (!user) throw new Rule('Please sign in.', 401);
     const admin = user.is_admin;
+    const mayRead = (r) => r.type === 'notice' ? r.data.to === user.id : r.type !== 'report' || canSeeReport(user, r.data); // daily reports are private to the writer, their manager and top management
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
     if (path === '/bootstrap' && method === 'GET') {
       const [users, recs, settings, now] = await Promise.all([
         db.query('select * from users order by name'), db.query('select * from records where deleted_at is null'), allSettings(db), db.query('select now() as t')]);
-      return send(res, 200, { me: publicUser(user), users: users.rows.map(publicUser), settings, records: recs.rows.map(toClient), serverTime: now.rows[0].t });
+      return send(res, 200, { me: publicUser(user), users: users.rows.map(publicUser), settings, records: recs.rows.filter(mayRead).map(toClient), serverTime: now.rows[0].t });
     }
     if (path === '/changes' && method === 'GET') {
       const since = url.searchParams.get('since');
       const [recs, users, now] = await Promise.all([
         db.query('select * from records where updated_at > $1 or deleted_at > $1', [since]), db.query('select * from users where updated_at > $1', [since]), db.query('select now() as t')]);
       const sChanged = (await db.query('select count(*)::int n from settings where updated_at > $1', [since])).rows[0].n > 0;
-      return send(res, 200, { records: recs.rows.map(toClient), users: users.rows.map(publicUser), settings: sChanged ? await allSettings(db) : null, serverTime: now.rows[0].t });
+      return send(res, 200, { records: recs.rows.filter(mayRead).map(toClient), users: users.rows.map(publicUser), settings: sChanged ? await allSettings(db) : null, serverTime: now.rows[0].t });
     }
     if (path === '/records' && method === 'POST') {
       const b = await readBody(req), type = String(b.type || ''), data = { ...(b.data || {}) };
@@ -136,6 +137,7 @@ export async function handle(req, res) {
       if (!rec) throw new Rule('That item no longer exists.', 404);
       if (ADMIN_ONLY_DELETE.includes(rec.type) && !admin) throw new Rule('Only an admin can delete a signed certificate.', 403);
       if (NEEDS_REASON.includes(rec.type) && reason.length < 5) throw new Rule('Give a reason of at least 5 characters.');
+      if (rec.type === 'report' && !canDeleteReport(user, rec.data)) throw new Rule('Only the Operations Manager, the Company Secretary or the department manager can delete a report.', 403);
       if (['deal', 'project', 'client'].includes(rec.type) && !isManager(user) && rec.created_by !== user.id) throw new Rule('Only a manager can delete this.', 403);
       await db.query('update records set deleted_at = now(), deleted_by = $2, delete_reason = $3, updated_at = now() where id = $1', [rec.id, user.id, reason || null]);
       await audit(db, user, rec, 'delete', `${label(rec.data)}${reason ? ' – ' + reason : ''}`);

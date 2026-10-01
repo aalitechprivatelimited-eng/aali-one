@@ -5,10 +5,11 @@ import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { handle } from '../server/app.js';
 import { getDb } from '../server/db.js';
-import { hashPassword } from '../server/auth.js';
+import { hashPassword, createSession, dropSession } from '../server/auth.js';
 
 if (!process.env.DATABASE_URL && !process.env.PGLITE_DIR && existsSync('.env.local')) for (const l of readFileSync('.env.local', 'utf8').split(/\r?\n/)) { const m = l.match(/^(DATABASE_URL)="?([^"]*)"?$/); if (m) process.env[m[1]] = m[2]; }
 const PW = process.env.DEMO_PASSWORD || 'Aali-' + randomBytes(4).toString('hex');
+let pwSet = false; const tokens = [];
 const DOMAIN = 'aali.demo';
 
 function call(method, path, body, cookie = '') {
@@ -22,7 +23,7 @@ function call(method, path, body, cookie = '') {
 const d = (n) => { const x = new Date(Date.now() + 5.5 * 3600e3); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 
 const PEOPLE = [
-  ['nikhil', 'Nikhil', 'ops', true], ['chairman', 'Azagar Ali Shaik', 'chairman', false], ['cs', 'Kavya Reddy', 'cs', false], ['sales', 'Rahul Varma', 'salesmgr', false],
+  ['nikhil', 'Nikhil', 'ops', true], ['chairman', 'Azagar Ali Shaik', 'chairman', false], ['cs', 'Kavya Reddy', 'cs', true], ['sales', 'Rahul Varma', 'salesmgr', false],
   ['ravi', 'Ravi Kumar', 'bde', false], ['sneha', 'Sneha Patel', 'bde', false], ['arjun', 'Arjun Rao', 'bde', false],
   ['it', 'Suresh Babu', 'itmgr', false], ['priya', 'Priya Nair', 'itlead', false], ['kiran', 'Kiran Teja', 'dev', false],
 ];
@@ -35,8 +36,11 @@ for (const [key, name, title, admin] of PEOPLE) {
   const ex = (await db.query('select id from users where email = $1', [email])).rows[0];
   const id = ex?.id || 'u_' + key;
   if (!ex) await db.query('insert into users (id,email,name,title,team,phone,is_admin,pass_hash) values ($1,$2,$3,$4,$5,$6,$7,$8)', [id, email, name, title, team, '9' + String(100000000 + PEOPLE.findIndex((p) => p[0] === key) * 1111111).slice(0, 9), admin, hashPassword(PW)]);
-  else await db.query('update users set pass_hash = $2 where id = $1', [id, hashPassword(PW)]);
-  ids[key] = id; c[key] = (await call('POST', '/auth/login', { email, password: PW })).cookie;
+  else await db.query('update users set is_admin = $2, updated_at = now() where id = $1 and is_admin <> $2', [id, admin]);
+  // Existing logins keep their password unless DEMO_PASSWORD is given.
+  if (ex && process.env.DEMO_PASSWORD) await db.query('update users set pass_hash = $2 where id = $1', [id, hashPassword(PW)]);
+  if (!ex || process.env.DEMO_PASSWORD) pwSet = true;
+  const tk = await createSession(db, id); tokens.push(tk); ids[key] = id; c[key] = 'aali_session=' + tk;
 }
 const already = (await db.query('select count(*)::int n from records where sample')).rows[0].n;
 if (already && !process.argv.includes('--again')) { console.log(`Sample data already present (${already} records). Logins refreshed.`); }
@@ -114,6 +118,52 @@ else {
   await db.query('update records set sample = true where created_at >= $1', [start]);
   console.log('Sample data created:', (await db.query('select count(*)::int n from records where sample')).rows[0].n, 'records');
 }
-writeFileSync('DEMO-LOGINS.md', `# Aali One demo logins (keep private – not in git)\n\nPassword for every demo account: \`${PW}\`\n\n| Login | Name | Role |\n|---|---|---|\n${PEOPLE.map(([k, n, t, a]) => `| ${k}@${DOMAIN} | ${n} | ${t}${a ? ' (admin)' : ''} |`).join('\n')}\n`);
-console.log('Logins written to DEMO-LOGINS.md');
+
+// Second sample set (added once): more projects for the calendar, and three days of daily work reports.
+if (!(await db.query("select count(*)::int n from records where type = 'report'")).rows[0].n) {
+  const start2 = (await db.query('select now() as t')).rows[0].t;
+  const add = async (who, type, data) => (await call('POST', '/records', { type, data }, c[who])).body.record;
+  const upd = (who, id, data) => call('PATCH', '/records/' + id, { data }, c[who]);
+  const byName = async (type, name) => (await db.query("select id from records where deleted_at is null and type = $1 and data->>'name' = $2 limit 1", [type, name])).rows[0]?.id || '';
+
+  const proj = async (name, client, stage, from, to, lead, tasks) => {
+    const p = await add('it', 'project', { name, clientId: await byName('client', client), clientName: client, stage, start: d(from), deadline: d(to), lead: ids[lead], people: [ids.kiran, ids.priya], scope: name });
+    for (const [title, day, ms, status] of tasks) { const t = await add('priya', 'task', { title, projectId: p.id, due: d(day), start: d(day - 3), milestone: ms, status: 'todo', priority: 'medium', owner: ms ? ids.priya : ids.kiran, team: 'it' }); if (status !== 'todo') await upd('priya', t.id, { status }); }
+    return p;
+  };
+  const pPalm = await proj('Website revamp – Hotel Palm Grove', 'Hotel Palm Grove', 'design', -5, 16, 'priya', [['Collect photos and room details', -3, false, 'done'], ['Design home page', 1, false, 'doing'], ['Design approved by client', 4, true, 'todo'], ['Build all pages', 11, false, 'todo'], ['Website ready for client review', 13, true, 'todo'], ['Go live + domain connect', 16, true, 'todo']]);
+  const pKav = await proj('Billing software – Kaveri Traders', 'Kaveri Traders', 'testing', -24, 3, 'priya', [['Requirements signed by client', -20, true, 'done'], ['Item master and billing screens', -10, false, 'done'], ['Stock and sales reports', -4, false, 'done'], ['GST invoice print approved', -2, true, 'done'], ['Testing with client data', 1, false, 'doing'], ['Training and handover', 3, true, 'todo']]);
+  const pGreen = await proj('Admissions portal – Green Valley School', 'Green Valley School', 'development', -30, -2, 'kiran', [['Screen designs approved', -22, true, 'done'], ['Application form', -12, false, 'done'], ['Fee payment page', -5, false, 'doing'], ['Parent login', -3, false, 'todo'], ['Go live', -2, true, 'todo']]);
+  const pCity = await byName('project', 'Website – City Care Pharmacy');
+  const P = (id, name) => (id ? { refId: id, refLabel: 'Project: ' + name, refLink: '/projects/' + id } : {});
+
+  const at = (day, hhmm) => new Date(`${d(day)}T${hhmm}:00+05:30`).toISOString();
+  const now = Date.now(), back = (min) => new Date(now - min * 60e3).toISOString();
+  const lines = (day, list) => list.map(([t, text, ref], i) => ({ text, at: day ? at(day, t) : back((list.length - i) * 35), ...(ref || {}) }));
+  const report = async (who, day, data, { submit = true, review = '', remark = '' } = {}) => {
+    const r = await add(who, 'report', { date: d(day), ...data, entries: lines(day, data.entries) });
+    if (submit) await upd(who, r.id, { status: 'submitted' });
+    if (review) await upd(review, r.id, { _reviewed: true, ...(remark ? { _remark: remark } : {}) });
+  };
+  for (const day of [-2, -1]) {
+    await report('ravi', day, { entries: [['10:10', 'Called 22 clinics from the Guntur list; 9 picked up'], ['12:40', 'Sunrise Dental: explained the quotation to Dr. Mehta'], ['16:30', 'Collected content from City Care Pharmacy for the website']], nums: { calls: 22, connected: 9, meetings: 1, leads: 2 }, plan: 'Follow up Sunrise Dental; visit two clinics in Brodipet.', blockers: '' }, { review: 'sales', remark: day === -1 ? 'Good. Push Sunrise Dental to close this week.' : '' });
+    await report('sneha', day, { entries: [['10:30', 'Kaveri Traders: discussed the app scope with Suresh'], ['13:15', 'Sent SEO plan to Hotel Palm Grove'], ['17:00', 'Called 15 retailers; 6 picked up, 1 interested']], nums: { calls: 15, connected: 6, meetings: 1, leads: 1 }, plan: 'Demo for Dr. Lakshmi at 4 pm.', blockers: '' }, { review: 'sales' });
+    await report('arjun', day, { entries: [['11:00', 'Visited Uday Boys Hostel for the advance; owner asked for two more days'], ['15:20', 'Called Green Valley School about the website quotation']], nums: { calls: 12, connected: 5, meetings: 1, leads: 0 }, plan: 'Collect the Uday advance.', blockers: day === -1 ? 'Uday advance still not received, so the project cannot start.' : '' }, { review: day === -2 ? 'sales' : '' });
+    await report('sales', day, { entries: [['11:30', 'Morning call with the BDE team; checked all follow-ups'], ['16:00', 'Reviewed the 15% discount asked for Kaveri Traders']], nums: { meetings: 1 }, plan: 'Plan the hospital outreach list.', blockers: '' }, { review: day === -2 ? 'nikhil' : '' });
+    await report('priya', day, { entries: [['10:45', 'Reviewed home page design with Kiran', P(pPalm.id, pPalm.name)], ['14:30', 'Tested GST invoice print with client data', P(pKav.id, pKav.name)], ['17:15', 'Fixed mobile menu on the pharmacy site', P(pCity, 'Website – City Care Pharmacy')]], nums: { hours: 8 }, plan: 'Client training plan for Kaveri Traders.', blockers: '' }, { review: 'it' });
+    await report('kiran', day, { entries: [['10:20', 'Built Products and Offers pages', P(pCity, 'Website – City Care Pharmacy')], ['15:00', 'Fee payment page: gateway test payments working', P(pGreen.id, pGreen.name)]], nums: { hours: 7.5 }, plan: 'Parent login screen.', blockers: day === -1 ? 'Waiting for the school to send the fee structure.' : '' }, { review: day === -2 ? 'it' : '' });
+    await report('it', day, { entries: [['12:00', 'Checked progress on all four projects with Priya'], ['16:45', 'Green Valley portal is late; agreed a new plan with the school']], nums: { hours: 8 }, plan: 'Assign a lead for the Uday hostel app once the advance comes.', blockers: '' }, {});
+  }
+  await report('ravi', 0, { entries: [['', 'Called 14 clinics; 6 picked up'], ['', 'Dr. Mehta agreed to the quotation, wants to start next week'], ['', 'Sent payment reminder to City Care Pharmacy']], nums: { calls: 14, connected: 6, leads: 1 }, plan: '', blockers: '' }, { submit: false });
+  await report('sneha', 0, { entries: [['', 'Prepared the app demo for Dr. Lakshmi'], ['', 'Kaveri Traders asked for 15% discount again']], nums: { calls: 6, connected: 3 }, plan: '', blockers: 'Need the Sales Manager to decide the Kaveri discount today.' }, { submit: false });
+  await report('priya', 0, { entries: [['', 'Home page design sent to Hotel Palm Grove for approval', P(pPalm.id, pPalm.name)], ['', 'Testing billing with 200 real items', P(pKav.id, pKav.name)]], nums: { hours: 4 }, plan: '', blockers: '' }, { submit: false });
+  await report('kiran', 0, { entries: [['', 'Contact form and WhatsApp button working', P(pCity, 'Website – City Care Pharmacy')], ['', 'Parent login: OTP screen done', P(pGreen.id, pGreen.name)]], nums: { hours: 5 }, plan: 'Finish parent login.', blockers: '' });
+  await db.query('update records set sample = true where created_at >= $1', [start2]);
+  console.log('Second sample set created: 3 projects and', (await db.query("select count(*)::int n from records where type = 'report'")).rows[0].n, 'daily reports');
+}
+for (const tk of tokens) await dropSession(db, tk);
+if (pwSet && !process.env.NO_LOGIN_FILE) {
+  writeFileSync('DEMO-LOGINS.md', `# Aali One demo logins (keep private – not in git)\n\nPassword for every demo account: \`${PW}\`\n\n| Login | Name | Role |\n|---|---|---|\n${PEOPLE.map(([k, n, t, a]) => `| ${k}@${DOMAIN} | ${n} | ${t}${a ? ' (admin)' : ''} |`).join('\n')}\n`);
+  console.log('Logins written to DEMO-LOGINS.md');
+} else console.log('Existing logins kept (password not changed).');
 process.exit(0);

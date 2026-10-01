@@ -14,6 +14,7 @@ const Tasks = lazy(() => import('./pages/Tasks.jsx'));
 const Payments = lazy(() => import('./pages/Payments.jsx'));
 const Support = lazy(() => import('./pages/Support.jsx'));
 const Calendar = lazy(() => import('./pages/Calendar.jsx'));
+const Daily = lazy(() => import('./pages/Daily.jsx'));
 const Reports = lazy(() => import('./pages/Reports.jsx'));
 const Messages = lazy(() => import('./pages/Messages.jsx'));
 const Approvals = lazy(() => import('./pages/Approvals.jsx'));
@@ -89,13 +90,14 @@ function Shell() {
   const late = forScope(feedItems(), 'mine').filter((i) => diff(i.due) <= 0).length;
   const unread = list('notice').filter((n) => n.to === me.id && !n.read).length;
   const pending = isManager() ? list('approval').filter((a) => a.status === 'pending').length : 0;
+  const toReview = isManager() ? list('report').filter((r) => r.owner !== me.id && r.status === 'submitted' && !r.reviewed).length : 0;
   const L = ({ to, children, cnt }) => <NavLink to={to}>{children}{cnt ? <span className="cnt">{cnt}</span> : null}</NavLink>;
   return (
     <div className="shell">
       <aside className={'side' + (open ? ' open' : '')}>
         <div className="brand"><img src="/icon.svg" alt="" /><div><b>Aali One</b><span>Aali Group</span></div></div>
         <nav className="nav">
-          <L to="/" cnt={late}>Today</L><L to="/inbox" cnt={unread}>Notifications</L>{isManager() && <L to="/approvals" cnt={pending}>Approvals</L>}
+          <L to="/" cnt={late}>Today</L><L to="/daily" cnt={toReview}>Daily reports</L><L to="/inbox" cnt={unread}>Notifications</L>{isManager() && <L to="/approvals" cnt={pending}>Approvals</L>}
           <div className="sec">Sales</div><L to="/leads">Leads & enquiries</L><L to="/deals">Deals pipeline</L><L to="/clients">Clients</L><L to="/quotes">Quotations</L>
           <div className="sec">Delivery</div><L to="/projects">Projects</L><L to="/tasks">Tasks</L><L to="/support">Support</L>
           <div className="sec">Money</div><L to="/payments">Payments & receipts</L>
@@ -113,7 +115,7 @@ function Shell() {
               <Route path="/" element={<Today />} /><Route path="/inbox" element={<Inbox />} /><Route path="/approvals" element={<Approvals />} />
               <Route path="/leads/*" element={<Leads />} /><Route path="/deals/*" element={<Deals />} /><Route path="/clients/*" element={<Clients />} />
               <Route path="/quotes/*" element={<Quotes />} /><Route path="/projects/*" element={<Projects />} /><Route path="/tasks" element={<Tasks />} />
-              <Route path="/support" element={<Support />} /><Route path="/payments/*" element={<Payments />} /><Route path="/calendar" element={<Calendar />} />
+              <Route path="/support" element={<Support />} /><Route path="/payments/*" element={<Payments />} /><Route path="/calendar" element={<Calendar />} /><Route path="/daily" element={<Daily />} />
               <Route path="/reports" element={<Reports />} /><Route path="/messages" element={<Messages />} /><Route path="/settings/*" element={<Settings />} />
               <Route path="/signoff/:projectId" element={<Signoff />} /><Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

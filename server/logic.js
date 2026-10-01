@@ -2,7 +2,7 @@
 // the advance gate, sign-off before Live, payments updating reminders, approvals, recurring tasks.
 import { newId } from './auth.js';
 import { docTotals, receiptTotals, fyLabel, dayLabel, mobile10, num, round2 } from '../shared/money.js';
-import { MANAGER_TITLES } from '../shared/defaults.js';
+import { MANAGER_TITLES, TOP_TITLES } from '../shared/defaults.js';
 
 export class Rule extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10); // India date
@@ -13,6 +13,11 @@ export const nextDue = (iso, rep) => rep === 'weekly' ? addDays(iso, 7) : rep ==
   : addMonths(iso, { monthly: 1, quarterly: 3, half: 6, yearly: 12 }[rep] || 1);
 const WORK = ['planning', 'design', 'development', 'testing', 'live'];
 export const isManager = (u) => u && (u.is_admin || MANAGER_TITLES.includes(u.title));
+export const isTop = (u) => !!u && (u.is_admin || TOP_TITLES.includes(u.title));
+// Daily reports: the writer, the manager of that department, and top management (Ops Manager, Company Secretary, Chairman) can read.
+export const canSeeReport = (u, d) => !!u && (d.owner === u.id || isTop(u) || (isManager(u) && u.team === d.team));
+// Send back / delete: the department manager, or an admin (Ops Manager, Company Secretary). The Chairman reads and remarks only.
+const canRunReport = (u, d) => u.is_admin || (d.owner !== u.id && isManager(u) && !TOP_TITLES.includes(u.title) && u.team === d.team);
 const log = (d, by, text) => { d.log = [{ at: new Date().toISOString(), by, text }, ...(d.log || [])].slice(0, 80); };
 
 async function counter(t, key) {
@@ -121,8 +126,28 @@ export async function beforeCreate(t, type, data, user, sample) {
     case 'task': if (!data.title?.trim()) throw new Rule('Enter the task.'); data.status ||= 'todo'; break;
     case 'payment': if (!data.title?.trim()) throw new Rule('Enter what the payment is for.'); data.status ||= 'open'; data.paid ||= 0; data.baseAmount ??= num(data.amount); break;
     case 'approval': data.status = 'pending'; data.requestedBy = me; break;
+    case 'report': {
+      if (!user) throw new Rule('Please sign in.', 401);
+      data.owner = me; data.team = user.team; data.date ||= today();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date) || data.date > today()) throw new Rule('A report cannot be for a future date.');
+      if (data.date < addDays(today(), -3) && !user.is_admin) throw new Rule('You can fill a report for the last 3 days only.');
+      const ex = (await t.query("select id from records where deleted_at is null and type = 'report' and data->>'owner' = $1 and data->>'date' = $2", [me, data.date])).rows[0];
+      if (ex) return { merged: true, id: ex.id, type: 'report' }; // one report per person per day
+      data.status = 'open'; data.entries = cleanEntries(data.entries);
+      for (const k of ['remarks', 'reviewed', 'submittedAt', 'log']) delete data[k];
+      break;
+    }
   }
   return { merged: false };
+}
+const cleanEntries = (list) => (Array.isArray(list) ? list : []).filter((e) => String(e?.text || '').trim()).slice(0, 100).map((e) => ({
+  id: e.id || newId('e_'), at: e.at || new Date().toISOString(), text: String(e.text).trim().slice(0, 500),
+  ...(e.refId ? { refId: e.refId, refLabel: String(e.refLabel || '').slice(0, 120), refLink: String(e.refLink || '').slice(0, 120) } : {}) }));
+// Who is told when a report is submitted: the department manager; for a manager's own report, the Ops Manager and Company Secretary.
+async function reportWatchers(t, d) {
+  const us = (await t.query('select id, title, team from users where active and id <> $1', [d.owner])).rows;
+  const mgr = us.filter((u) => MANAGER_TITLES.includes(u.title) && !TOP_TITLES.includes(u.title) && u.team === d.team);
+  return (mgr.length ? mgr : us.filter((u) => ['ops', 'cs'].includes(u.title))).map((u) => u.id);
 }
 
 async function quoteApproval(t, q, user, prev, sample) {
@@ -248,8 +273,39 @@ export async function beforeUpdate(t, rec, next, user) {
     case 'lead':
       if (next.status !== prev.status) log(next, me, `Status: ${next.status}`);
       break;
+    case 'report': {
+      const mine = prev.owner === me, now = new Date().toISOString();
+      if (!canSeeReport(user, prev)) throw new Rule('You cannot open this report.', 403);
+      const remark = String(next._remark || '').trim().slice(0, 500), reviewed = !!next._reviewed; delete next._remark; delete next._reviewed;
+      for (const k of ['owner', 'team', 'date', 'remarks', 'reviewed', 'submittedAt']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
+      if (mine) next.entries = cleanEntries(next.entries);
+      const edited = ['entries', 'plan', 'blockers', 'nums'].some((k) => JSON.stringify(next[k] ?? null) !== JSON.stringify(prev[k] ?? null));
+      if (edited && !mine) throw new Rule('Only the writer can change a report. Managers can add a remark.', 403);
+      if (edited && prev.status === 'submitted') throw new Rule('This report is already submitted. Ask your manager to send it back if it needs a change.');
+      if (next.status !== prev.status) {
+        if (next.status === 'submitted') {
+          if (!mine) throw new Rule('Only the writer can submit a report.', 403);
+          if (!next.entries.length) throw new Rule('Add at least one line of work before you submit.');
+          next.submittedAt = now; log(next, me, 'Report submitted');
+          for (const to of await reportWatchers(t, next)) await notify(t, to, `${user.name} submitted the daily report for ${next.date}.`, 'report', rec.id, user, rec.sample);
+        } else if (next.status === 'open') {
+          if (!canRunReport(user, prev)) throw new Rule('Only the department manager, the Operations Manager or the Company Secretary can send a report back.', 403);
+          if (!remark) throw new Rule('Say what needs to change.');
+          delete next.reviewed; delete next.submittedAt; log(next, me, `Sent back: ${remark}`);
+        } else throw new Rule('Unknown report status.');
+      }
+      if (reviewed) {
+        if (mine || !isManager(user)) throw new Rule('Only a manager can mark a report as reviewed.', 403);
+        if (next.status !== 'submitted') throw new Rule('The report must be submitted before it is reviewed.');
+        next.reviewed = { by: me, at: now }; log(next, me, 'Reviewed');
+      }
+      if (remark) next.remarks = [...(next.remarks || []), { by: me, at: now, text: remark }];
+      if (!mine && (remark || reviewed)) await notify(t, prev.owner, remark ? `${user.name} on your ${prev.date} report: "${remark.slice(0, 80)}"` : `${user.name} reviewed your ${prev.date} report.`, 'report', rec.id, user, rec.sample);
+      break;
+    }
   }
 }
+export const canDeleteReport = (u, d) => canRunReport(u, d) || (d.owner === u.id && d.status !== 'submitted');
 async function applyApproval(t, a, user) {
   const target = await getRec(t, a.relId); if (!target) return;
   const ok = a.status === 'approved';

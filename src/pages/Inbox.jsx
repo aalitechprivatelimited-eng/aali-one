@@ -3,7 +3,7 @@ import { useStore, list, update, store } from '../api.js';
 import { fmtDT, uname } from '../lib.js';
 import { Empty, attempt } from '../ui.jsx';
 
-const LINK = { lead: '/leads/', deal: '/deals/', project: '/projects/', quote: '/quotes/', client: '/clients/', task: '/tasks', ticket: '/support', approval: '/approvals' };
+const LINK = { lead: '/leads/', deal: '/deals/', project: '/projects/', quote: '/quotes/', client: '/clients/', task: '/tasks', ticket: '/support', approval: '/approvals', report: '/daily' };
 export default function Inbox() {
   useStore(); const nav = useNavigate();
   const rows = list('notice').filter((n) => n.to === store.me.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
