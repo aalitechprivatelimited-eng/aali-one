@@ -1,8 +1,8 @@
 // Daily work reports: everyone writes their day as it happens; the department manager and top management watch it live.
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useStore, store, list, create, update, poll } from '../api.js';
-import { today, addDays, fmtDate, fmtDT, iso, parse, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink } from '../lib.js';
+import { useStore, store, list, create, update, poll, saveSetting } from '../api.js';
+import { today, addDays, fmtDate, fmtDT, iso, parse, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings } from '../lib.js';
 import { Tabs, Seg, Pill, Av, Empty, Field, In, Area, Sel, Sample, DeleteButton, attempt } from '../ui.jsx';
 
 const NUMS = { sales: [['calls', 'Calls made'], ['connected', 'Calls connected'], ['meetings', 'Meetings / visits'], ['leads', 'New leads found']], it: [['hours', 'Hours worked']], management: [] };
@@ -13,9 +13,11 @@ const hm = (s) => new Date(s).toLocaleTimeString('en-IN', { hour: 'numeric', min
 const ago = (s) => { const m = Math.round((Date.now() - new Date(s)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : fmtDT(s); };
 const status = (r) => !r ? ['Not started', ''] : r.status === 'submitted' ? (r.reviewed ? ['Reviewed', 'ok'] : ['Submitted', 'info']) : ['In progress', 'warn'];
 const dayName = (d) => d === today() ? 'Today' : d === addDays(today(), -1) ? 'Yesterday' : `${WEEKDAY[parse(d).getDay()]} ${fmtDate(d)}`;
-const expected = () => activeUsers().filter((u) => !['chairman', 'admin'].includes(u.title));
-// Whose reports I look after: my department if I manage one; everyone if I am top management.
-const watched = (me) => expected().filter((u) => u.id !== me.id && (isTop(me) || u.team === me.team));
+const NO_REPORT = ['chairman', 'ops', 'cs', 'admin']; // top management reads reports, it does not write them
+const expected = () => activeUsers().filter((u) => !NO_REPORT.includes(u.title));
+const leadOn = (me) => me.title === 'itlead' && !!settings().leadSeesReports;
+// Whose reports I look after: my department if I manage one; everyone if I am top management; the developers if I am the IT Team Lead and the switch is on.
+const watched = (me) => expected().filter((u) => u.id !== me.id && (leadOn(me) ? u.title === 'dev' : isTop(me) || u.team === me.team));
 const canRun = (me, r) => me.isAdmin || (r.owner !== me.id && isManager(me) && !['ops', 'cs', 'chairman'].includes(me.title) && me.team === r.team);
 
 // What Aali One itself recorded for this person on this day.
@@ -42,12 +44,12 @@ function refOptions(me) {
 }
 
 export default function Daily() {
-  useStore(); const me = store.me, boss = isManager(me), [tab, setTab] = useState(boss ? 'team' : 'mine'), [, tick] = useState(0);
+  useStore(); const me = store.me, boss = isManager(me) || leadOn(me), [tab, setTab] = useState(boss ? 'team' : 'mine'), [, tick] = useState(0);
   // Faster refresh while this page is open, so a manager sees each update within a few seconds.
   useEffect(() => { poll(); const a = setInterval(poll, 4000), b = setInterval(() => tick((n) => n + 1), 20000); return () => { clearInterval(a); clearInterval(b); }; }, []);
-  const noReport = me.title === 'chairman';
+  const noReport = NO_REPORT.includes(me.title);
   return <>
-    <div className="topbar"><h1>Daily work reports <small>{boss ? (isTop(me) ? 'all departments' : TEAMS[me.team] + ' team') : 'your day, as it happens'}</small></h1>
+    <div className="topbar"><h1>Daily work reports <small>{boss ? (isTop(me) ? 'all departments' : leadOn(me) ? 'developers' : TEAMS[me.team] + ' team') : 'your day, as it happens'}</small></h1>
       <span className="pill ok" title="This page checks for new updates every few seconds">● Live</span></div>
     {boss && !noReport && <Tabs value={tab} onChange={setTab} tabs={[['team', isTop(me) ? 'All reports' : 'My team'], ['mine', 'My report']]} />}
     {boss && (tab === 'team' || noReport) ? <Team /> : <Mine />}
@@ -136,6 +138,9 @@ function Team() {
       <div className="stat"><span className="l">Waiting for review</span><span className="v">{n((x) => x.r?.status === 'submitted' && !x.r.reviewed)}</span></div>
       <div className={'stat' + (help.length ? ' hot' : '')}><span className="l">Need help</span><span className="v">{help.length}</span></div>
     </div>
+    {me.isAdmin && <label className="check card" style={{ marginBottom: 12 }}><input type="checkbox" checked={!!settings().leadSeesReports}
+      onChange={(e) => attempt(() => saveSetting('leadSeesReports', e.target.checked), e.target.checked ? "On: the IT Team Lead can now read the developers' reports." : "Off: only the IT Manager and top management read the developers' reports.")} />
+      <span><b>IT Team Lead can read the developers' daily reports</b><br /><span className="small muted">Off for now. Switch it on when the IT team grows. The Team Lead can read and remark; review and send-back stay with the IT Manager.</span></span></label>}
     {!rows.length && <Empty>No people in this view. Add people in Settings → People.</Empty>}
     {view === 'week' ? <Week people={people} end={date} pick={(d, id) => { setDate(d); setView('day'); setOpen(id); }} />
       : <div className="split">
@@ -172,7 +177,7 @@ function ReportView({ r, me }) {
     {r.owner !== me.id && <div className="row">
       <input className="in grow" style={{ minWidth: 180 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Write a remark for them (optional)" maxLength={500} />
       <button className="btn sm" type="button" disabled={!note.trim()} onClick={() => act({ _remark: note }, 'Remark sent.')}>Send remark</button>
-      {sub && !r.reviewed && <button className="btn primary sm" type="button" onClick={() => act({ _reviewed: true, ...(note.trim() ? { _remark: note } : {}) }, 'Marked as reviewed.')}>Mark reviewed</button>}
+      {sub && !r.reviewed && isManager(me) && <button className="btn primary sm" type="button" onClick={() => act({ _reviewed: true, ...(note.trim() ? { _remark: note } : {}) }, 'Marked as reviewed.')}>Mark reviewed</button>}
       {sub && canRun(me, r) && <button className="btn sm" type="button" disabled={!note.trim()} title="Write what must change in the remark box first" onClick={() => act({ status: 'open', _remark: note }, 'Sent back to be corrected.')}>Send back</button>}
       {canRun(me, r) && <DeleteButton id={r.id} label="Delete" />}</div>}
   </>;

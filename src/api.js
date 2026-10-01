@@ -40,6 +40,7 @@ export async function poll() {
     const c = await http('GET', '/changes?since=' + encodeURIComponent(S.serverTime));
     c.records.forEach(put);
     if (c.users.length) { const m = new Map(S.users.map((u) => [u.id, u])); c.users.forEach((u) => m.set(u.id, u)); S.users = [...m.values()].sort((a, b) => a.name.localeCompare(b.name)); }
+    if (c.settings && !!c.settings.leadSeesReports !== !!S.settings.leadSeesReports && S.me.title === 'itlead') { polling = false; return void boot(); } // what I may read changed
     if (c.settings) S.settings = c.settings;
     S.serverTime = c.serverTime; if (c.records.length || c.users.length || c.settings) emit();
   } catch (e) { if (e.status === 401) { S.me = null; emit(); } } finally { polling = false; }

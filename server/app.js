@@ -87,7 +87,8 @@ export async function handle(req, res) {
     const user = await userFromToken(db, readCookie(req, 'aali_session'));
     if (!user) throw new Rule('Please sign in.', 401);
     const admin = user.is_admin;
-    const mayRead = (r) => r.type === 'notice' ? r.data.to === user.id : r.type !== 'report' || canSeeReport(user, r.data); // daily reports are private to the writer, their manager and top management
+    const leadSees = user.title === 'itlead' && !!(await getSetting(db, 'leadSeesReports', false));
+    const mayRead = (r) => r.type === 'notice' ? r.data.to === user.id : r.type !== 'report' || canSeeReport(user, r.data, leadSees); // daily reports are private to the writer, their manager and top management
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
     if (path === '/bootstrap' && method === 'GET') {

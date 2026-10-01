@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS = {
     { id: 'svc-host', name: 'Domain + hosting (yearly)', unit: 'Year', rate: 4500, note: 'Domain renewal and shared hosting.' },
   ],
   discountApprovalPct: 10,
+  leadSeesReports: false, // when on, the IT Team Lead can read the developers' daily reports
   escalateDays: 3,
   templates: [
     { id: 'tp-first', name: 'First follow-up', text: 'Hi {client}, this is {me} from Aali Conssultancy. Thank you for your enquiry about {service}. When is a good time to talk?' },

@@ -137,3 +137,23 @@ test('changes feed and admin-only actions', async () => {
   assert.equal((await call('GET', '/trash', null, admin)).status, 200);
   assert.equal((await call('POST', '/users', { name: 'New', email: 'n@test.in', password: 'password123', title: 'bde' }, admin)).status, 200);
 });
+
+test('daily reports: top management does not write one; IT Team Lead switch', async () => {
+  const db = await getDb();
+  for (const [id, email, title] of [['u_tl', 'tl@test.in', 'itlead'], ['u_dev', 'dev@test.in', 'dev'], ['u_ops', 'ops2@test.in', 'ops']])
+    await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', [id, email, email, title, title === 'ops' ? 'management' : 'it', hashPassword('password123')]);
+  const login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  const tl = await login('tl@test.in'), dev = await login('dev@test.in'), ops = await login('ops2@test.in'), it = await login('it@test.in');
+  assert.equal((await call('POST', '/records', { type: 'report', data: {} }, ops)).status, 400);
+  const r = (await add(dev, 'report', { entries: [{ text: 'Built the login page' }] })).record;
+  const mgr = (await add(it, 'report', { entries: [{ text: 'Reviewed projects' }] })).record;
+  const sees = async (c, id) => (await call('GET', '/bootstrap', null, c)).body.records.some((x) => x.id === id);
+  assert.equal(await sees(tl, r.id), false, 'off by default');
+  assert.equal((await patch(tl, r.id, { _remark: 'hi' })).status, 403);
+  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: true }, tl)).status, 403, 'only an admin flips the switch');
+  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: true }, admin)).status, 200);
+  assert.equal(await sees(tl, r.id), true); assert.equal(await sees(tl, mgr.id), false, "not the IT Manager's report");
+  assert.equal((await patch(tl, r.id, { _remark: 'Nice' })).status, 200);
+  assert.equal((await call('PUT', '/settings/leadSeesReports', { value: false }, admin)).status, 200);
+  assert.equal(await sees(tl, r.id), false);
+});

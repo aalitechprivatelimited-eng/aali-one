@@ -15,7 +15,10 @@ const WORK = ['planning', 'design', 'development', 'testing', 'live'];
 export const isManager = (u) => u && (u.is_admin || MANAGER_TITLES.includes(u.title));
 export const isTop = (u) => !!u && (u.is_admin || TOP_TITLES.includes(u.title));
 // Daily reports: the writer, the manager of that department, and top management (Ops Manager, Company Secretary, Chairman) can read.
-export const canSeeReport = (u, d) => !!u && (d.owner === u.id || isTop(u) || (isManager(u) && u.team === d.team));
+// leadSees: the "IT Team Lead can read developers' reports" switch (off by default; an admin turns it on).
+export const canSeeReport = (u, d, leadSees = false) => !!u && (d.owner === u.id || isTop(u) || (isManager(u) && u.team === d.team)
+  || (leadSees && u.title === 'itlead' && d.team === 'it' && d.ownerTitle === 'dev'));
+export const NO_REPORT_TITLES = ['chairman', 'ops', 'cs', 'admin']; // top management reads reports, it does not write them
 // Send back / delete: the department manager, or an admin (Ops Manager, Company Secretary). The Chairman reads and remarks only.
 const canRunReport = (u, d) => u.is_admin || (d.owner !== u.id && isManager(u) && !TOP_TITLES.includes(u.title) && u.team === d.team);
 const log = (d, by, text) => { d.log = [{ at: new Date().toISOString(), by, text }, ...(d.log || [])].slice(0, 80); };
@@ -128,7 +131,8 @@ export async function beforeCreate(t, type, data, user, sample) {
     case 'approval': data.status = 'pending'; data.requestedBy = me; break;
     case 'report': {
       if (!user) throw new Rule('Please sign in.', 401);
-      data.owner = me; data.team = user.team; data.date ||= today();
+      if (NO_REPORT_TITLES.includes(user.title)) throw new Rule('Top management does not write a daily report.');
+      data.owner = me; data.team = user.team; data.ownerTitle = user.title; data.date ||= today();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date) || data.date > today()) throw new Rule('A report cannot be for a future date.');
       if (data.date < addDays(today(), -3) && !user.is_admin) throw new Rule('You can fill a report for the last 3 days only.');
       const ex = (await t.query("select id from records where deleted_at is null and type = 'report' and data->>'owner' = $1 and data->>'date' = $2", [me, data.date])).rows[0];
@@ -275,9 +279,9 @@ export async function beforeUpdate(t, rec, next, user) {
       break;
     case 'report': {
       const mine = prev.owner === me, now = new Date().toISOString();
-      if (!canSeeReport(user, prev)) throw new Rule('You cannot open this report.', 403);
+      if (!canSeeReport(user, prev, !!(await getSetting(t, 'leadSeesReports', false)))) throw new Rule('You cannot open this report.', 403);
       const remark = String(next._remark || '').trim().slice(0, 500), reviewed = !!next._reviewed; delete next._remark; delete next._reviewed;
-      for (const k of ['owner', 'team', 'date', 'remarks', 'reviewed', 'submittedAt']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
+      for (const k of ['owner', 'team', 'ownerTitle', 'date', 'remarks', 'reviewed', 'submittedAt']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
       if (mine) next.entries = cleanEntries(next.entries);
       const edited = ['entries', 'plan', 'blockers', 'nums'].some((k) => JSON.stringify(next[k] ?? null) !== JSON.stringify(prev[k] ?? null));
       if (edited && !mine) throw new Rule('Only the writer can change a report. Managers can add a remark.', 403);
