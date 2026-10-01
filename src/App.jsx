@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list } from './api.js';
 import { Toaster, In, Field, attempt, toast } from './ui.jsx';
-import { TITLES, feedItems, forScope, diff, isManager, isTop, canAddPeople } from './lib.js';
+import { TITLES, feedItems, forScope, diff, isManager, isTop, canAddPeople, desig } from './lib.js';
 import { ThemeToggle } from './theme.jsx';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
@@ -110,7 +110,7 @@ function Shell() {
           {isTop() && <><div className="sec">Management</div><L to="/collab">Collaborations</L></>}
           <div className="sec">Overview</div><L to="/calendar">Calendar</L><L to="/reports">Reports & dashboard</L><L to="/messages">WhatsApp messages</L>{canAddPeople() && <L to="/settings/people">{me.isAdmin ? 'People & teams' : 'My team members'}</L>}<NavLink to="/settings" className={({ isActive }) => (isActive && !loc.pathname.startsWith('/settings/people') ? 'active' : '')}>Settings</NavLink>
         </nav>
-        <div className="me"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b>{me.name}</b><div className="faint">{TITLES[me.title]} · {me.company}</div></div><ThemeToggle />
+        <div className="me"><span className="av">{me.name.slice(0, 2).toUpperCase()}</span><div className="grow"><b>{me.name}</b><div className="faint">{desig(me)} · {me.company}</div></div><ThemeToggle />
           <button className="btn ghost sm" type="button" onClick={logout}>Sign out</button></div>
       </aside>
       {open && <div className="scrim" onClick={() => setOpen(false)} />}

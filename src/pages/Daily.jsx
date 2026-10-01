@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore, store, list, create, update, poll, saveSetting } from '../api.js';
-import { today, addDays, fmtDate, fmtDT, iso, parse, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings } from '../lib.js';
+import { today, addDays, fmtDate, fmtDT, iso, parse, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings, desig } from '../lib.js';
 import { Tabs, Seg, Pill, Av, Empty, Field, In, Area, Sel, Sample, DeleteButton, attempt } from '../ui.jsx';
 
 const NUMS = { sales: [['calls', 'Calls made'], ['connected', 'Calls connected'], ['meetings', 'Meetings / visits'], ['leads', 'New leads found']], it: [['hours', 'Hours worked']], management: [] };
@@ -213,7 +213,7 @@ function PersonRow({ u, r, date, open, toggle, first }) {
   const nudge = waLink(u.phone, `Hi ${u.name.split(' ')[0]}, please update your daily work report for ${fmtDate(date)} in Aali One: ${location.origin}/daily`);
   return <div style={{ borderTop: first ? 'none' : '1px solid var(--line)' }}>
     <button type="button" className="li" onClick={toggle} aria-expanded={open} style={{ width: '100%', border: 'none', background: 'none', textAlign: 'left' }}>
-      <Av id={u.id} /><div className="grow"><div className="t">{u.name}</div><div className="small muted">{TITLES[u.title]} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} update${r.entries?.length === 1 ? '' : 's'} · last ${ago(r.updatedAt)}` : ''}</div></div>
+      <Av id={u.id} /><div className="grow"><div className="t">{u.name}</div><div className="small muted">{desig(u)} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} update${r.entries?.length === 1 ? '' : 's'} · last ${ago(r.updatedAt)}` : ''}</div></div>
       {timeByType([r]).total > 0 && <span className="small muted"><span className="num">{fmtMins(timeByType([r]).total)}</span> written</span>}
       {nums.map(([key, lb]) => <span key={key} className="small muted"><span className="num">{r.nums[key]}</span> {lb.toLowerCase()}</span>)}
       {r?.blockers?.trim() && <Pill k="bad">Needs help</Pill>}<Pill k={k}>{l}</Pill><Sample on={r?.sample} /><span className="faint" aria-hidden>{open ? '▾' : '▸'}</span></button>
@@ -247,7 +247,7 @@ function Week({ people, end, pick }) {
   const mark = (r) => !r ? ['–', 'var(--ink-faint)'] : r.status === 'submitted' ? [r.reviewed ? '✓✓' : '✓', 'var(--ok)'] : ['…', 'var(--warn)'];
   return <><div className="tbl"><table><thead><tr><th>Person</th>{days.map((d) => <th key={d} style={{ textAlign: 'center' }}>{WEEKDAY[parse(d).getDay()]} {parse(d).getDate()}</th>)}<th className="n">Submitted</th></tr></thead>
     <tbody>{people.map((u) => { const rs = days.map((d) => reportOf(u.id, d));
-      return <tr key={u.id}><td><b>{u.name}</b><div className="small muted">{TITLES[u.title]}</div></td>
+      return <tr key={u.id}><td><b>{u.name}</b><div className="small muted">{desig(u)}</div></td>
         {rs.map((r, i) => { const [m, c] = mark(r); return <td key={i} style={{ textAlign: 'center', background: parse(days[i]).getDay() === 0 ? 'var(--gold-50)' : '' }}>
           <button type="button" className="btn ghost sm" style={{ color: c, fontWeight: 700 }} title={`${u.name} · ${fmtDate(days[i])} · ${status(r)[0]}`} onClick={() => pick(days[i], u.id)}>{m}</button></td>; })}
         <td className="n">{rs.filter((r) => r?.status === 'submitted').length} / 7</td></tr>; })}</tbody></table></div>

@@ -136,7 +136,7 @@ test('changes feed and admin-only actions', async () => {
   assert.equal(ch.status, 200); assert.ok(ch.body.records.length > 0);
   assert.equal((await call('PUT', '/settings/business', { value: { name: 'X' } }, bde1)).status, 403);
   assert.equal((await call('GET', '/trash', null, admin)).status, 200);
-  assert.equal((await call('POST', '/users', { name: 'New', email: 'n@test.in', password: 'password123', title: 'bde', company: 'Aali Conssultancy' }, admin)).status, 200);
+  assert.equal((await call('POST', '/users', { name: 'New', email: 'n@test.in', password: 'password123', title: 'bde', company: 'Aali Conssultancy', designation: 'BDE - Sales' }, admin)).status, 200);
 });
 
 test('daily reports: top management does not write one; IT Team Lead switch', async () => {
@@ -163,7 +163,7 @@ test('daily reports: top management does not write one; IT Team Lead switch', as
 test('managers add and look after members of their own team only', async () => {
   const login = async (e, p = 'password123') => (await call('POST', '/auth/login', { email: e, password: p })).cookie;
   const sm = await login('sm@test.in'), it = await login('it@test.in');
-  const mk = (c, title, email, extra = {}) => call('POST', '/users', { name: 'New ' + title, email, password: 'password123', title, company: 'Aali Conssultancy', ...extra }, c);
+  const mk = (c, title, email, extra = {}) => call('POST', '/users', { name: 'New ' + title, email, password: 'password123', title, company: 'Aali Conssultancy', designation: 'Member', ...extra }, c);
   assert.equal((await mk(bde1, 'bde', 'x1@test.in')).status, 403, 'a BDE cannot add people');
   const nb = await mk(sm, 'bde', 'nb@test.in'); assert.equal(nb.status, 200); assert.equal(nb.body.user.team, 'sales');
   assert.equal((await mk(sm, 'dev', 'x2@test.in')).status, 403, 'not into another team');
@@ -183,10 +183,13 @@ test('managers add and look after members of their own team only', async () => {
 test('company on staff; collaborations are for management only; task timing', async () => {
   const login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
   const sm = await login('sm@test.in'), ch = await login('ch@test.in'), ops = await login('ops2@test.in');
-  assert.equal((await call('POST', '/users', { name: 'No Co', email: 'noco@test.in', password: 'password123', title: 'bde' }, admin)).status, 400, 'company is required');
-  const b = await call('POST', '/users', { name: 'Builder', email: 'bld@test.in', password: 'password123', title: 'bde', company: 'Aali Builders' }, admin);
+  assert.equal((await call('POST', '/users', { name: 'No Co', email: 'noco@test.in', password: 'password123', title: 'bde', designation: 'BDE' }, admin)).status, 400, 'company is required');
+  const b = await call('POST', '/users', { name: 'Builder', email: 'bld@test.in', password: 'password123', title: 'bde', company: 'Aali Builders', designation: 'BDE - Digital Marketing and Sales' }, admin);
+  assert.equal(b.body.user.designation, 'BDE - Digital Marketing and Sales');
+  assert.equal((await call('POST', '/users', { name: 'No Des', email: 'nodes@test.in', password: 'password123', title: 'bde', company: 'AaliTech' }, admin)).status, 400, 'designation is required');
+  assert.equal((await call('PATCH', '/users/' + b.body.user.id, { designation: 'BDE - Sales' }, admin)).body.user.designation, 'BDE - Sales');
   assert.equal(b.body.user.company, 'Aali Builders');
-  const m = await call('POST', '/users', { name: 'Sec', email: 'cs9@test.in', password: 'password123', title: 'cs', company: 'AaliTech' }, admin);
+  const m = await call('POST', '/users', { name: 'Sec', email: 'cs9@test.in', password: 'password123', title: 'cs', company: 'AaliTech', designation: 'Company Secretary' }, admin);
   assert.equal(m.body.user.company, 'Aali Group', 'management always belongs to the group');
   assert.equal((await call('PATCH', '/users/' + b.body.user.id, { company: 'AaliTech' }, admin)).body.user.company, 'AaliTech');
   assert.equal((await call('POST', '/records', { type: 'collab', data: { kind: 'college', name: 'X College' } }, sm)).status, 403);

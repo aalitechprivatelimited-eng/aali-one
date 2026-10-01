@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { create, remove, upload, list, store } from './api.js';
-import { uname, initials, fmtDT, fmtDate, rel, due, activeUsers, TITLES, fill, waLink, settings, isManager } from './lib.js';
+import { uname, initials, fmtDT, fmtDate, rel, due, activeUsers, TITLES, desig, fill, waLink, settings, isManager } from './lib.js';
 
 // ---------- toast ----------
 let toastSet = null;
@@ -48,7 +48,7 @@ export const Empty = ({ children }) => <div className="empty">{children}</div>;
 
 export function Person({ value, onChange, filter, blank = 'Unassigned', disabled }) {
   const us = activeUsers().filter(filter || (() => true));
-  return <Sel value={value} onChange={onChange} blank={blank} disabled={disabled} options={us.map((u) => [u.id, `${u.name} · ${TITLES[u.title] || u.title}`])} />;
+  return <Sel value={value} onChange={onChange} blank={blank} disabled={disabled} options={us.map((u) => [u.id, `${u.name} · ${desig(u)}`])} />;
 }
 export function People({ value = [], onChange }) {
   const rest = activeUsers().filter((u) => !value.includes(u.id));

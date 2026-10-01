@@ -33,7 +33,7 @@ export function readCookie(req, name) {
   const m = String(req.headers.cookie || '').match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
   return m ? decodeURIComponent(m[1]) : '';
 }
-export const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, title: u.title, team: u.team, phone: u.phone, isAdmin: u.is_admin, active: u.active,
+export const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, title: u.title, team: u.team, phone: u.phone, isAdmin: u.is_admin, active: u.active, designation: u.designation || '',
   company: u.team === 'management' ? 'Aali Group' : u.company || 'Aali Conssultancy' });
 
 // Simple login throttle: 8 failures per email per 15 minutes (per server instance).

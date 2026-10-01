@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useStore, list, store } from '../api.js';
-import { feedItems, forScope, today, addDays, diff, escalated, inr, isManager, isTop, activeUsers, TITLES, waLink, stageProb, MONTHS } from '../lib.js';
+import { feedItems, forScope, today, addDays, diff, escalated, inr, isManager, isTop, activeUsers, TITLES, desig, waLink, stageProb, MONTHS } from '../lib.js';
 import { Empty, Pill, toast } from '../ui.jsx';
 
 function digest(u) {
@@ -32,7 +32,7 @@ function weekly() {
 }
 function Card({ u, text, sub }) {
   const link = waLink(u.phone, text);
-  return <div className="card stack"><div className="row between"><b>{u.name}</b><span className="small muted">{TITLES[u.title]}</span></div><span className="small muted">{sub}</span>
+  return <div className="card stack"><div className="row between"><b>{u.name}</b><span className="small muted">{desig(u)}</span></div><span className="small muted">{sub}</span>
     <textarea className="in" readOnly value={text} style={{ minHeight: 150, fontSize: 12.5 }} />
     <div className="row">{link ? <a className="btn wa sm" href={link} target="_blank" rel="noreferrer">Send on WhatsApp</a> : <span className="small muted">No mobile number – add it in Settings → People.</span>}
       <button className="btn sm" type="button" onClick={() => navigator.clipboard?.writeText(text).then(() => toast('Copied.'))}>Copy</button></div></div>;

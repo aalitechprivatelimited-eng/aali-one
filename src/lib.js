@@ -27,6 +27,8 @@ export const isManager = (u = store.me) => !!u && (u.isAdmin || MANAGER_TITLES.i
 export const isTop = (u = store.me) => !!u && (TOP_TITLES.includes(u.title) || u.isAdmin);
 export const myJuniors = (u = store.me) => MANAGER_ADDS[u?.title] || [];
 export const canAddPeople = (u = store.me) => !!u && (u.isAdmin || myJuniors(u).length > 0);
+// What we call a person on screen: the designation typed for them; the access level's name if none was typed.
+export const desig = (u) => (u?.designation || '').trim() || TITLES[u?.title] || '';
 export const teamOf = (id) => user(id)?.team || '';
 export const initials = (n) => (n || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 export const stageLabel = (k) => settings().pipeline.find((s) => s.key === k)?.label || k;

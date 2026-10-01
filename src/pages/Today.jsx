@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore, store, list, update, get } from '../api.js';
-import { feedItems, forScope, diff, parse, MONTHS, escalated, inr, isManager, TITLES, today, addDays } from '../lib.js';
+import { feedItems, forScope, diff, parse, MONTHS, escalated, inr, isManager, TITLES, desig, today, addDays } from '../lib.js';
 import { Seg, Pill, Due, Avs, Empty, Sample, attempt } from '../ui.jsx';
 
 const KIND = { task: 'Task', lead: 'Lead', deal: 'Deal', cadence: 'Follow-up plan', activity: 'Call / meeting', payment: 'Payment', project: 'Project', ticket: 'Support' };
@@ -17,7 +17,7 @@ export default function Today() {
   const hour = new Date().getHours();
   return (
     <>
-      <div className="topbar"><h1>Good {hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, {me.name.split(' ')[0]} <small>{TITLES[me.title]} · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</small></h1>
+      <div className="topbar"><h1>Good {hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, {me.name.split(' ')[0]} <small>{desig(me)} · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</small></h1>
         <Seg value={scope} onChange={setScope} options={[['mine', 'For me'], ['team', 'My team'], ['all', 'Everyone']]} /></div>
       <div className="stats">
         <div className={'stat' + (over.length ? ' hot' : '')}><span className="l">Overdue</span><span className="v">{over.length}</span><span className="small muted">{esc.length ? `${esc.length} escalated to management` : 'follow-ups, tasks, payments'}</span></div>
