@@ -182,6 +182,9 @@ try {
     await top.getByRole('button', { name: 'Start the guide' }).click(); const { seen } = await walkGuide(top);
     for (const p of ['/daily', '/payments', '/quotes', '/projects', '/collab', '/settings/people', '/settings/access', '/settings/staff', '/settings/audit']) must(seen.has(p), 'the guide did not open ' + p); });
 
+  await step('signing out and in again opens the dashboard, not the page left', async () => { await top.goto(BASE + '/daily'); await top.locator('.page h1').first().waitFor();
+    await top.getByRole('button', { name: 'Sign out' }).click(); await top.locator('input[type=email]').waitFor(); must(new URL(top.url()).pathname === '/', 'still on ' + new URL(top.url()).pathname);
+    await top.locator('input[type=email]').fill('admin@e2e.test'); await top.locator('input[type=password]').fill(PW); await top.getByRole('button', { name: 'Sign in' }).click(); await top.locator('.hero h1').waitFor(); });
   await step('the team report message is detailed: every task, the calls that matter; Short gives the totals', async () => { await top.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
     await top.goto(BASE + '/daily'); await top.getByRole('button', { name: 'Copy the message' }).first().click(); await toast(top, 'Report copied');
     const full = await top.evaluate(() => navigator.clipboard.readText()); must(full.includes('(detailed)') && full.includes('_Tasks_') && full.includes('Sent the brochure to 5 schools'), 'the detailed message lacks the tasks');

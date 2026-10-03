@@ -528,6 +528,30 @@ test('a client visit keeps its check-ins and outcome; an accepted deal tells the
   assert.equal((await presence()).why, 'Returning to the office');
 });
 
+test('security audit (Trail of Bits style): notifications, unknown items, file links, huge text', async () => {
+  const login = (email) => call('POST', '/auth/login', { email, password: 'password123' });
+  for (const [f, e, t] of [['Audit', 'au1@test.in', 'bde'], ['Other', 'au2@test.in', 'dev']]) assert.equal((await call('POST', '/users', { firstName: f, surname: 'Check', email: e, password: 'password123', title: t, designation: t, company: 'AaliTech' }, admin)).status, 200);
+  const X = (await login('au1@test.in')).cookie, Y = (await login('au2@test.in')).cookie, xId = (await call('GET', '/me', null, X)).body.user.id;
+  // ACB-1, ACB-3: notifications come only from Aali One; unknown kinds of item cannot be added.
+  assert.equal((await call('POST', '/records', { type: 'notice', data: { to: xId, text: 'fake' } }, Y)).status, 403);
+  assert.equal((await call('POST', '/records', { type: 'zzjunk', data: {} }, X)).status, 403);
+  // ACB-2: a notification can be marked as read, but not re-addressed or re-worded.
+  assert.equal((await call('POST', '/records', { type: 'task', data: { title: 'Audit task', owner: xId } }, admin)).status, 200);
+  const n = (await call('GET', '/bootstrap', null, X)).body.records.find((r) => r.type === 'notice' && /Audit task/.test(r.text));
+  assert.equal((await patch(X, n.id, { to: 'u_someone', text: 'changed' })).status, 403); assert.equal((await patch(X, n.id, { read: true })).status, 200);
+  // ACB-4: a file opens for the uploader, for people who can open the item it is attached to, and not for others with just the link.
+  const f = (await call('POST', '/files', { name: 'c.pdf', mime: 'application/pdf', data: Buffer.from('%PDF-1.4 x').toString('base64') }, X)).body;
+  const get = async (c) => (await call('GET', '/files/' + f.id, null, c)).status;
+  assert.equal(await get(X), 200); assert.equal(await get(Y), 404, 'a link alone is not enough'); assert.equal(await get(admin), 200, 'management can open it');
+  const lead = (await add(X, 'lead', { name: 'File Lead', mobile: '9000066601', service: 'Website', source: 'Referral', files: [f] })).record;
+  assert.ok(lead.files?.length, 'the file is attached'); assert.equal(await get(sm), 200, 'the Sales Manager can open a file on a lead they can open'); assert.equal(await get(Y), 404);
+  // DOS-1: the public form keeps sensible lengths.
+  assert.equal((await call('POST', '/public/enquiry', { name: 'N'.repeat(50000), mobile: '9000066602', service: 'Website' })).status, 200);
+  assert.ok((await call('GET', '/bootstrap', null, admin)).body.records.filter((r) => r.type === 'lead').every((l) => (l.name || '').length <= 120));
+  // DOS-2: one item cannot be made huge.
+  assert.equal((await call('POST', '/records', { type: 'task', data: { title: 'Big', notes: 'x'.repeat(700000) } }, X)).status, 413);
+});
+
 test('security: uploaded files cannot run as pages, sign-in is limited, your own password needs the current one', async () => {
   // Two fresh people for this test, so it does not depend on what the earlier tests left behind.
   const login = (email, password) => call('POST', '/auth/login', { email, password });
@@ -535,7 +559,7 @@ test('security: uploaded files cannot run as pages, sign-in is limited, your own
   const idA = await person('a'); await person('b');
   let A = (await login('seca@test.in', 'password123')).cookie; const B = (await login('secb@test.in', 'password123')).cookie;
   const up = async (name, mime, text, c = A) => (await call('POST', '/files', { name, mime, data: Buffer.from(text).toString('base64') }, c)).body;
-  const get = (id, c = B) => call('GET', '/files/' + id, null, c);
+  const get = (id, c = A) => call('GET', '/files/' + id, null, c); // the uploader opens it; how it is served is what is checked here
   // A web page or an SVG drawing uploaded by a BDE is handed to the next person as a download, never shown as a page of Aali One.
   for (const [name, mime] of [['x.html', 'text/html'], ['x.svg', 'image/svg+xml'], ['x.js', 'text/javascript']]) {
     const f = await up(name, mime, '<script>fetch("/api/users")</script>'), r = await get(f.id);

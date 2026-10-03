@@ -9,7 +9,7 @@ import { checkCalls, rebuild, dropList } from './prospects.js';
 import { displayOk } from '../shared/names.js';
 
 const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
-const MAX_BODY = 4_000_000;
+const MAX_BODY = 4_000_000, MAX_ITEM = 600_000; // MAX_ITEM: one item's data (a day's report with 400 calls is far below this)
 
 function send(res, status, body, headers = {}) {
   const isBuf = Buffer.isBuffer(body);
@@ -143,6 +143,7 @@ export async function handle(req, res) {
     }
     if (path === '/records' && method === 'POST') {
       const b = await readBody(req), type = String(b.type || ''), data = { ...(b.data || {}) };
+      if (JSON.stringify(data).length > MAX_ITEM) throw new Rule('This item is too large. Attach big text as a file instead.', 413); // audit DOS-2
       if (!/^[a-z]{2,20}$/.test(type)) throw new Rule('Unknown record type.');
       if (MONEY.includes(type) && !canMoney(user)) throw new Rule('Only the Sales Manager and management handle quotations, receipts and payments.', 403);
       const acc = await access(), no = acc.createBlock(type, data);
@@ -169,6 +170,7 @@ export async function handle(req, res) {
         const no = acc.writeBlock(rec, b.data || {});
         if (no) throw new Rule(no, 403);
         const next = { ...rec.data, ...(b.data || {}) };
+        if (JSON.stringify(next).length > MAX_ITEM) throw new Rule('This item has become too large. Attach big text as a file instead.', 413); // audit DOS-2
         for (const k of Object.keys(next)) if (next[k] === null && b.data && k in b.data) delete next[k];
         await beforeUpdate(t, rec, next, user);
         await t.query('update records set data = $2, updated_by = $3, updated_at = now() where id = $1', [rec.id, JSON.stringify(next), user.id]);
@@ -264,6 +266,13 @@ export async function handle(req, res) {
     m = path.match(/^\/files\/([\w-]+)$/);
     if (m && method === 'GET') {
       const f = (await db.query('select * from files where id = $1', [m[1]])).rows[0]; if (!f) throw new Rule('File not found.', 404);
+      // Who may open a file (audit ACB-4): the person who uploaded it, management, anyone for a profile photo, and anyone who can
+      // open an item the file is attached to. Having the link alone is not enough.
+      if (f.created_by !== user.id && !isTop(user) && !(await db.query('select 1 from users where photo = $1', [f.id])).rowCount) {
+        const holders = (await db.query('select * from records where deleted_at is null and strpos(data::text, $1) > 0', ['"' + f.id + '"'])).rows;
+        const acc = holders.length ? await access() : null;
+        if (!holders.some((r) => acc.read(r) === true)) throw new Rule('File not found.', 404);
+      }
       const show = SHOWN_INLINE.test(f.mime);
       return send(res, 200, Buffer.from(f.data), { 'content-type': show ? f.mime : 'application/octet-stream', 'content-disposition': `${show ? 'inline' : 'attachment'}; filename="${encodeURIComponent(f.name)}"`, 'cache-control': 'private, max-age=86400',
         ...(f.mime === 'application/pdf' ? {} : { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox" }) });

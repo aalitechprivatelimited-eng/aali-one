@@ -62,6 +62,8 @@ async function brandSetting(t) { return getSetting(t, 'business', {}); }
 
 // ---------- leads: duplicate check on mobile + service, then assign ----------
 async function leadIntake(t, data, user, sample) {
+  // Every field has a sensible length, so the public form cannot fill the database with huge text (audit DOS-1).
+  for (const [k, n] of [['name', 120], ['company', 120], ['email', 120], ['service', 80], ['mobile', 20], ['source', 60], ['message', 1000]]) if (data[k] != null) data[k] = String(data[k]).slice(0, n);
   const m = mobile10(data.mobile);
   if (!data.name?.trim()) throw new Rule('Enter the name.');
   if (m.length !== 10) throw new Rule('Enter a 10-digit mobile number.');

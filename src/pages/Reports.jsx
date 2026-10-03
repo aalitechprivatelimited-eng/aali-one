@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore, list, create, update, store } from '../api.js';
-import { settings, uname, inr, today, addDays, diff, stageProb, stageLabel, pStageLabel, isTop, can, bdes, activeUsers, MONTHS } from '../lib.js';
+import { settings, uname, inr, today, addDays, diff, stageProb, stageLabel, pStageLabel, isTop, can, bdes, activeUsers, MONTHS, csvCell } from '../lib.js';
 import { Empty, Pill, In, Sel, Field, Tabs, attempt } from '../ui.jsx';
 import { progress } from './Projects.jsx';
 
@@ -103,7 +103,7 @@ function Custom() {
   rows.forEach((r) => { const k = c.by === 'month' ? (r.createdAt || '').slice(0, 7) : c.by === 'owner' ? uname(r.owner || r.createdBy) : c.by === 'stage' && c.type === 'deal' ? stageLabel(r.stage) : r[c.by] || '—';
     (g[k] ||= { n: 0, v: 0 }); g[k].n++; g[k].v += VALUE(r); });
   const out = Object.entries(g).map(([k, x]) => [k, c.measure === 'count' ? x.n : x.v]).sort((a, b) => b[1] - a[1]);
-  function csv() { const text = [[GROUPS[c.by], c.measure === 'count' ? 'Count' : 'Total ₹'], ...out].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n');
+  function csv() { const text = [[GROUPS[c.by], c.measure === 'count' ? 'Count' : 'Total ₹'], ...out].map((r) => r.map(csvCell).join(',')).join('\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv' })); a.download = `report_${c.type}_by_${c.by}.csv`; a.click(); }
   return <div className="card stack"><div className="row">
     <Field label="Show"><Sel value={c.type} onChange={(v) => setC({ ...c, type: v })} options={types} /></Field>

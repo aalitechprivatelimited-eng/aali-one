@@ -9,6 +9,8 @@ const INDEX_TYPES = ['lead', 'deal', 'client', 'project', 'task', 'ticket'];
 export const loadIndex = async (db) => (await db.query(`select id, type, created_by, jsonb_build_object('owner', data->'owner', 'lead', data->'lead', 'people', data->'people',
   'clientId', data->'clientId', 'dealId', data->'dealId', 'projectId', data->'projectId', 'team', data->'team') as data from records where deleted_at is null and type = any($1)`, [INDEX_TYPES])).rows;
 
+// The kinds of item people add themselves. Notifications, presence and anything unknown are made by the server only (audit ACB-1, ACB-3).
+const CREATABLE = new Set(['lead', 'deal', 'client', 'quote', 'invoice', 'receipt', 'payment', 'project', 'task', 'ticket', 'activity', 'comment', 'approval', 'target', 'signoff', 'asset', 'collab', 'report', 'prospect']);
 const LABEL = { assets: 'client assets', calls: 'the call register', leads: 'leads', deals: 'deals', clients: 'clients', quotes: 'quotations', money: 'receipts and payments', projects: 'projects', support: 'support requests', collab: 'collaborations' };
 
 // rows: every live record (or the light index). canSeeReport: the daily-report rule, passed in from logic.js.
@@ -61,6 +63,7 @@ export function buildAccess(user, rows, canSeeReport) {
   // Why this person cannot add a record of this type ('' when they can). It may adjust the data (an own-level person owns what they add).
   function createBlock(type, data) {
     const section = SECTION_OF[type];
+    if (!CREATABLE.has(type)) return type === 'notice' ? 'Notifications are sent by Aali One itself.' : 'This kind of item cannot be added.';
     if (type === 'project' && data.dealId && canEdit(user, 'deals') && parent(data.dealId)) return ''; // handing a won deal over to IT
     if (section && !canEdit(user, section)) return `Your access does not allow adding ${LABEL[section]}.`;
     if (section && sc(section) === 'own' && ['lead', 'deal', 'client'].includes(type)) data.owner = uid;
@@ -80,6 +83,8 @@ export function buildAccess(user, rows, canSeeReport) {
   function writeBlock(r, patch = {}) {
     if (read(r) !== true) return 'Your access does not allow opening this item.';
     if (r.type === 'presence') return 'This is set by the system from the daily report.';
+    // A notification can only be marked as read – never re-addressed or re-worded (audit ACB-2).
+    if (r.type === 'notice' && Object.keys(patch).some((k) => k !== 'read')) return 'A notification can only be marked as read.';
     const section = SECTION_OF[r.type], d = r.data || {};
     if (section && !canEdit(user, section)) return `Your access is view only for ${LABEL[section]}.`;
     if (section && sc(section) === 'own' && 'owner' in patch && (patch.owner || '') !== (d.owner || '')) return 'Only a manager can give this to another person.';

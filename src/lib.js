@@ -9,6 +9,9 @@ export { TITLES, TEAMS };
 const pad = (n) => String(n).padStart(2, '0');
 export const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const today = () => iso(new Date());
+// One cell of a CSV download. A value starting with = + - @ (or a tab) is something Excel would run as a formula – a name typed on
+// the public enquiry form could do that – so it is written as plain text with a leading ' (audit CSV-1). Numbers stay numbers.
+export const csvCell = (v) => { const s = String(v ?? ''); return `"${(typeof v !== 'number' && /^[=+\-@\t\r]/.test(s) ? "'" + s : s).replace(/"/g, '""')}"`; };
 export const parse = (s) => { const [y, m, d] = s.slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
 export const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
 export const diff = (s) => Math.round((parse(s) - parse(today())) / 864e5);

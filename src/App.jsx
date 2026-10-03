@@ -1,5 +1,5 @@
 import { useEffect, useState, lazy, Suspense, Fragment } from 'react';
-import { Routes, Route, Navigate, Link, useLocation, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list } from './api.js';
 import { Toaster, In, Field, Empty, Avatar, attempt, toast, lockPage } from './ui.jsx';
 import { feedItems, forScope, diff, isTop, can, desig } from './lib.js';
@@ -123,6 +123,8 @@ function Shell() {
   const [mini, setMini] = useState(() => { try { return localStorage.getItem('aali-side') === 'mini'; } catch { return false; } });
   const flip = (v) => { setMini(v); try { localStorage.setItem('aali-side', v ? 'mini' : 'full'); } catch {} };
   useEffect(() => setOpen(false), [loc.pathname]);
+  // Signing out goes back to the start, so the next sign-in opens on the dashboard – not on the page someone left.
+  const nav = useNavigate(), signOut = () => { nav('/', { replace: true }); logout(); };
   // While the phone menu is open the page behind it is held still: a fast swipe that reaches the end of the menu would otherwise
   // carry on into the page, and the phone's address bar would hide, making the open menu look as if it flows upwards.
   useEffect(() => { if (!open) return; lockPage(1); return () => lockPage(-1); }, [open]);
@@ -158,7 +160,7 @@ function Shell() {
           <button type="button" className="more" data-tip="All sections" aria-label="Open the sidebar to see all sections" onClick={() => flip(false)}><Ico k="more" /></button>
         </m.nav>
         <div className="me"><Link to="/settings/me" className="me-who" title="My profile: photo, display name, password"><Avatar u={me} /><div className="grow"><b className="ell">{me.name}</b><div className="faint ell" title={desig(me)}>{desig(me)}</div><div className="faint ell">{me.company}</div></div></Link>
-          <div className="me-act"><ThemeToggle label /><button className="btn sm" type="button" onClick={logout}>Sign out</button></div></div>
+          <div className="me-act"><ThemeToggle label /><button className="btn sm" type="button" onClick={signOut}>Sign out</button></div></div>
       </aside>
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
       <div style={{ minWidth: 0 }}>

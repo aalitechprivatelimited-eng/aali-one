@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { useStore, list, get, create, update, store } from '../api.js';
-import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney, canEdit } from '../lib.js';
+import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney, canEdit, csvCell } from '../lib.js';
 import { receiptTotals, docTotals, fyLabel } from '../../shared/money.js';
 import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
 import { ReceiptSheet, QuoteSheet } from '../doc.jsx';
@@ -84,7 +84,7 @@ function Owes() {
 function Export() {
   const [from, setFrom] = useState(today().slice(0, 8) + '01'), [to, setTo] = useState(today());
   function dl(name, rows) {
-    const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const csv = rows.map((r) => r.map(csvCell).join(',')).join('\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = name; a.click(); URL.revokeObjectURL(a.href);
   }
   const inRange = (d) => d >= from && d <= to;
