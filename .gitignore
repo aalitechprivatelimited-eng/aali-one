@@ -10,3 +10,4 @@ DEMO-LOGINS.md
 .env*
 LOCAL-TEST-LOGINS.md
 .review/
+.omc/

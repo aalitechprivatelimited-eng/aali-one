@@ -474,6 +474,31 @@ test('a call back carries its day: it shows for the BDE until the business is ca
   assert.equal((await reg()).backOn, '', 'the next call clears the reminder'); assert.equal((await reg()).lastResp, 'Interested');
 });
 
+test('the place typed is kept, and a list kept by mistake can be deleted (only what was not called yet)', async () => {
+  const login = (email) => call('POST', '/auth/login', { email, password: 'password123' });
+  for (const [f, e] of [['Place', 'pl1@test.in'], ['Other', 'pl2@test.in']]) assert.equal((await call('POST', '/users', { firstName: f, surname: 'Bde', email: e, password: 'password123', title: 'bde', designation: 'BDE', company: 'AaliTech' }, admin)).status, 200);
+  const P = (await login('pl1@test.in')).cookie, O = (await login('pl2@test.in')).cookie;
+  const check = async (c, items, extra = {}) => (await call('POST', '/prospects/check', { items, claim: true, ...extra }, c)).body.results;
+  const reg = async (c, m) => (await call('GET', '/bootstrap', null, c)).body.records.find((r) => r.type === 'prospect' && r.phone10 === m);
+  // Kept before the place was typed, then kept again with it: the place is saved (it used to be lost).
+  assert.equal((await check(P, [{ org: 'Lakshmi Bakery', phone: '9000088001' }]))[0].kind, 'free');
+  assert.equal((await check(P, [{ org: 'Lakshmi Bakery', phone: '9000088001', place: 'Tenali', ind: 'Retail shop' }]))[0].kind, 'mine');
+  assert.equal((await reg(P, '9000088001')).place, 'Tenali'); assert.equal((await reg(P, '9000088001')).ind, 'Retail shop');
+  // A call row with a place fills the register's empty place too.
+  await check(P, [{ org: 'Ravi Opticals', phone: '9000088009' }]); const rep = (await add(P, 'report', {})).record;
+  assert.equal((await patch(P, rep.id, { calls: [{ id: 'pl-a', org: 'Ravi Opticals', phone: '9000088009', place: 'Bapatla', resp: 'Busy' }] })).status, 200);
+  assert.equal((await reg(P, '9000088009')).place, 'Bapatla');
+  // An uploaded list is one list: it can be deleted, but a business already called stays.
+  const items = [1, 2, 3].map((i) => ({ org: 'List shop ' + i, phone: '900008810' + i, place: 'Guntur', src: 'Google Maps' }));
+  const got = await check(P, items, { batch: 'list-test-1', src: 'Google Maps' }); assert.ok(got.every((v) => v.ok));
+  assert.equal((await reg(P, '9000088101')).batch.id, 'list-test-1');
+  assert.equal((await patch(P, rep.id, { calls: [{ id: 'pl-a', org: 'Ravi Opticals', phone: '9000088009', place: 'Bapatla', resp: 'Busy' }, { id: 'pl-b', org: 'List shop 1', phone: '9000088101', place: 'Guntur', resp: 'Busy' }] })).status, 200);
+  assert.equal((await call('POST', '/prospects/drop', { ids: got.map((v) => v.id) }, O)).status, 403, 'another BDE cannot delete my list');
+  const r = await call('POST', '/prospects/drop', { ids: got.map((v) => v.id) }, P); assert.deepEqual(r.body, { deleted: 2, kept: 1 });
+  assert.ok(await reg(P, '9000088101'), 'the called one stays'); assert.equal(await reg(P, '9000088102'), undefined, 'the others are gone');
+  assert.equal((await check(O, [{ org: 'List shop 2', phone: '9000088102' }]))[0].kind, 'free', 'a deleted number is free again');
+});
+
 test('security: uploaded files cannot run as pages, sign-in is limited, your own password needs the current one', async () => {
   // Two fresh people for this test, so it does not depend on what the earlier tests left behind.
   const login = (email, password) => call('POST', '/auth/login', { email, password });

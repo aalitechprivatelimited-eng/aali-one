@@ -5,7 +5,7 @@ import { beforeCreate, afterCreate, beforeUpdate, insertRec, getSetting, setSett
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
 import { isAdminUser, canEdit, canSee } from '../shared/access.js';
 import { buildAccess, loadIndex } from './access.js';
-import { checkCalls, rebuild } from './prospects.js';
+import { checkCalls, rebuild, dropList } from './prospects.js';
 import { displayOk } from '../shared/names.js';
 
 const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
@@ -220,14 +220,14 @@ export async function handle(req, res) {
     if (path === '/import/leads' && method === 'POST') {
       if (!canEdit(user, 'leads')) throw new Rule('Your access does not allow adding leads.', 403);
       const b = await readBody(req), rows = Array.isArray(b.rows) ? b.rows.slice(0, 500) : [];
-      const summary = { created: 0, merged: 0, failed: [] };
+      const summary = { created: 0, merged: 0, failed: [], ids: [] }; // ids: the new leads, so a wrong import can be undone
       for (const [i, row] of rows.entries()) {
         try {
           await db.tx(async (t) => {
             const data = { name: row.name, mobile: row.mobile, email: row.email || '', company: row.company || '', service: row.service, source: row.source || 'Other', message: row.message || '' };
             const r = await beforeCreate(t, 'lead', data, user, false);
             if (r.merged) { summary.merged++; return; }
-            const id = await insertRec(t, 'lead', data, user); await afterCreate(t, 'lead', id, data, user, false); summary.created++;
+            const id = await insertRec(t, 'lead', data, user); await afterCreate(t, 'lead', id, data, user, false); summary.created++; summary.ids.push(id);
           });
         } catch (e) { summary.failed.push({ row: i + 2, error: e.message }); }
       }
@@ -238,7 +238,14 @@ export async function handle(req, res) {
     if (path === '/prospects/check' && method === 'POST') {
       if (!canSee(user, 'calls')) throw new Rule('The call register is for the Sales team and management.', 403);
       const b = await readBody(req), items = (Array.isArray(b.items) ? b.items : []).slice(0, 400);
-      return send(res, 200, { results: await db.tx((t) => checkCalls(t, user, items, { claim: !!b.claim && canEdit(user, 'calls') && user.team === 'sales' })) });
+      const batch = b.batch && /^[\w-]{4,40}$/.test(b.batch) ? { id: b.batch, at: new Date().toISOString(), src: String(b.src || '').slice(0, 40), n: items.length } : null;
+      return send(res, 200, { results: await db.tx((t) => checkCalls(t, user, items, { claim: !!b.claim && canEdit(user, 'calls') && user.team === 'sales', batch })) });
+    }
+    if (path === '/prospects/drop' && method === 'POST') {
+      if (!canEdit(user, 'calls')) throw new Rule('Your access does not allow changing the call register.', 403);
+      const b = await readBody(req), r = await db.tx((t) => dropList(t, user, b.ids));
+      if (r.deleted) await audit(db, user, null, 'delete', `Deleted ${r.deleted} business${r.deleted === 1 ? '' : 'es'} of an uploaded calling list${r.kept ? ` (${r.kept} already called were kept)` : ''}`);
+      return send(res, 200, r);
     }
     if (path === '/prospects/rebuild' && method === 'POST') {
       if (!admin) throw new Rule('Only an admin can bring past call sheets into the register.', 403);

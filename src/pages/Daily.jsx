@@ -153,7 +153,7 @@ function CallTable({ calls, onDrop }) {
       <td>{c.meeting || '—'}</td><td>{c.met ? 'Yes' : '—'}</td><td style={{ maxWidth: 260 }}>{c.note || '—'}</td>{onDrop && <td><button className="btn ghost sm" type="button" aria-label={`Remove ${c.org}`} onClick={() => onDrop(c.id)}>Remove</button></td>}</tr>)}</tbody></table></div>;
 }
 function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
-  const [busy, setBusy] = useState(false), [paste, setPaste] = useState(null), [skipped, setSkipped] = useState([]), [upl, setUpl] = useState(null);
+  const [busy, setBusy] = useState(false), [paste, setPaste] = useState(null), [skipped, setSkipped] = useState([]), [upl, setUpl] = useState(null), [sure, setSure] = useState(false), [drop, setDrop] = useState('');
   const calls = r?.calls || [], k = callStats(r);
   const row = (x) => ({ id: Math.random().toString(36).slice(2, 10), at: new Date().toISOString(), ...x });
   // My calling list: the businesses kept for me that I have not called today – new ones first, then the ones to try again.
@@ -165,11 +165,14 @@ function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
   async function addPasted() {
     setBusy(true); const good = parsed.filter((x) => mobile10(x.phone).length === 10), none = parsed.length - good.length;
     const res = await attempt(() => http('POST', '/prospects/check', { items: good, claim: true }));
-    if (res) { const ok = good.filter((_, i) => res.results[i].ok), no = good.map((x, i) => ({ x, v: res.results[i] })).filter((y) => !y.v.ok);
-      if (!ok.length || await attempt(() => save({ calls: [...calls, ...ok.map(row)] }), `${ok.length} call${ok.length === 1 ? '' : 's'} added.`)) {
+    if (res) { const ok = good.filter((_, i) => res.results[i].ok), no = good.map((x, i) => ({ x, v: res.results[i] })).filter((y) => !y.v.ok), id = Math.random().toString(36).slice(2, 12);
+      if (!ok.length || await attempt(() => save({ calls: [...calls, ...ok.map((x) => row({ ...x, paste: id }))] }), `${ok.length} call${ok.length === 1 ? '' : 's'} added.`)) {
         setSkipped([...no.map(({ x, v }) => `${x.org} (${x.phone}) – ${v.msg}`), ...(none ? [`${none} row${none === 1 ? '' : 's'} without a 10-digit number ${none === 1 ? 'was' : 'were'} left out.`] : [])]); setPaste(null); } }
-    setBusy(false);
+    setBusy(false); setSure(false);
   }
+  // Calls added by one paste, so a wrong paste can be taken off the sheet in one go (until the day is submitted).
+  const pastes = [...calls.reduce((g, c) => (c.paste ? g.set(c.paste, [...(g.get(c.paste) || []), c]) : g), new Map())];
+  const dropPaste = async (id) => { if (await attempt(() => save({ calls: calls.filter((c) => c.paste !== id) }), 'Those pasted calls were removed.')) setDrop(''); };
   // Rows copied from Excel: find the phone number in each row; the organisation is the cell before it, and location, response, meeting, physical meet and status follow it.
   const parsed = (paste || '').split(/\r?\n/).map((l) => l.split('\t').map((x) => x.trim())).map((p) => {
     let i = p.findIndex((x, n) => n > 0 && x.replace(/\D/g, '').length >= 6 && !/[a-z]{3}/i.test(x));
@@ -178,7 +181,7 @@ function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
     if (!org || /^(name of|business|company|organi|s\.?\s*no)/i.test(org)) return null;
     return { org, phone: /\d/.test(p[i] || '') ? p[i] : '', place: p[i + 1] || '', resp, meeting: blank(p[i + 3]) ? '' : p[i + 3], met: /^(yes|y|1|met)/i.test(p[i + 4] || ''),
       note: [raw && raw.toLowerCase() !== resp.toLowerCase() ? raw : '', blank(p[i + 5]) ? '' : p[i + 5]].filter(Boolean).join(' · ') };
-  }).filter(Boolean);
+  }).filter(Boolean), okRows = parsed.filter((x) => mobile10(x.phone).length === 10).length;
   return <>{show && <m.div className="stack" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, ease: EASE }}>
     <div className="row between"><h3 style={{ margin: 0 }}>My calls <span className="small muted">one row for every call</span></h3>
       <div className="row small"><Pill k="gold">Calls made: {k.n}</Pill><Pill k="ok">Interested: {k.pos}</Pill><Pill k="warn">Call back: {k.back}</Pill><Pill k="gold">Meetings fixed: {k.meet}</Pill><Pill k="gold">Met in person: {k.met}</Pill></div></div>
@@ -187,12 +190,22 @@ function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
       <button className="btn ghost sm" type="button" onClick={() => setPaste(paste === null ? '' : null)}>{paste === null ? 'Paste calls I already made' : 'Close paste'}</button></div>
       <span className="small muted">Upload the businesses you collected. When you choose “Calling” as the kind of work, your list opens: pick the client you are calling and tap what happened.</span></>}
     {paste !== null && <div className="stack gap4"><span className="small muted">Copy the rows in Excel (organisation, contact no., location, response, meeting, physical meet, status) and paste them here.</span>
-      <textarea className="in" style={{ minHeight: 90, fontFamily: 'var(--num)', fontSize: 12 }} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="Paste rows here" />
-      <div className="row"><button className="btn primary sm" type="button" disabled={!parsed.length || busy} onClick={addPasted}>Check and add {parsed.length} call{parsed.length === 1 ? '' : 's'}</button>
-        {parsed.length > 0 && <span className="small muted">First row: {parsed[0].org} · {parsed[0].phone || 'no number'} · {parsed[0].resp || 'response not understood – it will be kept in the remark'}</span>}</div></div>}
+      <textarea className="in" style={{ minHeight: 90, fontFamily: 'var(--num)', fontSize: 12 }} value={paste} onChange={(e) => { setPaste(e.target.value); setSure(false); }} placeholder="Paste rows here" />
+      {parsed.length > 0 && <><span className="small" style={{ fontWeight: 600 }}>Check the rows – this is how each one was read</span>
+        <div className="tbl readback"><table><thead><tr><th>Organisation</th><th>Contact no.</th><th>Location</th><th>Response</th><th>Meeting</th><th>Met</th><th>Remark</th></tr></thead><tbody>
+          {parsed.map((x, i) => { const bad = mobile10(x.phone).length !== 10; return <tr key={i} className={bad ? 'dim' : ''}><td><b>{x.org}</b>{bad && <div className="small" style={{ color: 'var(--bad)' }}>No 10-digit number – left out</div>}</td>
+            <td className="num">{x.phone || '—'}</td><td>{x.place || <span className="small" style={{ color: 'var(--warn)' }}>no place</span>}</td><td>{x.resp || <span className="small muted">not understood</span>}</td><td>{x.meeting || '—'}</td><td>{x.met ? 'Yes' : '—'}</td><td className="small">{x.note || '—'}</td></tr>; })}</tbody></table></div></>}
+      {sure ? <div className="row"><span className="small"><b>Add {okRows} call{okRows === 1 ? '' : 's'} to today's call sheet?</b> Each number is checked first.</span>
+        <button className="btn sm" type="button" onClick={() => setSure(false)}>Go back</button><button className="btn primary sm" type="button" disabled={busy} onClick={addPasted}>{busy ? 'Adding…' : 'Yes, add them'}</button></div>
+        : <div className="row"><button className="btn primary sm" type="button" disabled={!okRows || busy} onClick={() => setSure(true)}>Add {okRows} call{okRows === 1 ? '' : 's'}</button>
+          {parsed.length > okRows && <span className="small muted">{parsed.length - okRows} row{parsed.length - okRows === 1 ? '' : 's'} without a 10-digit number will be left out.</span>}</div>}</div>}
     {skipped.length > 0 && <div className="banner bad"><div className="row between"><b>Not added to your call sheet ({skipped.length}):</b><button className="btn ghost sm" type="button" onClick={() => setSkipped([])}>Hide</button></div>
       <ul className="access">{skipped.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
     <CallTable calls={calls} onDrop={!locked && ((id) => attempt(() => save({ calls: calls.filter((x) => x.id !== id) })))} />
+    {!locked && pastes.length > 0 && <div className="stack gap4">{pastes.map(([id, rows]) => <div key={id} className="row small">
+      <span className="muted">Pasted at {new Date(rows[0].at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}: {rows.length} call{rows.length === 1 ? '' : 's'}</span>
+      {drop === id ? <><b>Remove these {rows.length} from today's call sheet?</b><button className="btn ghost sm" type="button" onClick={() => setDrop('')}>No</button><button className="btn danger sm" type="button" onClick={() => dropPaste(id)}>Yes, remove</button></>
+        : <button className="btn ghost sm" type="button" onClick={() => setDrop(id)}>Remove this paste</button>}</div>)}</div>}
   </m.div>}
     {upl && <Check chk={upl} setChk={setUpl} />}
     {dial && !locked && <Dialer todo={todo} calls={calls} k={k} row={row} save={save} pickId={pickId} onClose={() => setDial(false)} onUpload={() => { setDial(false); setUpl({ text: '', res: null }); }} />}</>;
@@ -202,18 +215,23 @@ const MAIN = ['Interested', 'Call back', 'No answer', 'Not interested'], REST = 
 function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
   const none = { meeting: '', met: false, note: '', back: addDays(today(), 1) }, fresh = { org: '', phone: '', place: '', ind: '', src: '', dupOk: false };
   const [q, setQ] = useState(''), [pick, setPick] = useState(() => todo.find((x) => x.id === pickId) || null), [resp, setResp] = useState(''), [d, setD] = useState(none), [rest, setRest] = useState(false), [busy, setBusy] = useState(false);
-  const [n, setN] = useState(null), [chk, setChk] = useState(null); // n: a number that is not in the list yet; chk: what the call register says about it
+  const [n, setN] = useState(null), [chk, setChk] = useState(null), [pl, setPl] = useState(''); // n: a number that is not in the list yet; chk: what the call register says about it; pl: a place added during the call
   const text = q.trim().toLowerCase(), shown = todo.filter((p) => !text || `${p.name} ${p.phone} ${p.place} ${p.ind}`.toLowerCase().includes(text));
-  const p = pick && (todo.find((x) => x.id === pick.id) || pick), m10 = mobile10(n?.phone), named = (n?.org || '').trim().length >= 3;
+  // The business as the call register has it, with the place, industry and source just typed when the register has none yet.
+  const found = pick && todo.find((x) => x.id === pick.id), p = pick && (found ? { ...found, place: found.place || pick.place || '', ind: found.ind || pick.ind || '', src: found.src || pick.src || '' } : pick);
+  const m10 = mobile10(n?.phone), named = (n?.org || '').trim().length >= 3;
   useEffect(() => {
     if (!n || m10.length !== 10 || !named) return setChk(null);
-    let live = true; const h = setTimeout(() => http('POST', '/prospects/check', { items: [n], claim: true }).then((x) => live && setChk(x.results[0]), () => {}), 600);
+    // Only a look while typing: the number is kept for the person when they press "Use this number", with everything typed by then.
+    let live = true; const h = setTimeout(() => http('POST', '/prospects/check', { items: [n] }).then((x) => live && setChk(x.results[0]), () => {}), 600);
     return () => { live = false; clearTimeout(h); };
   }, [m10, named && n?.org.trim(), n?.place, n?.dupOk]);
-  const back = () => { setPick(null); setResp(''); setD(none); setRest(false); };
+  const back = () => { setPick(null); setResp(''); setD(none); setRest(false); setPl(''); };
+  async function keep() { setBusy(true); const r = await attempt(() => http('POST', '/prospects/check', { items: [n], claim: true })); setBusy(false); const v = r?.results?.[0]; if (!v) return;
+    if (!v.ok) return setChk(v); setPick({ id: v.id, name: n.org.trim(), phone: n.phone.trim(), place: n.place.trim(), ind: n.ind, src: n.src, dupOk: n.dupOk, tries: 0 }); setN(null); setChk(null); poll(); }
   async function log(r2) {
     setBusy(true);
-    const ok = await attempt(() => save({ calls: [...calls, row({ org: p.name || p.phone, phone: p.phone, place: p.place || '', ind: p.ind || '', src: p.src || '', resp: r2, meeting: d.meeting, met: d.met, note: d.note, dupOk: !!p.dupOk, ...(r2 === 'Call back' ? { back: d.back } : {}) })] }), r2 === 'Call back' ? `${p.name || p.phone}: call back on ${fmtDate(d.back)}. It will show on your dashboard that day.` : `${p.name || p.phone}: ${r2}. Written on your call sheet.`);
+    const ok = await attempt(() => save({ calls: [...calls, row({ org: p.name || p.phone, phone: p.phone, place: p.place || pl.trim(), ind: p.ind || '', src: p.src || '', resp: r2, meeting: d.meeting, met: d.met, note: d.note, dupOk: !!p.dupOk, ...(r2 === 'Call back' ? { back: d.back } : {}) })] }), r2 === 'Call back' ? `${p.name || p.phone}: call back on ${fmtDate(d.back)}. It will show on your dashboard that day.` : `${p.name || p.phone}: ${r2}. Written on your call sheet.`);
     setBusy(false); if (ok) back();
   }
   const tap = (x) => (['Interested', 'Call back'].includes(x) ? setResp(x) : log(x)), upN = (key) => (e) => setN({ ...n, [key]: e.target.value });
@@ -221,6 +239,7 @@ function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
     <div className="row">{(p || n) && <button className="btn" type="button" onClick={() => { back(); setN(null); setChk(null); }}>← Back to my list</button>}<button className="btn" type="button" onClick={onClose}>Close</button></div></>}>
     {p ? <div className="stack">
       <div className="row between"><div><div className="small muted">{[p.place, p.ind, p.src].filter(Boolean).join(' · ') || 'No place or industry written'}</div>
+        {!p.place && <input className="in" style={{ margin: '6px 0 2px', maxWidth: 260 }} value={pl} onChange={(e) => setPl(e.target.value)} placeholder="Add the place (town or area)" maxLength={60} aria-label="Place of this business" />}
         <div className="small muted">{p.tries ? `Called ${p.tries} time${p.tries === 1 ? '' : 's'} before, last: ${p.lastResp || 'no response written'}` : 'Not called yet'}</div></div>
         <a className="btn primary num" style={{ fontSize: 17, padding: '10px 16px' }} href={'tel:' + p.phone.replace(/[^\d+]/g, '')}>Call {p.phone}</a></div>
       <span className="lbl">After the call – what happened?</span>
@@ -245,7 +264,7 @@ function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
       {chk ? <div className={'banner ' + (chk.ok ? 'ok' : 'bad')}>{chk.ok ? '✓ ' : ''}{chk.msg}
         {chk.kind === 'similar' && <label className="check" style={{ marginTop: 6 }}><input type="checkbox" checked={n.dupOk} onChange={(e) => setN({ ...n, dupOk: e.target.checked })} /> This is a different business (the Sales Manager is told)</label>}</div>
         : <div className="small muted">{m10.length === 10 && named ? 'Checking the call register…' : 'Type the name and the 10-digit number. The system tells you if you may call it.'}</div>}
-      <button className="btn primary" type="button" style={{ alignSelf: 'flex-start' }} disabled={!chk?.ok} onClick={() => { setPick({ id: chk.id, name: n.org.trim(), phone: n.phone.trim(), place: n.place, ind: n.ind, src: n.src, dupOk: n.dupOk, tries: 0 }); setN(null); setChk(null); }}>Use this number</button>
+      <button className="btn primary" type="button" style={{ alignSelf: 'flex-start' }} disabled={!chk?.ok || busy} onClick={keep}>Use this number</button>
     </div> : <div className="stack">
       <div className="row"><input className="in grow" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your list: name, number or place" autoFocus />
         <button className="btn" type="button" onClick={() => setN(fresh)}>+ Not in my list</button><button className="btn" type="button" onClick={onUpload}>Upload a list</button></div>

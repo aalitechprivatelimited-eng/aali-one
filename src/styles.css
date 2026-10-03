@@ -480,6 +480,11 @@ table.chart td,table.chart th{white-space:normal;vertical-align:top;min-width:10
 .login .card{width:min(420px,100%);padding:30px 28px;position:relative;border-radius:22px;box-shadow:var(--e3)}
 .login .logo-lg{width:48px;height:48px;border-radius:14px;box-shadow:0 14px 28px -12px rgba(160,100,0,.8)}
 
+/* a list read back before it is kept: every row, scrolling inside the window; a row left out is greyed */
+.readback{max-height:300px;overflow:auto}
+.readback th{position:sticky;top:0;z-index:1}
+.readback tr.dim td{opacity:.5}
+.readback input[type=checkbox]{width:18px;height:18px;accent-color:var(--gold)}
 /* the upload window: what a calling list must hold, shown as a small table that fits the window */
 .fmt{display:flex;flex-direction:column;gap:6px;min-width:0}
 .modal,.modal-b,.modal-b>.stack{min-width:0}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useStore, list, get, create, update, store, http, poll } from '../api.js';
+import { useStore, list, get, create, update, remove, store, http, poll } from '../api.js';
 import { settings, uname, fmtDate, today, addDays, mobile10, isManager, canEdit, scope } from '../lib.js';
 import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, attempt, toast, Seg, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
 import { Activities } from '../activity.jsx';
@@ -83,24 +83,42 @@ export function NewEnquiry({ onClose, preset = {} }) {
   );
 }
 
+// Leads from an Excel sheet (saved as CSV). Every row is shown as it was read before anything is imported, the person confirms,
+// and a wrong import can be undone at once: the new leads go to the recycle bin (leads that joined an existing one are not touched).
 function ImportLeads({ onClose }) {
-  const [text, setText] = useState(''), [res, setRes] = useState(null), [busy, setBusy] = useState(false);
+  const [text, setText] = useState(''), [res, setRes] = useState(null), [busy, setBusy] = useState(false), [sure, setSure] = useState(false), [undo, setUndo] = useState(false);
   function parse(csv) {
     const lines = csv.trim().split(/\r?\n/).filter(Boolean); if (lines.length < 2) return [];
     const split = (l) => l.match(/("([^"]|"")*"|[^,]*)(,|$)/g).slice(0, -1).map((c) => c.replace(/,$/, '').replace(/^"|"$/g, '').replace(/""/g, '"').trim());
     const head = split(lines[0]).map((h) => h.toLowerCase());
     return lines.slice(1).map((l) => { const c = split(l), o = {}; head.forEach((h, i) => (o[h] = c[i] || '')); return o; });
   }
-  async function run() { const rows = parse(text); if (!rows.length) return toast('Paste a header row and at least one lead.', true);
-    setBusy(true); const r = await attempt(() => http('POST', '/import/leads', { rows })); setBusy(false); if (r) { setRes(r); poll(); } }
+  const rows = parse(text), why = (r) => (!r.name ? 'No name' : mobile10(r.mobile).length !== 10 ? 'No 10-digit mobile' : !r.service ? 'No service' : ''), bad = rows.filter(why).length;
+  async function run() { setBusy(true); const r = await attempt(() => http('POST', '/import/leads', { rows })); setBusy(false); setSure(false); if (r) { setRes(r); poll(); } }
+  async function undoAll() { setBusy(true); let n = 0; for (const id of res.ids || []) if (await remove(id, 'Import undone').then(() => true, () => false)) n++; setBusy(false);
+    toast(`Import undone: ${n} lead${n === 1 ? '' : 's'} moved to the recycle bin.`); setUndo(false); setRes({ ...res, ids: [], undone: n }); }
+  const footer = res ? <button className="btn" type="button" onClick={onClose}>Close</button>
+    : sure ? <><span className="small"><b>Import {rows.length - bad} lead{rows.length - bad === 1 ? '' : 's'}?</b> Each goes through the duplicate check.</span>
+      <div className="row"><button className="btn" type="button" onClick={() => setSure(false)}>Go back</button><button className="btn primary" type="button" disabled={busy} onClick={run}>{busy ? 'Importing…' : 'Yes, import'}</button></div></>
+    : <><span className="small muted">{rows.length ? `${rows.length} row${rows.length === 1 ? '' : 's'} read${bad ? ` · ${bad} will fail` : ''}` : 'Nothing read yet'}</span>
+      <button className="btn primary" type="button" disabled={!rows.length || bad === rows.length} onClick={() => setSure(true)}>Import</button></>;
   return (
-    <Modal wide title="Import leads from Excel" onClose={onClose} footer={<button className="btn primary" type="button" disabled={busy} onClick={run}>{busy ? 'Importing…' : 'Import'}</button>}>
-      <div className="stack">
-        <p style={{ margin: 0 }}>In Excel, save the sheet as <b>CSV</b>, open it in Notepad, and paste it below. The first row must have these headings: <code>name, mobile, service, source, company, email, message</code>. Every row goes through the same duplicate check and auto-assign as the enquiry form.</p>
-        <Field label="Or choose the CSV file"><input type="file" accept=".csv,text/csv" onChange={async (e) => { const f = e.target.files[0]; if (f) setText(await f.text()); }} /></Field>
-        <Area style={{ minHeight: 180, fontFamily: 'var(--num)', fontSize: 12 }} value={text} onChange={(e) => setText(e.target.value)} placeholder={'name,mobile,service,source\nRavi Kumar,9876543210,Website – 5 pages,Referral'} />
-        {res && <div className="banner ok">{res.created} new leads, {res.merged} joined existing leads, {res.failed.length} could not be imported.{res.failed.map((f) => <div key={f.row}>Row {f.row}: {f.error}</div>)}</div>}
-      </div>
+    <Modal wide title="Import leads from Excel" onClose={onClose} footer={footer}>
+      {!res ? <div className="stack">
+        <p style={{ margin: 0 }}>In Excel, save the sheet as <b>CSV</b>, open it in Notepad, and paste it below. The first row must have these headings: <code>name, mobile, service, source, company, email, message</code>. You will see every row before anything is imported.</p>
+        <Field label="Or choose the CSV file"><input type="file" accept=".csv,text/csv" onChange={async (e) => { const f = e.target.files[0]; if (f) { setText(await f.text()); setSure(false); } }} /></Field>
+        <Area style={{ minHeight: rows.length ? 80 : 180, fontFamily: 'var(--num)', fontSize: 12 }} value={text} onChange={(e) => { setText(e.target.value); setSure(false); }} placeholder={'name,mobile,service,source\nRavi Kumar,9876543210,Website – 5 pages,Referral'} />
+        {rows.length > 0 && <><span className="small" style={{ fontWeight: 600 }}>Check the rows – this is how each one was read</span>
+          <div className="tbl readback"><table><thead><tr><th>Name</th><th>Mobile</th><th>Service</th><th>Source</th><th>Company</th></tr></thead><tbody>
+            {rows.map((r, i) => <tr key={i} className={why(r) ? 'dim' : ''}><td><b>{r.name || '—'}</b>{why(r) && <div className="small" style={{ color: 'var(--bad)' }}>{why(r)} – this row will fail</div>}</td>
+              <td className="num">{r.mobile || '—'}</td><td>{r.service || '—'}</td><td>{r.source || 'Other'}</td><td>{r.company || '—'}</td></tr>)}</tbody></table></div></>}
+      </div> : <div className="stack">
+        <div className="banner ok">{res.created} new lead{res.created === 1 ? '' : 's'}, {res.merged} joined existing leads, {res.failed.length} could not be imported.{res.failed.map((f) => <div key={f.row}>Row {f.row}: {f.error}</div>)}</div>
+        {res.undone !== undefined ? <div className="banner info">This import was undone: {res.undone} lead{res.undone === 1 ? '' : 's'} moved to the recycle bin.</div>
+          : (res.ids || []).length > 0 && (undo ? <div className="row"><span className="small"><b>Undo this import?</b> The {res.ids.length} new lead{res.ids.length === 1 ? '' : 's'} go to the recycle bin.</span>
+            <button className="btn sm" type="button" onClick={() => setUndo(false)}>No</button><button className="btn danger sm" type="button" disabled={busy} onClick={undoAll}>{busy ? 'Undoing…' : 'Yes, undo'}</button></div>
+            : <div className="row"><span className="small muted">Imported the wrong sheet?</span><button className="btn sm" type="button" onClick={() => setUndo(true)}>Undo this import</button></div>)}
+      </div>}
     </Modal>
   );
 }

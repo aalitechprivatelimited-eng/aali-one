@@ -94,34 +94,84 @@ function template() {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Aali-One-calling-list-template.xlsx'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-// Upload or paste a list gathered from Google Maps or social media: every row is checked, and the free ones are kept for you.
+// A row that does not look like a business – a web link, opening hours, or a name with hardly any letters. This happens when a list is
+// copied from Google Maps with its columns out of place. Such rows start unticked, so they are not kept unless the person ticks them.
+const odd = (x) => (/https?:|www\.|^[^\p{L}\p{N}]|\b\d{1,2}(:\d\d)?\s?(am|pm)\b|^(open|opens|closes?|closed)\b/iu.test(x.org) || x.org.replace(/[^\p{L}]/gu, '').length < 3 ? 'The name does not look like a business'
+  : /https?:|www\./i.test(x.place) ? 'The place is a web link' : '');
+const newId = () => Math.random().toString(36).slice(2, 12);
+// My lists of the last 7 days, newest first: [{ id, at, src, all, open }] – open: the businesses not called yet, which can still be deleted.
+// Lists kept before lists were named are grouped by the minute they were kept.
+function myLists() {
+  const me = store.me.id, from = new Date(Date.now() - 7 * 864e5).toISOString(), g = new Map();
+  for (const p of list('prospect')) {
+    if (p.owner !== me || p.leadId || p.dnc) continue;
+    const at = p.batch?.at || p.since || '', legacy = !p.batch && (p.log || []).at(-1)?.text === 'Kept before calling'; if (at < from || (!p.batch && !legacy)) continue;
+    const id = p.batch?.id || 'm' + at.slice(0, 16), x = g.get(id) || { id, at, src: p.batch?.src || p.src || '', all: [], open: [], legacy };
+    x.all.push(p); if (!p.tries && !p.closed) x.open.push(p); g.set(id, x);
+  }
+  return [...g.values()].filter((x) => !x.legacy || x.all.length >= 3).sort((a, b) => b.at.localeCompare(a.at));
+}
+function MyLists() {
+  const [ask, setAsk] = useState(null), [busy, setBusy] = useState(false), lists = myLists();
+  if (!lists.length) return null;
+  async function drop(x) { setBusy(true); const r = await attempt(() => http('POST', '/prospects/drop', { ids: x.open.map((p) => p.id) })); setBusy(false);
+    if (r) { toast(`List deleted: ${r.deleted} business${r.deleted === 1 ? '' : 'es'} removed${r.kept ? `; ${r.kept} already called stay` : ''}.`); setAsk(null); poll(); } }
+  return <div className="stack gap4"><span className="small" style={{ fontWeight: 600 }}>Your lists of the last 7 days</span>
+    <div className="list">{lists.map((x) => <div key={x.id} className="li">
+      <div className="grow"><div className="t">{fmtDT(x.at)}{x.src ? ' · ' + x.src : ''}</div><div className="small muted">{x.all.length} business{x.all.length === 1 ? '' : 'es'} · {x.open.length} not called yet</div></div>
+      {ask === x.id ? <div className="row"><span className="small">Delete the {x.open.length} not called yet?{x.all.length > x.open.length ? ` The ${x.all.length - x.open.length} already called stay.` : ''}</span>
+        <button className="btn sm" type="button" onClick={() => setAsk(null)}>No</button><button className="btn sm danger" type="button" disabled={busy} onClick={() => drop(x)}>Yes, delete</button></div>
+        : <button className="btn sm" type="button" disabled={!x.open.length} title={x.open.length ? '' : 'Every business in this list has been called'} onClick={() => setAsk(x.id)}>Delete this list</button>}
+    </div>)}</div>
+    <span className="small muted">Kept a wrong list by mistake? Delete it here. Only the businesses you have not called yet are removed.</span></div>;
+}
+
+// Upload or paste a list gathered from Google Maps or social media. Every row is shown first, as it was read, so a mistake is seen before
+// anything is kept; the person then confirms. Every number is checked, and the free ones are kept for them as one list that can be deleted again.
 export function Check({ chk, setChk }) {
   const [busy, setBusy] = useState(false), [sheets, setSheets] = useState([]), [at, setAt] = useState(0), [src, setSrc] = useState(''); // src: where this list came from, when the sheet does not say
-  const show = (list, i) => { setAt(i); setChk({ text: list[i].rows.map((r) => r.join('\t')).join('\n'), res: null }); };
-  const read = parseList(chk.text.split(/\r?\n/).map((l) => (l.includes('\t') ? l.split('\t') : l.split(',')))), needSrc = read.some((x) => !x.src), items = read.map((x) => ({ ...x, src: x.src || src }));
-  async function run() { setBusy(true); const r = await attempt(() => http('POST', '/prospects/check', { items, claim: true })); setBusy(false); if (r) { setChk({ ...chk, res: r.results.map((v, i) => ({ ...v, item: items[i] })) }); poll(); } }
+  const [off, setOff] = useState(null), [sure, setSure] = useState(false), [batch, setBatch] = useState(''); // off: rows left out (null = the rows that look wrong)
+  const show = (list, i) => { setAt(i); setOff(null); setSure(false); setChk({ text: list[i].rows.map((r) => r.join('\t')).join('\n'), res: null }); };
+  const read = parseList(chk.text.split(/\r?\n/).map((l) => (l.includes('\t') ? l.split('\t') : l.split(',')))).slice(0, MAX).map((x) => ({ ...x, why: odd(x) }));
+  const skip = off || new Set(read.flatMap((x, i) => (x.why ? [i] : []))), items = read.filter((_, i) => !skip.has(i)).map(({ why, ...x }) => ({ ...x, src: x.src || src }));
+  const needSrc = items.some((x) => !x.src), noPlace = items.filter((x) => !x.place).length, wrong = read.filter((x) => x.why).length;
+  const tick = (i) => { const n = new Set(skip); n.has(i) ? n.delete(i) : n.add(i); setOff(n); setSure(false); };
+  async function run() { setBusy(true); const id = newId(); const r = await attempt(() => http('POST', '/prospects/check', { items, claim: true, batch: id, src: items[0]?.src || '' })); setBusy(false);
+    if (r) { setBatch(id); setSure(false); setChk({ ...chk, res: r.results.map((v, i) => ({ ...v, item: items[i] })) }); poll(); } }
   // Only the sheets that hold numbers are offered (the template's "What to fill" sheet is not a list); with no numbers anywhere, the first sheet is shown.
   async function pick(e) { const file = e.target.files[0]; e.target.value = ''; if (!file) return; const all = await attempt(() => readSheets(file)); if (!all) return;
     const list = all.filter((x) => parseList(x.rows).length), use = list.length ? list : all.slice(0, 1); setSheets(use); show(use, 0); }
   const ok = (chk.res || []).filter((v) => v.ok), no = (chk.res || []).filter((v) => !v.ok);
-  return <Modal wide title="Upload my calling list" onClose={() => setChk(null)} footer={<><span className="small muted">{items.length} business{items.length === 1 ? '' : 'es'} with a number found</span>
-    <button className="btn primary" type="button" disabled={busy || !items.length || (needSrc && !src)} title={needSrc && !src ? 'First choose where this list came from' : ''} onClick={run}>{busy ? 'Checking…' : 'Check and keep the free ones'}</button></>}>
-    <div className="stack"><p style={{ margin: 0 }}>Download the template, fill it in Excel and choose the file – or copy your rows and paste them below. Every number is checked: the free ones are kept for you; the rest must not be called.</p>
+  const footer = chk.res ? <><span className="small muted">Kept for you: {ok.length} · Not allowed: {no.length}</span><button className="btn" type="button" onClick={() => setChk(null)}>Close</button></>
+    : sure ? <><span className="small"><b>Keep {items.length} business{items.length === 1 ? '' : 'es'} for you?</b> Nobody else can call them while you hold them.</span>
+      <div className="row"><button className="btn" type="button" onClick={() => setSure(false)}>Go back</button><button className="btn primary" type="button" disabled={busy} onClick={run}>{busy ? 'Checking…' : 'Yes, keep them'}</button></div></>
+    : <><span className="small muted">{read.length ? `${items.length} of ${read.length} rows ticked` : 'No business with a number found yet'}</span>
+      <button className="btn primary" type="button" disabled={!items.length || (needSrc && !src)} title={needSrc && !src ? 'First choose where this list came from' : ''} onClick={() => setSure(true)}>Keep the {items.length} ticked</button></>;
+  return <Modal wide title="Upload my calling list" onClose={() => setChk(null)} footer={footer}>
+    {!chk.res ? <div className="stack"><p style={{ margin: 0 }}>Download the template, fill it in Excel and choose the file – or copy your rows and paste them below. You will see every row before anything is kept.</p>
       <div className="fmt"><div className="small" style={{ fontWeight: 600 }}>What your list must hold – one business in one row</div>
         <div className="tbl"><table><thead><tr>{COLS.map(([h, need]) => <th key={h}>{h} <span className={'pill' + (need === 'Needed' ? ' warn' : '')}>{need}</span></th>)}</tr></thead>
           <tbody><tr>{COLS.map(([h, , what]) => <td key={h} className="small muted">{what}</td>)}</tr><tr>{['Sri Sai Medicals', '9876543210', 'Guntur', 'Pharmacy', 'Google Maps'].map((x) => <td key={x} className="num small">{x}</td>)}</tr></tbody></table></div></div>
       <div className="row"><button className="btn" type="button" onClick={template}>Download the Excel template</button>
         <label className="btn primary" style={{ cursor: 'pointer' }}>Choose my filled file<input type="file" accept=".xlsx,.csv,.txt" hidden onChange={pick} /></label><span className="small muted">Excel (.xlsx) or CSV · up to {MAX} businesses at a time</span></div>
       {sheets.length > 1 && <div className="row"><span className="small muted">This file has {sheets.length} sheets. Choose yours:</span>{sheets.map((x, i) => <button key={i} type="button" className={'chip' + (i === at ? ' on' : '')} aria-pressed={i === at} onClick={() => show(sheets, i)}>{x.name}</button>)}</div>}
-      <Area style={{ minHeight: 130, fontFamily: 'var(--num)', fontSize: 12.5 }} value={chk.text} onChange={(e) => setChk({ text: e.target.value, res: null })} placeholder={'Or paste / type here, one business per line:\nSri Sai Medicals, 9876543210, Guntur, Pharmacy\nLotus Clinic, 0863 2234567, Brodipet'} />
-      {items.length > 0 && needSrc && !chk.res && <div className="row"><span className="small" style={{ fontWeight: 600 }}>Where did you get this list?</span>{(settings().listSources || []).map((x) => <button key={x} type="button" className={'chip' + (src === x ? ' on' : '')} aria-pressed={src === x} onClick={() => setSrc(x)}>{x}</button>)}</div>}
-      {items.length > MAX && !chk.res && <div className="banner">This list has {items.length} businesses. Only the first {MAX} are checked in one go – upload the rest as a second list.</div>}
-      {!chk.res && items.length > 0 && <div className="small muted">First row read as: <b>{items[0].org || 'no name'}</b> · {items[0].phone}{items[0].place ? ' · ' + items[0].place : ''}{items[0].ind ? ' · ' + items[0].ind : ''}</div>}
-      {chk.res && <>
-        {no.length > 0 && <div className="banner bad"><b>Do not call these {no.length}:</b><ul className="access">{no.map((v, i) => <li key={i}><b>{v.item.org || v.item.phone}</b> ({v.item.phone}) – {v.msg}</li>)}</ul></div>}
-        {ok.length > 0 && <div className="banner ok"><b>You can call these {ok.length}.</b> They are now in your calling list on the <Link to="/daily" onClick={() => setChk(null)}>Daily reports</Link> page: call from there and tap the response.
-          <ul className="access">{ok.map((v, i) => <li key={i}><b>{v.item.org || v.item.phone}</b> ({v.item.phone}){v.kind !== 'free' ? ' – ' + v.msg : ''}</li>)}</ul></div>}</>}
-    </div></Modal>;
+      <Area style={{ minHeight: read.length ? 70 : 130, fontFamily: 'var(--num)', fontSize: 12.5 }} value={chk.text} onChange={(e) => { setOff(null); setSure(false); setChk({ text: e.target.value, res: null }); }} placeholder={'Or paste / type here, one business per line:\nSri Sai Medicals, 9876543210, Guntur, Pharmacy\nLotus Clinic, 0863 2234567, Brodipet'} />
+      {read.length > 0 && <div className="stack gap4"><span className="small" style={{ fontWeight: 600 }}>Check your list – this is how each row was read</span>
+        <div className="row small">{wrong > 0 && <Pill k="bad">{wrong} look wrong – left out</Pill>}{noPlace > 0 && <Pill k="warn">{noPlace} without a place</Pill>}<Pill k="ok">{items.length} will be kept</Pill></div>
+        <div className="tbl readback"><table><thead><tr><th /><th>Business</th><th>Number</th><th>Place</th><th>Industry</th><th>Source</th></tr></thead><tbody>
+          {read.map((x, i) => <tr key={i} className={skip.has(i) ? 'dim' : ''}><td><input type="checkbox" checked={!skip.has(i)} onChange={() => tick(i)} aria-label={`Keep ${x.org || x.phone}`} /></td>
+            <td><b>{x.org || '—'}</b>{x.why && <div className="small" style={{ color: 'var(--bad)' }}>{x.why}</div>}</td><td className="num">{x.phone}</td>
+            <td>{x.place || <span className="small" style={{ color: 'var(--warn)' }}>no place</span>}</td><td>{x.ind || '—'}</td><td>{x.src || src || '—'}</td></tr>)}</tbody></table></div>
+        <span className="small muted">Untick a row to leave it out. If the names or places are in the wrong columns, fix the file (or use the template) and choose it again.</span></div>}
+      {items.length > 0 && needSrc && <div className="row"><span className="small" style={{ fontWeight: 600 }}>Where did you get this list?</span>{(settings().listSources || []).map((x) => <button key={x} type="button" className={'chip' + (src === x ? ' on' : '')} aria-pressed={src === x} onClick={() => { setSrc(x); setSure(false); }}>{x}</button>)}</div>}
+      {!read.length && <MyLists />}
+    </div> : <div className="stack">
+      {no.length > 0 && <div className="banner bad"><b>Do not call these {no.length}:</b><ul className="access">{no.map((v, i) => <li key={i}><b>{v.item.org || v.item.phone}</b> ({v.item.phone}) – {v.msg}</li>)}</ul></div>}
+      {ok.length > 0 && <div className="banner ok"><b>You can call these {ok.length}.</b> They are now in your calling list on the <Link to="/daily" onClick={() => setChk(null)}>Daily reports</Link> page: call from there and tap the response.
+        <ul className="access">{ok.map((v, i) => <li key={i}><b>{v.item.org || v.item.phone}</b> ({v.item.phone}){v.kind !== 'free' ? ' – ' + v.msg : ''}</li>)}</ul></div>}
+      <MyLists key={batch} />
+    </div>}
+  </Modal>;
 }
 
 function Detail({ p, cfg, mgr, mine, onClose }) {

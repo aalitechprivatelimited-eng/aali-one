@@ -36,7 +36,8 @@ const blank = (m, c) => ({ phone10: m, phone: String(c.phone || m).trim().slice(
 
 // items: [{ phone, org, place, ind, dupOk }] → one answer each: may this person call (or log) this number?
 // claim: keep the free numbers for this person straight away, so a second person checking a minute later is told.
-export async function checkCalls(t, user, items, { claim = false, sample = false } = {}) {
+// batch: the uploaded list these numbers came from ({ id, at }), so a list kept by mistake can be deleted again (dropList).
+export async function checkCalls(t, user, items, { claim = false, sample = false, batch = null } = {}) {
   const cfg = await rules(t), now = Date.now(), mgr = isManager(user);
   const phones = [...new Set(items.map((i) => mobile10(i.phone)).filter((m) => m.length === 10))], keys = [...new Set(items.map((i) => nameKey(i.org)).filter((k) => k.length >= 3))];
   const pros = (await t.query("select * from records where deleted_at is null and type = 'prospect' and (data->>'phone10' = any($1) or data->>'nameKey' = any($2))", [phones.length ? phones : ['-'], keys.length ? keys : ['-']])).rows;
@@ -52,7 +53,7 @@ export async function checkCalls(t, user, items, { claim = false, sample = false
     if (d?.dnc) { out.push({ ok: false, kind: 'dnc', id: rec.id, msg: `Do not call. ${name} is on the Do Not Call list since ${dmy(d.dnc.at)} (${d.dnc.reason}). Nobody may call this number.` }); continue; }
     const rel = held.find((h) => h.m === m && h.owner && h.owner !== user.id && users.get(h.owner)?.active && (h.type === 'client' || (h.type === 'lead' && !['converted', 'junk'].includes(h.status)) || (h.type === 'deal' && h.stage !== 'lost')));
     if (rel && !mgr) { out.push({ ok: false, kind: 'held', by: who(rel.owner), msg: `Do not call. ${name} is already with ${who(rel.owner)} (${rel.type === 'client' ? 'a client' : rel.type === 'deal' ? 'a deal in progress' : 'an open lead'}). Only ${first(who(rel.owner))} may call this business.` }); continue; }
-    let kind = 'free', msg = 'Free to call. It is now kept for you.';
+    let kind = 'free', msg = claim ? 'Free to call. It is now kept for you.' : 'Free to call.';
     if (d) {
       if (d.closed) { out.push({ ok: false, kind: 'closed', id: rec.id, msg: `Do not call. ${name}: ${d.closed.why.toLowerCase()} on ${dmy(d.closed.at)} (${who(d.closed.by)}). Only the Sales Manager can reopen it.` }); continue; }
       const n = trailing(d);
@@ -72,10 +73,14 @@ export async function checkCalls(t, user, items, { claim = false, sample = false
       if (rel && mgr) { kind = 'manager'; msg = `With ${who(rel.owner)}. As a manager you may call; it stays with ${first(who(rel.owner))}.`; }
       else if (branch) msg += ` Note: "${branch.data.name}" in ${branch.data.place || 'another place'} is ${branch.data.owner ? 'with ' + who(branch.data.owner) : 'in the register'} – this may be a branch.`;
     }
-    if (claim && (kind === 'free' || kind === 'takeover')) {
+    if (claim && (kind === 'free' || kind === 'takeover' || kind === 'mine')) {
       const at = new Date().toISOString();
-      if (rec) { Object.assign(d, { owner: user.id, since: at }); if (!d.name && it.org) d.name = String(it.org).trim().slice(0, 120); if (!d.src && it.src) d.src = String(it.src).slice(0, 40); note(d, user.id, 'Taken over (the earlier hold had ended)'); refresh(d, cfg); await put(t, rec, user); }
-      else { const nd = refresh({ ...blank(m, it), owner: user.id, since: at, log: [{ at, by: user.id, text: 'Kept before calling' }] }, cfg); const id = await insertRec(t, 'prospect', nd, user, { sample }); rec = { id, data: nd }; pros.push(rec); }
+      // The place, industry and source typed now are kept: the holder's own business takes the newer ones, another's only fills what is empty.
+      let changed = false;
+      if (rec) for (const [k, n] of [['place', 60], ['ind', 60], ['src', 40]]) { const v = String(it[k] || '').trim().slice(0, n); if (v && v !== (d[k] || '') && (kind === 'mine' || !d[k])) { d[k] = v; changed = true; } }
+      if (rec && kind !== 'mine') { Object.assign(d, { owner: user.id, since: at }); if (!d.name && it.org) d.name = String(it.org).trim().slice(0, 120); note(d, user.id, 'Taken over (the earlier hold had ended)'); changed = true; }
+      if (rec && changed) { refresh(d, cfg); await put(t, rec, user); }
+      if (!rec) { const nd = refresh({ ...blank(m, it), owner: user.id, since: at, ...(batch ? { batch } : {}), log: [{ at, by: user.id, text: batch ? 'Kept from an uploaded list' : 'Kept before calling' }] }, cfg); const id = await insertRec(t, 'prospect', nd, user, { sample }); rec = { id, data: nd }; pros.push(rec); }
     }
     out.push({ ok: true, kind, id: rec?.id, msg });
   }
@@ -139,6 +144,20 @@ export async function claimForLead(t, leadId, lead, user, sample) {
   if (d.closed) { delete d.closed; d.resetN = (d.older || 0) + (d.calls || []).length; }
   d.leadId = leadId; note(d, user?.id || null, 'Entered as a lead'); refresh(d, cfg);
   if (rec) await put(t, rec, user); else await insertRec(t, 'prospect', d, user, { sample });
+}
+
+// A list kept by mistake (a wrong file, columns read wrongly): its businesses that nobody has called yet are deleted again.
+// Called ones stay – their calls are on call sheets and the register must stay true. Only the holder, or a manager, may do this.
+export async function dropList(t, user, ids) {
+  let deleted = 0, kept = 0;
+  for (const id of [...new Set((Array.isArray(ids) ? ids : []).map(String))].slice(0, 500)) {
+    const rec = (await t.query("select * from records where id = $1 and type = 'prospect' and deleted_at is null for update", [id])).rows[0]; if (!rec) continue;
+    const d = rec.data;
+    if (d.owner !== user.id && !isManager(user)) throw new Rule('You can delete only the lists you uploaded.', 403);
+    if (d.tries || (d.calls || []).length || d.leadId || d.dnc || d.closed) { kept++; continue; }
+    await t.query("update records set deleted_at = now(), deleted_by = $2, delete_reason = 'Uploaded list deleted', updated_at = now() where id = $1", [id, user.id]); deleted++;
+  }
+  return { deleted, kept };
 }
 
 // A manager adds a number straight to the Do Not Call list.

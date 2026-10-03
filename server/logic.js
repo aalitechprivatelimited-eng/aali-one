@@ -200,6 +200,7 @@ const cleanCalls = (list) => (Array.isArray(list) ? list : []).filter((c) => Str
   id: c.id || newId('c_'), at: c.at || new Date().toISOString(), org: String(c.org).trim().slice(0, 120), phone: String(c.phone || '').trim().slice(0, 40),
   place: String(c.place || '').trim().slice(0, 60), resp: String(c.resp || '').trim().slice(0, 40), meeting: String(c.meeting || '').trim().slice(0, 80),
   met: !!c.met, note: String(c.note || '').trim().slice(0, 300), ...(c.ind ? { ind: String(c.ind).slice(0, 60) } : {}), ...(c.src ? { src: String(c.src).slice(0, 40) } : {}), ...(c.dupOk ? { dupOk: true } : {}),
+  ...(c.paste && /^[\w-]{4,40}$/.test(c.paste) ? { paste: c.paste } : {}), // rows added together by one paste, so they can be removed together
   ...(c.resp === 'Call back' && /^\d{4}-\d\d-\d\d$/.test(c.back || '') ? { back: c.back } : {}) }));
 // Who is told when a report is submitted: the department manager; for a manager's own report, the Ops Manager and Company Secretary.
 async function reportWatchers(t, d) {
