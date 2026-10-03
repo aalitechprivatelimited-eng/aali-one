@@ -180,19 +180,30 @@ const cleanEntries = (list) => (Array.isArray(list) ? list : []).filter((e) => S
   ...(e.kind ? { kind: String(e.kind).slice(0, 60) } : {}), ...(Number(e.mins) > 0 ? { mins: Math.min(1440, Math.round(Number(e.mins))) } : {}),
   // A task can be started and finished: the time taken is worked out from the two moments.
   ...(e.start ? { start: String(e.start).slice(0, 30) } : {}), ...(e.end ? { end: String(e.end).slice(0, 30) } : {}), ...(e.state === 'running' ? { state: 'running' } : {}), ...(e.brk ? { brk: true } : {}), ...(e.out || /visit/i.test(e.kind || '') ? { out: true } : {}), // out: away from the office (a client visit always is)
-  ...(e.visit?.client ? { visit: { client: String(e.visit.client).trim().slice(0, 120), person: String(e.visit.person || '').trim().slice(0, 80), phone: String(e.visit.phone || '').trim().slice(0, 40), place: String(e.visit.place || '').trim().slice(0, 120) } } : {}),
+  ...(e.visit?.client ? { visit: { client: String(e.visit.client).trim().slice(0, 120), person: String(e.visit.person || '').trim().slice(0, 80), phone: String(e.visit.phone || '').trim().slice(0, 40), place: String(e.visit.place || '').trim().slice(0, 120),
+    // the check-ins asked by the app (src/visit.jsx): when they reached the client, when they left, how it went, and the next follow-up
+    ...(e.visit.reachedAt ? { reachedAt: String(e.visit.reachedAt).slice(0, 30) } : {}), ...(e.visit.leftAt ? { leftAt: String(e.visit.leftAt).slice(0, 30) } : {}),
+    ...(VISIT_OUTCOMES.includes(e.visit.outcome) ? { outcome: e.visit.outcome } : {}), ...(/^\d{4}-\d\d-\d\d$/.test(e.visit.next || '') ? { next: e.visit.next } : {}) } } : {}),
+  // the trip back to the office after a visit, and when the person got there
+  ...(e.trip?.to === 'office' ? { trip: { to: 'office', from: String(e.trip.from || '').slice(0, 120), ...(e.trip.reachedAt ? { reachedAt: String(e.trip.reachedAt).slice(0, 30) } : {}) } } : {}),
   ...(e.proj ? { proj: String(e.proj).trim().slice(0, 120) } : {}), ...(e.note ? { note: String(e.note).trim().slice(0, 300) } : {}),
   ...(e.refId ? { refId: e.refId, refLabel: String(e.refLabel || '').slice(0, 120), refLink: String(e.refLink || '').slice(0, 120) } : {}) }));
+export const VISIT_OUTCOMES = ['Deal accepted', 'Next meeting fixed', 'Interested – follow up', 'Will think – call back', 'Not interested', 'Could not meet'];
 // A client visit must say who was visited: client name, the person met, their number and the place.
-const checkVisits = (list) => { for (const e of list) if (/visit/i.test(e.kind || '') && !(e.visit?.client && e.visit.person && e.visit.phone && e.visit.place)) throw new Rule('For a client visit, enter the client name, the person you are meeting, their contact number and the place.'); };
+// A client visit says who and where from the start (client name and place) – enough when a client asks to meet out of the blue.
+// The person met and their number are needed before the visit ends, unless the client could not be met.
+const checkVisits = (list) => { for (const e of list) { if (!/visit/i.test(e.kind || '') && !e.visit) continue;
+  if (!(e.visit?.client && e.visit.place)) throw new Rule('For a client visit, enter the client name and the place.');
+  if ((e.visit.outcome || e.state === 'done') && e.visit.outcome !== 'Could not meet' && !(e.visit.person && e.visit.phone)) throw new Rule(`Before the visit to ${e.visit.client} ends, enter the person you met and their contact number.`); } };
 // Out of office: while a task marked "out" is running (a client visit, work outside, or a permission), the person's manager and management
 // see them as out (teammates do not). One 'presence' record per person, kept true by the server whenever their report is saved.
 async function setPresence(t, user, rep, sample) {
   const run = rep.status !== 'submitted' && rep.date === today() ? (rep.entries || []).find((e) => e.state === 'running' && e.out) : null, id = 'pz_' + user.id;
   const cur = (await t.query('select data from records where id = $1', [id])).rows[0];
-  const data = run ? { user: user.id, team: user.team, out: true, why: run.visit ? 'Client visit' : run.brk ? 'Permission' : 'Work outside the office', since: run.start || new Date().toISOString(), date: rep.date } : { user: user.id, team: user.team, out: false, date: rep.date };
+  const why = run?.visit ? (run.visit.reachedAt ? `At a client – ${run.visit.client}` : `Going to a client – ${run.visit.client}`) : run?.trip ? 'Returning to the office' : run?.brk ? 'Permission' : 'Work outside the office';
+  const data = run ? { user: user.id, team: user.team, out: true, why, since: run.start || new Date().toISOString(), date: rep.date } : { user: user.id, team: user.team, out: false, date: rep.date };
   if (!cur) { if (run) await insertRec(t, 'presence', data, user, { id, sample }); return; }
-  if (!!cur.data.out === data.out && (cur.data.since || '') === (data.since || '')) return;
+  if (!!cur.data.out === data.out && (cur.data.since || '') === (data.since || '') && (cur.data.why || '') === (data.why || '')) return;
   await t.query('update records set data = $2, updated_by = $3, updated_at = now(), deleted_at = null where id = $1', [id, JSON.stringify(data), user.id]);
 }
 // The call sheet inside a report: one row per call, as the BDEs kept in Excel.
@@ -384,6 +395,9 @@ export async function beforeUpdate(t, rec, next, user) {
       if (edited && !mine) throw new Rule('Only the writer can change a report. Managers can add a remark.', 403);
       if (edited && prev.status === 'submitted') throw new Rule('This report is already submitted. Ask your manager to send it back if it needs a change.');
       if (mine) await applyCalls(t, user, prev.calls || [], next.calls || [], rec.sample); // one business, one caller: refuse a call that should not be made, count the rest
+      // A client accepted the deal at a visit: the Sales Manager hears it at once, with the BDE's remark.
+      if (mine) for (const e of next.entries || []) if (e.visit?.outcome === 'Deal accepted' && (prev.entries || []).find((x) => x.id === e.id)?.visit?.outcome !== 'Deal accepted')
+        for (const u of (await t.query("select id from users where active and title = 'salesmgr'")).rows) await notify(t, u.id, `${user.name}: ${e.visit.client} accepted the deal at the client visit.${e.note ? ' ' + e.note.slice(0, 120) : ''}`, 'report', rec.id, user, rec.sample);
       if (next.status !== prev.status) {
         if (next.status === 'submitted') {
           if (!mine) throw new Rule('Only the writer can submit a report.', 403);

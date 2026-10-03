@@ -324,7 +324,7 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 .toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--desk);padding:11px 16px 11px 12px;border-radius:14px;font-size:14px;font-weight:500;z-index:60;box-shadow:var(--e3);max-width:calc(100vw - 32px);display:flex;align-items:center;gap:9px}
 .toast.bad{background:var(--bad);color:#fff}
 /* pop-up notifications: cards that slide in at the top right when something arrives for you */
-.popups{position:fixed;top:16px;right:16px;z-index:65;display:flex;flex-direction:column;gap:10px;width:min(370px,calc(100vw - 32px));pointer-events:none}
+.popups{position:fixed;top:16px;right:16px;z-index:48;display:flex;flex-direction:column;gap:10px;width:min(370px,calc(100vw - 32px));pointer-events:none}
 .popup{pointer-events:auto;display:flex;align-items:flex-start;background:var(--raise);border:1px solid var(--line-2);border-left:4px solid var(--gold);border-radius:14px;box-shadow:var(--e3)}
 .popup-b{flex:1;min-width:0;display:flex;gap:11px;align-items:flex-start;text-align:left;border:0;background:none;color:inherit;font:inherit;padding:12px 4px 12px 12px;border-radius:12px}
 .popup-b .ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--gold-soft);color:var(--gold-strong);flex:none}
@@ -480,6 +480,27 @@ table.chart td,table.chart th{white-space:normal;vertical-align:top;min-width:10
 .login .card{width:min(420px,100%);padding:30px 28px;position:relative;border-radius:22px;box-shadow:var(--e3)}
 .login .logo-lg{width:48px;height:48px;border-radius:14px;box-shadow:0 14px 28px -12px rgba(160,100,0,.8)}
 
+/* a day's timeline: the end of a line (status, length) and its buttons; on a phone each line stacks –
+   time and length on top, the work below it at full width, the buttons under that */
+.tl-e,.tl-a{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+@media (max-width:640px){
+  .li.tl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center}
+  .li.tl .tl-t{width:auto!important;grid-column:1}
+  .li.tl .tl-e{grid-column:2;grid-row:1;justify-content:flex-end}
+  .li.tl .tl-b{grid-column:1 / -1}
+  .li.tl .tl-a{grid-column:1 / -1}
+  .li.tl>b,.li.tl>.grow:not(.tl-b),.li.tl>.num:not(.tl-t){grid-column:2;grid-row:1;justify-self:end}
+}
+/* the test site: a strip at the top and a badge that stays in the corner, so nobody mistakes it for the real Aali One */
+.testbar{background:repeating-linear-gradient(135deg,#ffd84d 0 14px,#ffcc1a 14px 28px);color:#3a2a00;font-weight:700;font-size:13px;text-align:center;padding:7px 12px}
+.testbadge{position:fixed;left:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:70;background:#ffcc1a;color:#3a2a00;font-weight:800;font-size:11px;letter-spacing:.08em;padding:5px 9px;border-radius:8px;box-shadow:var(--e2);pointer-events:none}
+@media print{.testbar,.testbadge{display:none}}
+/* the client-visit questions (src/visit.jsx) */
+.visit-q{display:flex;gap:14px;align-items:center;font-size:16px}
+.visit-q .visit-ic{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:var(--gold-soft);color:var(--gold-strong);flex:none}
+.calday{cursor:pointer}
+.calday:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+.calday .more{text-decoration:underline dotted}
 /* a list read back before it is kept: every row, scrolling inside the window; a row left out is greyed */
 .readback{max-height:300px;overflow:auto}
 .readback th{position:sticky;top:0;z-index:1}

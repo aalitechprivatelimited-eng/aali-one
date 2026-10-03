@@ -403,7 +403,7 @@ test('out of office is shown to the manager and management only; client assets r
   const ra = (await add(A, 'report', {})).record, now = new Date().toISOString();
   const visit = { id: 'v1', at: now, text: 'Demo of the app', kind: 'Client visit / meeting', state: 'running', start: now, visit: { client: 'Gems School', person: 'Principal', phone: '9963522158', place: 'Bapatla' } };
   assert.equal((await patch(A, ra.id, { entries: [...ra.entries, visit] })).status, 200);
-  for (const c of [sm, admin, ch]) { const p = await pres(c); assert.equal(p.out, true); assert.equal(p.why, 'Client visit'); }
+  for (const c of [sm, admin, ch]) { const p = await pres(c); assert.equal(p.out, true); assert.equal(p.why, 'Going to a client – Gems School'); }
   assert.equal(await pres(bde2), undefined, 'a teammate does not see it'); assert.equal(await pres(A), undefined);
   assert.equal(await pres(it0), undefined, 'another team does not see it');
   assert.equal((await patch(A, ra.id, { entries: [...ra.entries, { ...visit, state: 'done', end: now, mins: 30 }] })).status, 200);
@@ -497,6 +497,35 @@ test('the place typed is kept, and a list kept by mistake can be deleted (only w
   const r = await call('POST', '/prospects/drop', { ids: got.map((v) => v.id) }, P); assert.deepEqual(r.body, { deleted: 2, kept: 1 });
   assert.ok(await reg(P, '9000088101'), 'the called one stays'); assert.equal(await reg(P, '9000088102'), undefined, 'the others are gone');
   assert.equal((await check(O, [{ org: 'List shop 2', phone: '9000088102' }]))[0].kind, 'free', 'a deleted number is free again');
+});
+
+test('a client visit keeps its check-ins and outcome; an accepted deal tells the Sales Manager', async () => {
+  assert.equal((await call('POST', '/users', { firstName: 'Visit', surname: 'Bde', email: 'vis@test.in', password: 'password123', title: 'bde', designation: 'BDE', company: 'AaliTech' }, admin)).status, 200);
+  const V = (await call('POST', '/auth/login', { email: 'vis@test.in', password: 'password123' })).cookie, rep = (await add(V, 'report', {})).record;
+  const start = new Date(Date.now() - 50 * 60000).toISOString(), reached = new Date(Date.now() - 30 * 60000).toISOString(), left = new Date().toISOString();
+  const visit = { client: 'Sunrise Dental', person: 'Dr. Rao', phone: '9000099001', place: 'Guntur' };
+  const entry = (extra = {}, v = {}) => ({ id: 'v1', at: start, text: 'Visit to Sunrise Dental', kind: 'Client visit', state: 'running', start, ...extra, visit: { ...visit, ...v } });
+  const presence = async () => (await call('GET', '/bootstrap', null, sm)).body.records.find((r) => r.type === 'presence' && r.user === rep.owner);
+  assert.equal((await patch(V, rep.id, { entries: [entry()] })).status, 200); assert.match((await presence()).why, /^Going to a client – Sunrise Dental/);
+  assert.equal((await patch(V, rep.id, { entries: [entry({}, { reachedAt: reached })] })).body.record.entries[0].visit.reachedAt, reached);
+  assert.match((await presence()).why, /^At a client – Sunrise Dental/, 'the manager sees that the BDE has reached');
+  const done = (await patch(V, rep.id, { entries: [entry({ state: 'done', end: left, mins: 50, note: 'Agreed to the website, advance on Monday' }, { reachedAt: reached, leftAt: left, outcome: 'Deal accepted', next: 'not a date' })] })).body.record.entries[0];
+  assert.equal(done.visit.outcome, 'Deal accepted'); assert.equal(done.visit.leftAt, left); assert.equal(done.visit.next, undefined, 'only a real date is kept');
+  assert.equal((await presence()).out, false, 'the visit is over');
+  const told = (await call('GET', '/bootstrap', null, sm)).body.records.filter((r) => r.type === 'notice' && /Sunrise Dental accepted the deal/.test(r.text));
+  assert.equal(told.length, 1, 'the Sales Manager is told once'); assert.match(told[0].text, /advance on Monday/);
+  assert.equal((await patch(V, rep.id, { entries: [entry({ state: 'done', end: left, mins: 50 }, { outcome: 'Something else' })] })).body.record.entries[0].visit.outcome, undefined, 'only a known outcome is kept');
+  // Out of the blue: a visit starts with just the client and the place; the person and number are needed before it ends.
+  const quick = (extra = {}, v = {}) => ({ id: 'v2', at: left, text: 'Visit to Ravi Opticals', kind: 'Client visit', state: 'running', start: left, ...extra, visit: { client: 'Ravi Opticals', place: 'Tenali', ...v } });
+  const done1 = entry({ state: 'done', end: left, mins: 50, note: 'ok' }, { reachedAt: reached, leftAt: left, outcome: 'Deal accepted' });
+  assert.equal((await patch(V, rep.id, { entries: [done1, quick()] })).status, 200, 'client and place are enough to start');
+  assert.equal((await patch(V, rep.id, { entries: [done1, quick({}, { place: '' })] })).status, 400, 'the place is needed');
+  assert.equal((await patch(V, rep.id, { entries: [done1, quick({ state: 'done', end: left, mins: 5 }, { outcome: 'Interested – follow up' })] })).status, 400, 'the person met is needed to end it');
+  assert.equal((await patch(V, rep.id, { entries: [done1, quick({ state: 'done', end: left, mins: 5 }, { outcome: 'Could not meet' })] })).status, 200, '"Could not meet" ends it without a person');
+  // The trip back to the office is kept, and the manager sees it.
+  const trip = { id: 't1', at: left, text: 'Travelling back to the office', kind: 'Travel', state: 'running', start: left, out: true, trip: { to: 'office', from: 'Ravi Opticals' } };
+  assert.equal((await patch(V, rep.id, { entries: [done1, quick({ state: 'done', end: left, mins: 5 }, { outcome: 'Could not meet' }), trip] })).body.record.entries[2].trip.from, 'Ravi Opticals');
+  assert.equal((await presence()).why, 'Returning to the office');
 });
 
 test('security: uploaded files cannot run as pages, sign-in is limited, your own password needs the current one', async () => {

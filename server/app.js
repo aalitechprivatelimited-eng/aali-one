@@ -57,7 +57,7 @@ export async function handle(req, res) {
   try {
     const db = await getDb();
     // ---------- public ----------
-    if (path === '/health') return send(res, 200, { ok: true });
+    if (path === '/health') return send(res, 200, { ok: true, ...(process.env.TEST_SITE ? { test: true } : {}) }); // test: the practice copy, not the real Aali One
     if (path === '/setup' && method === 'GET') { const n = (await db.query('select count(*)::int n from users')).rows[0].n; return send(res, 200, { needsSetup: n === 0 }); }
     if (path === '/setup' && method === 'POST') {
       const b = await readBody(req);

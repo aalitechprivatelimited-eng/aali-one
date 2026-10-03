@@ -24,6 +24,7 @@ try {
   const smUser = await person('Meera', 'Rao', 'sm@e2e.test', 'salesmgr', 'Sales Manager');
   must(smUser.status === 200, 'could not add the Sales Manager');
   must((await person('Kiran', 'Kumar', 'bde@e2e.test', 'bde', 'BDE - Sales')).status === 200, 'could not add the BDE');
+  must((await person('Vani', 'Reddy', 'bde2@e2e.test', 'bde', 'BDE - Sales')).status === 200, 'could not add the second BDE');
 
   browser = await chromium.launch({ channel: 'msedge' }).catch(() => chromium.launch({ channel: 'chrome' }));
   const errors = [];
@@ -45,7 +46,7 @@ try {
   // ---------- a BDE's day, on a laptop ----------
   console.log('BDE on a laptop screen (1366 × 768)');
   const bde = await open({ width: 1366, height: 768 });
-  await step('the opening screen shows, then lifts away', async () => { await bde.goto(BASE); await bde.locator('#splash svg').waitFor({ timeout: 8000 });
+  await step('the opening screen shows, then lifts away', async () => { await bde.goto(BASE); await bde.locator('#splash img').waitFor({ timeout: 8000 });
     await bde.locator('#splash').waitFor({ state: 'detached', timeout: 6000 }); await bde.locator('input[type=email]').waitFor(); });
   await step('sign in; the dashboard greets the person', async () => { await signIn(bde, 'bde@e2e.test'); must((await bde.locator('.hero h1').textContent()).includes('Kiran'), 'no greeting by name'); });
   await step('first sign-in offers the guide; it walks the BDE through the pages of a BDE, and only those', async () => { await bde.locator('.modal', { hasText: 'Welcome to Aali One' }).waitFor();
@@ -118,6 +119,10 @@ try {
     await bde.keyboard.press('Control+k'); await bde.getByRole('combobox', { name: 'Search' }).fill('tasks'); await bde.keyboard.press('Enter'); await bde.locator('.page h1', { hasText: 'Tasks' }).waitFor(); });
   await step('the call register lists the business with its call', async () => { await bde.locator('.nav a', { hasText: 'Call register' }).click(); await bde.locator('table tr', { hasText: 'Test Medicals' }).click();
     await bde.locator('.modal', { hasText: 'Calls made (1)' }).waitFor(); await bde.keyboard.press('Escape'); await bde.locator('.modal').waitFor({ state: 'detached' }); });
+  await step('calendar: a tap on a day opens everything on it, and a task can be added for that day', async () => { await bde.goto(BASE + '/calendar'); await bde.locator('.calday.now').click();
+    const day = bde.locator('.modal'); await day.waitFor(); must((await day.locator('.modal-h h2').textContent()).includes(new Date().toLocaleDateString('en-IN', { weekday: 'long' })), 'the pop-up is not for that day');
+    await day.getByLabel('New task for this day').fill('Take the brochure to Sunrise Tiles'); await day.getByRole('button', { name: 'Add task' }).click(); await toast(bde, 'Task added for');
+    await day.locator('.li', { hasText: 'Take the brochure to Sunrise Tiles' }).waitFor(); await day.locator('.modal-f').getByRole('button', { name: 'Close' }).click(); await bde.locator('.modal').waitFor({ state: 'detached' }); });
   await step('a BDE cannot open Payments', async () => { await bde.goto(BASE + '/payments'); await bde.getByText('This section is not part of your access').waitFor(); });
   await step('the sidebar collapses to a strip and opens again', async () => { await bde.locator('.brand .collapse').click(); must(await bde.locator('.shell.mini').count() === 1, 'did not collapse');
     await bde.locator('.brand .logo').click(); must(await bde.locator('.shell.mini').count() === 0, 'did not open again'); });
@@ -137,6 +142,8 @@ try {
     await phone.locator('.side.open').getByRole('button', { name: 'Close the menu' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' });
     await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Daily reports' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' });
     await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Dashboard' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' }); await phone.locator('.hero').waitFor(); });
+  await step('the day’s timeline reads well on a phone: each task uses the full width', async () => { await phone.goto(BASE + '/daily'); const b = phone.locator('.li.tl .tl-b').first(); await b.waitFor();
+    must(await b.evaluate((e) => e.getBoundingClientRect().width) > 280, 'the task text is squeezed into a narrow column'); await noSideScroll(phone); });
   await step('call register and profile fit the phone', async () => { for (const p of ['/calls', '/settings/me', '/leads', '/tasks']) { await phone.goto(BASE + p); await phone.locator('.page h1').first().waitFor(); await noSideScroll(phone); } });
 
   // ---------- the Sales Manager ----------
@@ -175,11 +182,54 @@ try {
     await top.getByRole('button', { name: 'Start the guide' }).click(); const { seen } = await walkGuide(top);
     for (const p of ['/daily', '/payments', '/quotes', '/projects', '/collab', '/settings/people', '/settings/access', '/settings/staff', '/settings/audit']) must(seen.has(p), 'the guide did not open ' + p); });
 
+  await step('the team report message is detailed: every task, the calls that matter; Short gives the totals', async () => { await top.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
+    await top.goto(BASE + '/daily'); await top.getByRole('button', { name: 'Copy the message' }).first().click(); await toast(top, 'Report copied');
+    const full = await top.evaluate(() => navigator.clipboard.readText()); must(full.includes('(detailed)') && full.includes('_Tasks_') && full.includes('Sent the brochure to 5 schools'), 'the detailed message lacks the tasks');
+    must(full.includes('_Calls that matter_') && full.includes('Test Medicals'), 'the detailed message lacks the interested calls');
+    await top.locator('.seg button', { hasText: 'Short' }).click(); await top.getByRole('button', { name: 'Copy the message' }).first().click(); await sleep(400);
+    const short = await top.evaluate(() => navigator.clipboard.readText()); must(!short.includes('_Tasks_') && short.length < full.length, 'Short is not shorter'); });
   await step('the audit log is short: a day is one line, everyday work is one line for each person', async () => { await top.goto(BASE + '/settings/audit'); await top.locator('.log-day').first().waitFor();
     must(await top.locator('.log-day').count() === 1 && await top.locator('.page tbody tr').count() === 0, 'the log is not folded into days'); const who = top.locator('.log-who', { hasText: 'Kiran' }).first();
     const sum = await who.locator('summary').textContent(); must(/(added|changed) \d+ \w/.test(sum), 'no one-line summary of the BDE\'s work: ' + sum); must(await who.locator('.log-line').first().isHidden(), 'the details should be closed until asked for');
     await who.locator('summary').click(); await who.locator('.log-line', { hasText: /Added an? |Changed an? / }).first().waitFor(); must(await top.locator('.log-day .log-line:visible').count() < 40, 'the day is still a long list');
     await top.getByPlaceholder('Search the log').fill('wrong password'); await top.getByText('Nothing matches.').waitFor(); });
+
+  console.log('A BDE on a client visit, on a phone (390 × 844)');
+  const vis = await open({ width: 390, height: 844 }, true);
+  const vc = (await api('POST', '/auth/login', { email: 'bde2@e2e.test', password: PW })).cookie, ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  const visit = { client: 'Sunrise Dental', person: 'Dr. Rao', phone: '9876503001', place: 'Guntur' };
+  let vrep;
+  const putVisit = (extra) => api('PATCH', '/records/' + vrep, { data: { entries: [{ id: 'v1', at: ago(15), text: 'Visit to Sunrise Dental', kind: 'Client visit', state: 'running', start: ago(15), visit: { ...visit, ...extra } }] } }, vc);
+  await step('15 minutes after leaving for a visit, the app asks: have you reached the client?', async () => { await signIn(vis, 'bde2@e2e.test'); await skipGuide(vis);
+    vrep = (await api('POST', '/records', { type: 'report', data: { date: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) } }, vc)).body.record.id; must((await putVisit({})).status === 200, 'could not start the visit');
+    await vis.reload(); await vis.locator('.modal', { hasText: 'Have you reached Sunrise Dental?' }).waitFor({ timeout: 10000 });
+    await vis.getByRole('button', { name: 'Yes, I have reached' }).click(); await toast(vis, 'Noted: you reached Sunrise Dental'); await vis.locator('.modal').waitFor({ state: 'detached' }); });
+  await step('after some time at the client it asks: are you leaving? "Not yet" asks again later', async () => { must((await putVisit({ reachedAt: ago(25) })).status === 200, 'could not mark reached');
+    await vis.reload(); await vis.locator('.modal', { hasText: 'Are you leaving Sunrise Dental now?' }).waitFor({ timeout: 10000 }); await vis.getByRole('button', { name: 'Not yet' }).click();
+    await vis.locator('.modal').waitFor({ state: 'detached' }); await vis.reload(); await vis.locator('.hero').waitFor(); await sleep(1500); must(await vis.locator('.modal').count() === 0, '"Not yet" did not wait'); });
+  await step('leaving: outcome, remark and "where now" are asked; another client starts at once; the Sales Manager hears of an accepted deal', async () => { await vis.goto(BASE + '/daily'); await vis.locator('.nowcard', { hasText: 'At the client since' }).waitFor();
+    await vis.getByRole('button', { name: 'I am leaving the client' }).click(); const o = vis.locator('.modal', { hasText: 'How did the visit to Sunrise Dental go?' }); await o.waitFor();
+    must(await o.getByRole('button', { name: 'Save and end the visit' }).isDisabled(), 'it can be saved without an outcome'); await o.locator('.chip', { hasText: 'Deal accepted' }).click();
+    await o.locator('textarea').fill('Agreed to the 5-page website, advance on Monday'); must(await o.getByRole('button', { name: 'Save and end the visit' }).isDisabled(), 'it can be saved without saying where the person goes');
+    await o.locator('.chip', { hasText: 'Another client' }).click(); await o.getByLabel('Client or business name').fill('Lotus Clinic'); await o.getByLabel('Place or address').fill('Brodipet');
+    await o.getByRole('button', { name: 'Save and end the visit' }).click(); await toast(vis, 'Visit to Lotus Clinic started');
+    await vis.locator('.nowcard', { hasText: 'Lotus Clinic' }).waitFor(); await vis.locator('.pill', { hasText: 'Deal accepted' }).first().waitFor(); await noSideScroll(vis);
+    const sc = (await api('POST', '/auth/login', { email: 'sm@e2e.test', password: PW })).cookie, b = (await api('GET', '/bootstrap', null, sc)).body;
+    must(b.records.some((r) => r.type === 'notice' && /Sunrise Dental accepted the deal/.test(r.text)), 'the Sales Manager was not told'); });
+  await step('second visit: reached, "could not meet", back to the office; the app asks "Are you back at the office?"', async () => {
+    await vis.locator('.nowcard').getByRole('button', { name: 'I have reached' }).click(); await vis.getByRole('button', { name: 'Yes, I have reached' }).click(); await toast(vis, 'Noted: you reached Lotus Clinic');
+    await vis.locator('.nowcard').getByRole('button', { name: 'I am leaving the client' }).click(); const o = vis.locator('.modal', { hasText: 'How did the visit to Lotus Clinic go?' }); await o.waitFor();
+    await o.locator('.chip', { hasText: 'Could not meet' }).click(); await o.locator('textarea').fill('Doctor was in surgery; come back next week'); await o.locator('.chip', { hasText: 'Back to the office' }).click();
+    await o.getByRole('button', { name: 'Save and end the visit' }).click(); await toast(vis, 'Have a safe trip back'); await vis.locator('.nowcard', { hasText: 'On the way back to the office' }).waitFor();
+    const sc = (await api('POST', '/auth/login', { email: 'sm@e2e.test', password: PW })).cookie;
+    must((await api('GET', '/bootstrap', null, sc)).body.records.some((r) => r.type === 'presence' && r.why === 'Returning to the office'), 'the manager does not see the trip back');
+    await vis.locator('.nowcard').getByRole('button', { name: 'I am back at the office' }).click(); await vis.getByRole('button', { name: 'Yes, I am back' }).click(); await toast(vis, 'Welcome back');
+    await vis.locator('.nowcard').waitFor({ state: 'detached' }); });
+  await step('a client asks to meet out of the blue: "Client visit now" on the dashboard starts a visit with just the name and place', async () => { await vis.goto(BASE); await vis.locator('.hero').waitFor();
+    await vis.getByRole('button', { name: 'Client visit now' }).click(); const m = vis.locator('.modal', { hasText: 'Client visit now' }); await m.waitFor();
+    must(await m.getByRole('button', { name: 'Start the visit' }).isDisabled(), 'a visit can start without a name and place'); await m.getByLabel('Client or business name').fill('Hotel Palm Grove'); await m.getByLabel('Place or address').fill('Tenali');
+    await m.getByRole('button', { name: 'Start the visit' }).click(); await toast(vis, 'Visit to Hotel Palm Grove started');
+    await vis.getByRole('button', { name: 'Client visit now' }).click(); await vis.locator('.modal', { hasText: 'You are on a visit to Hotel Palm Grove' }).waitFor(); await vis.keyboard.press('Escape'); await vis.locator('.modal').waitFor({ state: 'detached' }); });
 
   await step('no errors were written to the browser console', async () => must(!errors.length, errors.slice(0, 3).join(' | ')));
   console.log(failed ? `\n${failed} step(s) failed.` : '\nAll steps passed.');

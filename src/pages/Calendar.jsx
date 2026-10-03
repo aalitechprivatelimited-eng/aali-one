@@ -1,9 +1,9 @@
 // Calendar: every dated thing by day, plus every project's run from start to delivery with how far it has really come.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useStore, store, list, get } from '../api.js';
+import { useStore, store, list, get, create } from '../api.js';
 import { feedItems, forScope, iso, parse, MONTHS, today, addDays, diff, rel, fmtDate, isManager, pStageLabel, projectProgress, daysBetween, uname, reach, can } from '../lib.js';
-import { Seg, Pill, Empty, Sample } from '../ui.jsx';
+import { Seg, Pill, Empty, Sample, Modal, attempt } from '../ui.jsx';
 
 const COLOR = { task: 'info', lead: 'gold', deal: 'gold', cadence: 'gold', activity: 'ok', payment: 'warn', project: 'bad', ticket: 'bad', start: '', milestone: 'info', delivery: 'bad', delivered: 'ok' };
 const GROUPS = [['proj', 'Projects', 'bad', ['project', 'start', 'milestone', 'delivery', 'delivered'], 'projects'], ['follow', 'Follow-ups', 'gold', ['lead', 'deal', 'cadence'], 'leads'], ['meet', 'Calls & meetings', 'ok', ['activity', 'callback'], 'leads'],
@@ -39,7 +39,7 @@ function projectEvents(rows) {
 
 export default function Calendar() {
   useStore();
-  const wide = reach('calendar'), [scope, setScope] = useState(wide.at(-1)[0]), [view, setView] = useState('month'), [sel, setSel] = useState(today()), [off, setOff] = useState([]);
+  const wide = reach('calendar'), [scope, setScope] = useState(wide.at(-1)[0]), [view, setView] = useState('month'), [sel, setSel] = useState(today()), [off, setOff] = useState([]), [pop, setPop] = useState(false);
   const [m, setM] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const first = new Date(m), start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
   const days = [...Array(42)].map((_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return iso(d); });
@@ -60,31 +60,49 @@ export default function Calendar() {
       <div className="tbl"><div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,minmax(110px,1fr))', minWidth: 780 }}>
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="calhead">{d}</div>)}
         {days.map((d) => { const its = items.filter((i) => i.due === d), inMonth = parse(d).getMonth() === m.getMonth();
-          return <div key={d} className={'calday' + (d === today() ? ' now' : '') + (d === sel ? ' sel' : '')} style={{ opacity: inMonth ? 1 : 0.5 }} onClick={() => setSel(d)}>
+          // A tap on a day opens everything on that day in a pop-up; a tap on one item opens that item.
+          const show = () => { setSel(d); setPop(true); };
+          return <div key={d} className={'calday' + (d === today() ? ' now' : '') + (d === sel ? ' sel' : '')} style={{ opacity: inMonth ? 1 : 0.5 }} onClick={show}
+            role="button" tabIndex={0} aria-label={`${parse(d).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}: ${its.length ? its.length + ' item' + (its.length === 1 ? '' : 's') : 'nothing due'}`} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), show())}>
             <div className="num small" style={{ fontWeight: d === today() ? 700 : 400 }}>{parse(d).getDate()}</div>
             {lanes.map((r) => <div key={r.p.id} className="lane" title={`${r.p.name} · ${pStageLabel(r.p.stage)} · ${r.pct}%`} style={d < r.start || d > r.end ? { background: 'none' } : { background: r.color, opacity: d <= r.reach ? 1 : 0.25,
               borderRadius: `${d === r.start ? 4 : 0}px ${d === r.end ? 4 : 0}px ${d === r.end ? 4 : 0}px ${d === r.start ? 4 : 0}px`, marginLeft: d === r.start ? 0 : -5, marginRight: d === r.end ? 0 : -5 }} />)}
-            {its.slice(0, 4).map((i) => <Link key={i.kind + i.id} to={i.link} className={'pill ' + COLOR[i.kind]} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: '2px 0', textDecoration: 'none', borderLeft: i.color ? `3px solid ${i.color}` : '' }} title={i.title}>{i.time ? i.time + ' ' : ''}{i.title}</Link>)}
-            {its.length > 4 && <div className="small muted">+{its.length - 4} more</div>}</div>; })}
+            {its.slice(0, 4).map((i) => <Link key={i.kind + i.id} to={i.link} onClick={(e) => e.stopPropagation()} className={'pill ' + COLOR[i.kind]} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: '2px 0', textDecoration: 'none', borderLeft: i.color ? `3px solid ${i.color}` : '' }} title={i.title}>{i.time ? i.time + ' ' : ''}{i.title}</Link>)}
+            {its.length > 4 && <div className="small muted more">+{its.length - 4} more – tap to see all</div>}</div>; })}
       </div></div>
       {lanes.length > 0 && <div className="row small" style={{ margin: '8px 0' }}><span className="muted">Project lines (dark = work done so far, light = still to do):</span>
         {lanes.map((r) => <Link key={r.p.id} to={'/projects/' + r.p.id} className="row" style={{ gap: 5, textDecoration: 'none', color: 'inherit' }}><i style={{ width: 14, height: 6, borderRadius: 3, background: r.color, display: 'inline-block' }} />{r.p.name} <span className="num muted">{r.pct}%</span></Link>)}</div>}
-      <Day d={sel} items={items.filter((i) => i.due === sel)} running={off.includes('proj') ? [] : rows.filter((r) => r.end && r.start <= sel && r.end >= sel)} />
+      <p className="small muted" style={{ margin: '4px 0 0' }}>Tap a day to see everything on it, and to add a task for that day.</p>
+      {pop && <Day d={sel} items={items.filter((i) => i.due === sel)} running={off.includes('proj') ? [] : rows.filter((r) => r.end && r.start <= sel && r.end >= sel)} onClose={() => setPop(false)} />}
     </>}
   </>;
 }
 
-function Day({ d, items, running }) {
-  return <div className="card stack" style={{ marginTop: 12 }}><h2 style={{ margin: 0 }}>{parse(d).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })} <span className="small muted">{rel(d)}</span></h2>
-    {items.length ? <div className="list">{items.map((i) => <Link key={i.kind + i.id} to={i.link} className="li" style={{ padding: '7px 12px' }}>
-      <Pill k={COLOR[i.kind]}>{{ start: 'Project start', milestone: 'Milestone', delivery: 'Delivery date', delivered: 'Delivered', activity: 'Call / meeting', cadence: 'Follow-up', lead: 'Lead', deal: 'Deal', task: 'Task', payment: 'Payment', ticket: 'Support', project: 'Project' }[i.kind]}</Pill>
-      <span className="grow">{i.time ? i.time + ' · ' : ''}{i.title}</span>{i.owner && <span className="small muted">{uname(i.owner)}</span>}<Sample on={i.sample} /></Link>)}</div>
-      : <p className="muted small" style={{ margin: 0 }}>Nothing is due on this day.</p>}
-    {running.length > 0 && <><span className="lbl">Projects running on this day</span>
-      {running.map((r) => <Link key={r.p.id} to={'/projects/' + r.p.id} className="row" style={{ textDecoration: 'none', color: 'inherit' }}><i style={{ width: 10, height: 10, borderRadius: 3, background: r.color, flex: 'none' }} />
-        <span className="grow">{r.p.name}</span><Pill>{pStageLabel(r.p.stage)}</Pill><Pill k={r.state[1]}>{r.state[0]}</Pill>
-        <div className="bar" style={{ width: 90 }}><i style={{ width: r.pct + '%', background: r.color }} /></div><span className="num small" style={{ width: 36, textAlign: 'right' }}>{r.pct}%</span></Link>)}</>}
-  </div>;
+const KIND = { start: 'Project start', milestone: 'Milestone', delivery: 'Delivery date', delivered: 'Delivered', activity: 'Call / meeting', callback: 'Call back', cadence: 'Follow-up', lead: 'Lead', deal: 'Deal', task: 'Task', payment: 'Payment', ticket: 'Support', project: 'Project' };
+// One day in a pop-up: everything due that day, grouped the same way as the calendar's "Show" switches, the projects running that
+// day, and a quick way to add a task for the day.
+function Day({ d, items, running, onClose }) {
+  const [t, setT] = useState(''), [busy, setBusy] = useState(false), past = d < today();
+  const groups = GROUPS.map(([k, l, c, kinds]) => [k, l, c, items.filter((i) => kinds.includes(i.kind))]).filter((g) => g[3].length);
+  async function addTask() { const title = t.trim(); if (!title) return; setBusy(true);
+    if (await attempt(() => create('task', { title, due: d, owner: store.me.id, status: 'todo' }), `Task added for ${fmtDate(d)}.`)) setT(''); setBusy(false); }
+  return <Modal wide title={parse(d).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} onClose={onClose}
+    footer={<><span className="small muted">{rel(d)} · {items.length ? `${items.length} thing${items.length === 1 ? '' : 's'} on this day` : 'nothing due'}</span><button className="btn" type="button" onClick={onClose}>Close</button></>}>
+    <div className="stack">
+      {groups.length ? groups.map(([k, l, c, its]) => <div key={k} className="stack gap4"><span className="lbl"><Pill k={c}>{l}</Pill> <span className="muted">{its.length}</span></span>
+        <div className="list">{its.map((i) => <Link key={i.kind + i.id} to={i.link} className="li" style={{ padding: '9px 12px' }} onClick={onClose}>
+          <span className="small muted" style={{ width: 92, flex: 'none' }}>{KIND[i.kind] || i.kind}</span>
+          <span className="grow">{i.time ? <b className="num">{i.time} · </b> : ''}{i.title}{i.done ? ' · done' : ''}</span>{i.owner && <span className="small muted">{uname(i.owner)}</span>}<Sample on={i.sample} /><span className="small muted">Open ›</span></Link>)}</div></div>)
+        : <p className="muted" style={{ margin: 0 }}>{past ? 'Nothing was due on this day.' : 'Nothing is due on this day yet.'}</p>}
+      {running.length > 0 && <div className="stack gap4"><span className="lbl">Projects running on this day</span>
+        {running.map((r) => <Link key={r.p.id} to={'/projects/' + r.p.id} className="row" style={{ textDecoration: 'none', color: 'inherit' }} onClick={onClose}><i style={{ width: 10, height: 10, borderRadius: 3, background: r.color, flex: 'none' }} />
+          <span className="grow">{r.p.name}</span><Pill>{pStageLabel(r.p.stage)}</Pill>{r.state[0] !== pStageLabel(r.p.stage) && <Pill k={r.state[1]}>{r.state[0]}</Pill>}
+          <div className="bar" style={{ width: 90 }}><i style={{ width: r.pct + '%', background: r.color }} /></div><span className="num small" style={{ width: 36, textAlign: 'right' }}>{r.pct}%</span></Link>)}</div>}
+      {!past && <div className="stack gap4"><span className="lbl">Add a task for this day</span>
+        <div className="row"><input className="in grow" value={t} onChange={(e) => setT(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask()} placeholder="e.g. Visit Sunrise Dental with the brochure" maxLength={200} aria-label="New task for this day" />
+          <button className="btn primary" type="button" disabled={!t.trim() || busy} onClick={addTask}>Add task</button></div></div>}
+    </div>
+  </Modal>;
 }
 
 // ---------- project progress: one line per project from start to delivery ----------

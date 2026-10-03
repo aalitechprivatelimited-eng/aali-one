@@ -7,6 +7,7 @@ import { Ico } from '../icons.jsx';
 import { today, addDays, fmtDate, fmtDT, iso, parse, rel, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings, desig, user, mobile10 } from '../lib.js';
 import { Tabs, Seg, Pill, Av, Empty, Field, In, Area, Sel, Sample, Stat, DeleteButton, Modal, attempt, toast } from '../ui.jsx';
 import { Check } from './Calls.jsx';
+import { askVisit } from '../visit.jsx';
 
 // Call sheet: the responses a BDE can pick, and what counts as positive.
 const RESP = [['Interested', 'ok'], ['Call back', 'warn'], ['Not interested', ''], ['No answer', ''], ['Busy', ''], ['Not reachable', ''], ['Wrong number', ''], ['Asked not to call', 'bad']];
@@ -31,11 +32,14 @@ const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const fmtMins = (m) => (!m ? '0 min' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
 const typesFor = (team) => settings().workTypes?.[team] || [...new Set(Object.values(settings().workTypes || {}).flat())];
 // Minutes per kind of work, biggest first, across one or many reports.
+// "Other – meeting" and "Other – Meeting " are the same kind of work: counted together, shown with a capital letter.
+const kindKey = (k) => String(k || 'Other').replace(/\s+/g, ' ').trim().toLowerCase();
+const kindLabel = (k) => String(k || 'Other').replace(/\s+/g, ' ').trim().replace(/(– )(\p{Ll})/u, (_, a, b) => a + b.toUpperCase());
 function timeByType(reports) {
   const m = new Map();
-  for (const r of reports) for (const e of r?.entries || []) if (e.mins && !e.brk) m.set(e.kind || 'Other', (m.get(e.kind || 'Other') || 0) + e.mins);
-  const rows = [...m.entries()].sort((a, b) => b[1] - a[1]);
-  return { rows, total: rows.reduce((t, x) => t + x[1], 0), count: (k) => reports.reduce((t, r) => t + (r?.entries || []).filter((e) => (e.kind || 'Other') === k && e.mins && !e.brk).length, 0) };
+  for (const r of reports) for (const e of r?.entries || []) if (e.mins && !e.brk) { const k = kindKey(e.kind), x = m.get(k) || { label: kindLabel(e.kind), mins: 0, n: 0 }; x.mins += e.mins; x.n++; m.set(k, x); }
+  const rows = [...m.values()].sort((a, b) => b.mins - a.mins).map((x) => [x.label, x.mins, x.n]);
+  return { rows, total: rows.reduce((t, x) => t + x[1], 0), count: (label) => rows.find((x) => x[0] === label)?.[2] || 0 };
 }
 function TimeBars({ reports, empty }) {
   const t = timeByType(reports);
@@ -70,10 +74,24 @@ function DaySummary({ r, small }) {
 // ----- WhatsApp: the report as a message, one tap per person -----
 const fullDate = (d) => parse(d).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 const dayText = (d) => `Day ${hm(d.start)} – ${d.open ? 'still on' : hm(d.end)} · Worked ${fmtMins(d.worked)}${d.brk ? ` · Break ${fmtMins(d.brk)}` : ''} · Nothing recorded ${fmtMins(d.idle)}`;
+// One line of the day for a message: times, kind of work, what was done, the client visit with its check-ins and outcome, and the remark.
+function taskLine(x) {
+  const e = x.e, end = e.state === 'running' ? 'now' : hm(x.en), mins = fmtMins(Math.round((x.en - x.s) / 60000)) + (e.state === 'running' ? ', in progress' : '');
+  if (e.brk) return `• ${hm(x.s)}–${end} ${e.out ? 'Out with permission: ' + e.text : 'Break'} (${mins})`;
+  const v = e.visit, gap = (a, b) => fmtMins(Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)));
+  const what = v ? `${v.client} (${[v.person && 'met ' + v.person, v.place].filter(Boolean).join(', ')})${v.reachedAt ? `, travel ${gap(e.start, v.reachedAt)}, at the client ${gap(v.reachedAt, v.leftAt || e.end || Date.now())}` : ''}${v.outcome ? ` – *${v.outcome}*` : ''}${v.next ? `, ${v.outcome === 'Next meeting fixed' ? 'next meeting' : 'follow up'} ${fmtDate(v.next)}` : ''}`
+    : e.trip ? `Back to the office from ${e.trip.from || 'a client'}${e.trip.reachedAt ? `, back at ${hm(e.trip.reachedAt)}` : ''}` : e.text;
+  return `• ${hm(x.s)}–${end} ${e.kind ? kindLabel(e.kind) + ': ' : ''}${what}${!v && e.proj ? ` [${e.proj}]` : ''}${e.note ? ` – ${e.note}` : ''} (${mins})`;
+}
+// The calls worth reading: who was interested, who fixed a meeting, who was met in person.
+function callLines(r, max = 8) {
+  const c = r.calls || [], hot = c.filter((x) => x.resp === 'Interested' || x.meeting || x.met);
+  return hot.slice(0, max).map((x) => `  – ${x.org}${x.place ? ', ' + x.place : ''}: ${x.resp || 'call'}${x.meeting ? `, meeting ${x.meeting}` : ''}${x.met ? ', met in person' : ''}${x.note ? ` – ${x.note}` : ''}`).concat(hot.length > max ? [`  – and ${hot.length - max} more`] : []);
+}
 function reportText(r) {
   const u = user(r.owner), d = dayLine(r), t = timeByType([r]);
   const out = [`*Daily report · ${u?.name || ''}* (${desig(u)})`, fullDate(r.date), d.start ? dayText(d) : '', '', '*Tasks*'];
-  for (const x of d.rows.slice(0, 30)) out.push(x.gap ? `• ${hm(x.s)}–${hm(x.en)} _Nothing recorded (${fmtMins(Math.round((x.en - x.s) / 60000))})_` : x.e.brk ? `• ${hm(x.s)}–${hm(x.en)} Break` : `• ${hm(x.s)}–${x.e.state === 'running' ? 'now' : hm(x.en)} ${x.e.kind ? x.e.kind + ': ' : ''}${x.e.text}${x.e.visit ? ` [Client: ${x.e.visit.client}, met ${x.e.visit.person}, ${x.e.visit.phone}, ${x.e.visit.place}]` : x.e.proj ? ' [' + x.e.proj + ']' : ''}${x.e.note ? ' – ' + x.e.note : ''} (${fmtMins(Math.round((x.en - x.s) / 60000))}${x.e.state === 'running' ? ', in progress' : ''})`);
+  for (const x of d.rows.slice(0, 40)) out.push(x.gap ? `• ${hm(x.s)}–${hm(x.en)} _Nothing recorded (${fmtMins(Math.round((x.en - x.s) / 60000))})_` : taskLine(x));
   if (t.total) out.push('', '*Time by kind of work*', ...t.rows.map(([k, m]) => `• ${k}: ${fmtMins(m)}`));
   if (r.calls?.length) out.push('', `*Calls:* ${callLine(callStats(r))}`, ...r.calls.filter((c) => ['Interested', 'Call back'].includes(c.resp) || c.met).slice(0, 15).map((c) => `• ${c.org}${c.place ? ', ' + c.place : ''} – ${c.resp}${c.meeting ? ', meeting: ' + c.meeting : ''}${c.note ? ' – ' + c.note : ''}`));
   if (r.blockers?.trim()) out.push('', `*Problems / help needed:* ${r.blockers.trim()}`);
@@ -81,11 +99,19 @@ function reportText(r) {
   out.push('', r.status === 'submitted' ? 'Status: submitted' : 'Status: still being written', `Aali One: ${location.origin}/daily`);
   return out.filter((x, i, a) => !(x === '' && a[i - 1] === '')).join('\n');
 }
-function teamText(rows, date, label) {
+// The team's day as one message. Detailed: every person's tasks in order, client visits with their outcome, the calls that matter,
+// tomorrow's plan and problems. Short: the totals only (for a quick look, or when WhatsApp will not take a long message).
+function teamText(rows, date, label, full = true) {
   const got = rows.filter((x) => x.r), t = timeByType(got.map((x) => x.r));
-  const out = [`*${label} · daily work report*`, fullDate(date), `${got.filter((x) => x.r.status === 'submitted').length} of ${rows.length} submitted · ${got.filter((x) => x.r.status !== 'submitted').length} still writing · ${rows.length - got.length} not started`, ''];
+  const out = [`*${label} · daily work report${full ? ' (detailed)' : ''}*`, fullDate(date), `${got.filter((x) => x.r.status === 'submitted').length} of ${rows.length} submitted · ${got.filter((x) => x.r.status !== 'submitted').length} still writing · ${rows.length - got.length} not started`, ''];
   for (const { u, r } of rows) { out.push(`*${u.name}* (${desig(u)})`); if (!r) { out.push('No report', ''); continue; } const d = dayLine(r);
-    out.push(d.start ? dayText(d) : 'No time recorded', ...(r.calls?.length ? [callLine(callStats(r))] : []), ...timeByType([r]).rows.slice(0, 4).map(([k, m]) => `• ${k}: ${fmtMins(m)}`), ...(r.blockers?.trim() ? [`Problem: ${r.blockers.trim()}`] : []), ''); }
+    out.push(d.start ? dayText(d) : 'No time recorded', ...(r.calls?.length ? [`Calls: ${callLine(callStats(r))}`] : []));
+    if (full) { const tasks = d.rows.filter((x) => !x.gap);
+      if (tasks.length) out.push('_Tasks_', ...tasks.slice(0, 40).map(taskLine));
+      const hot = callLines(r); if (hot.length) out.push('_Calls that matter_', ...hot);
+      if (r.plan?.trim()) out.push(`Plan for tomorrow: ${r.plan.trim()}`);
+    } else out.push(...timeByType([r]).rows.slice(0, 4).map(([k, m]) => `• ${k}: ${fmtMins(m)}`));
+    out.push(...(r.blockers?.trim() ? [`Problem: ${r.blockers.trim()}`] : []), ''); }
   if (t.total) out.push('*Team time by kind of work*', ...t.rows.map(([k, m]) => `• ${k}: ${fmtMins(m)}`), `Total: ${fmtMins(t.total)}`, '');
   out.push(`Aali One: ${location.origin}/daily`);
   return out.join('\n');
@@ -309,11 +335,13 @@ function NowCard({ e, onFinish }) {
   const sec = Math.max(0, Math.floor((Date.now() - new Date(e.start)) / 1000)), two = (n) => String(n).padStart(2, '0');
   return <m.div className={'nowcard' + (e.out ? ' out' : '')} initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: EASE }}>
     <span className="pulse" aria-hidden="true" />
-    <div className="grow" style={{ minWidth: 200 }}><div className="small muted">{e.out ? 'Out of office' : e.brk ? 'On a break' : 'Working on now'} · since {hm(e.start)}</div>
-      <div><b>{e.brk && !e.out ? 'Break' : e.text}</b>{e.kind && !e.brk && <> <Pill k="info">{e.kind}</Pill></>}</div>
-      {e.out && <div className="small">Your manager and management see you as Out of office until you press Finish or start your next task.</div>}</div>
+    <div className="grow" style={{ minWidth: 200 }}><div className="small muted">{e.visit ? (e.visit.reachedAt ? `At the client since ${hm(e.visit.reachedAt)}` : `On the way to the client · left at ${hm(e.start)}`) : e.trip ? `On the way back to the office · left ${e.trip.from || 'the client'} at ${hm(e.start)}` : `${e.out ? 'Out of office' : e.brk ? 'On a break' : 'Working on now'} · since ${hm(e.start)}`}</div>
+      <div><b>{e.brk && !e.out ? 'Break' : e.visit ? e.visit.client : e.text}</b>{e.kind && !e.brk && <> <Pill k="info">{e.kind}</Pill></>}</div>
+      {e.out && <div className="small">Your manager and management see you as Out of office until you {e.visit ? 'end the visit' : 'press Finish or start your next task'}.</div>}</div>
     <span className="clock" aria-label="Time so far">{two(Math.floor(sec / 3600))}:{two(Math.floor(sec / 60) % 60)}:{two(sec % 60)}</span>
-    {onFinish && <button className="btn primary" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}
+    {onFinish && (e.trip ? <button className="btn primary" type="button" onClick={() => askVisit('back')}>I am back at the office</button> : e.visit ? (e.visit.reachedAt ? <button className="btn primary" type="button" onClick={() => askVisit('outcome')}>I am leaving the client</button>
+      : <button className="btn primary" type="button" onClick={() => askVisit('reached')}>I have reached</button>)
+      : <button className="btn primary" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>)}
   </m.div>;
 }
 function Editor({ date, r }) {
@@ -322,8 +350,10 @@ function Editor({ date, r }) {
   const [text, setText] = useState(''), [proj, setProj] = useState(''), [busy, setBusy] = useState(false), [mins, setMins] = useState(''), [from, setFrom] = useState('');
   const lastEnd = r ? (r.entries || []).reduce((m, e) => Math.max(m, bounds(e)[1]), r.dayStart ? new Date(r.dayStart).getTime() : 0) : 0, fromV = from || (lastEnd ? hm24(lastEnd) : '');
   const running = r?.entries?.find((e) => e.state === 'running'), onBreak = !!running?.brk;
+  // A client visit ends only with its outcome: starting something else first asks how the visit went.
+  const visitOpen = () => { if (!running?.visit || running.visit.outcome) return false; toast(`First tell how the visit to ${running.visit.client} went.`, true); askVisit('outcome'); return true; };
   const types = typesFor(me.team), [kind, setKind] = useState('');
-  const isVisit = /visit/i.test(kind), visitOk = !isVisit || (vis.client.trim() && vis.person.trim() && vis.phone.trim() && vis.place.trim());
+  const isVisit = /visit/i.test(kind), visitOk = !isVisit || (vis.client.trim() && vis.place.trim()); // the person and number can be added before the visit ends
   const [dial, setDial] = useState(false), [away, setAway] = useState(false), [perm, setPerm] = useState(null), [late, setLate] = useState(false); // the calling window; "I will be out of the office"; a permission to go out; adding a task that is already over
   const [step, setStep] = useState('day'), sales = me.team === 'sales' && !!r; // the three steps of the report: my day, my calls, finish my day
   const [other, setOther] = useState(''), isOther = /^other$/i.test(kind), kindV = isOther && other.trim() ? `Other – ${other.trim()}` : kind; // "Other" must say what it is
@@ -339,24 +369,25 @@ function Editor({ date, r }) {
   const closeRunning = (list) => list.map((x) => (x.state === 'running' ? { ...x, state: 'done', end: new Date().toISOString(), mins: Math.max(1, Math.round((Date.now() - new Date(x.start)) / 60000)) } : x));
   // Two ways to add a task: start it now and press Finish later (the app works out the time), or add one already done with its minutes.
   async function add(now) {
-    const t = text.trim(); if (!ready || busy || (!now && !timed)) return; setBusy(true);
+    const t = text.trim(); if (!ready || busy || (!now && !timed) || (now && visitOpen())) return; setBusy(true);
     const at = new Date().toISOString(), st = now ? 0 : new Date(`${date}T${fromV}:00`).getTime(), m2 = Math.round(+mins);
     const line = { id: Math.random().toString(36).slice(2, 10), at, text: t, kind: kindV, ...(now ? { state: 'running', start: at } : { mins: m2, start: new Date(st).toISOString(), end: new Date(st + m2 * 60000).toISOString() }), ...(isVisit ? { visit: vis, proj: vis.client.trim() } : proj.trim() ? { proj: proj.trim() } : {}), ...(isVisit || (isOther && away) ? { out: true } : {}) };
     if (await attempt(() => save({ ...f, entries: [...(now ? closeRunning(r?.entries || []) : r?.entries || []), line] }), now ? 'Task started. The earlier task is closed.' : 'Task added.')) { setText(''); setMins(''); setFrom(''); setProj(''); setOther(''); setAway(false); setKind(''); setLate(false); setVis({ client: '', person: '', phone: '', place: '' }); }
     setBusy(false);
   }
   const change = (id, fn, ok) => attempt(() => update(r.id, { ...f, entries: r.entries.map((x) => (x.id === id ? fn(x) : x)) }), ok);
-  const finish = (id) => change(id, (x) => ({ ...x, state: 'done', end: new Date().toISOString(), mins: Math.max(1, Math.round((Date.now() - new Date(x.start)) / 60000)) }), 'Task finished. Time saved.');
+  const finish = (id) => visitOpen() || change(id, (x) => ({ ...x, state: 'done', end: new Date().toISOString(), mins: Math.max(1, Math.round((Date.now() - new Date(x.start)) / 60000)) }), 'Task finished. Time saved.');
   const fix = (id, m2) => change(id, (x) => { const n = Math.max(1, Math.round(m2)), st = bounds(x)[0]; return { ...x, mins: n, start: new Date(st).toISOString(), end: new Date(st + n * 60000).toISOString() }; }, 'Time corrected.');
   const remark = (id, note) => change(id, (x) => ({ ...x, note }), 'Remark saved.');
-  const startBreak = () => { const now = new Date().toISOString(); return attempt(() => save({ ...f, entries: [...closeRunning(r?.entries || []), { id: Math.random().toString(36).slice(2, 10), at: now, text: 'Break', kind: 'Break', brk: true, state: 'running', start: now }] }), 'Break started. Press Finish when you are back.'); };
+  const startBreak = () => { if (visitOpen()) return; const now = new Date().toISOString(); return attempt(() => save({ ...f, entries: [...closeRunning(r?.entries || []), { id: Math.random().toString(36).slice(2, 10), at: now, text: 'Break', kind: 'Break', brk: true, state: 'running', start: now }] }), 'Break started. Press Finish when you are back.'); };
   const startDay = () => attempt(() => create('report', { date }), 'Your day has started. Add each task as you take it up.');
   // Going out with permission (personal work, bank …): shown to the manager and management as Out of office and not counted as work time.
-  const goOut = async () => { const now = new Date().toISOString(), why = perm.trim(); if (why.length < 3) return;
+  const goOut = async () => { const now = new Date().toISOString(), why = perm.trim(); if (why.length < 3 || visitOpen()) return;
     if (await attempt(() => save({ ...f, entries: [...closeRunning(r?.entries || []), { id: Math.random().toString(36).slice(2, 10), at: now, text: why, kind: 'Out of office', brk: true, out: true, state: 'running', start: now }] }), 'You are shown as Out of office. Press Finish when you are back.')) setPerm(null); };
   // Choosing "Calling" starts the calling time by itself and opens my calling list.
   const pickKind = async (t) => {
     if (me.team !== 'sales' || !/^calling$/i.test(t) || !r || date !== today()) return setKind(kind === t ? '' : t);
+    if (visitOpen()) return;
     if (!(r.entries || []).some((e) => e.state === 'running' && /^calling$/i.test(e.kind || ''))) { const now = new Date().toISOString();
       await attempt(() => save({ ...f, entries: [...closeRunning(r.entries || []), { id: Math.random().toString(36).slice(2, 10), at: now, text: 'Calling clients from my calling list', kind: t, state: 'running', start: now }] }), 'Calling time started. Pick the client you are calling.'); }
     setKind(''); setStep('calls'); setDial(true); };
@@ -393,8 +424,8 @@ function Editor({ date, r }) {
             {isVisit && <div className="panel stack gap4">
               <span className="lbl">Client visit – who are you visiting? (all four are needed)</span>
               <div className="row"><input className="in" style={{ flex: '2 1 200px' }} value={vis.client} onChange={upV('client')} placeholder="Client / business name" maxLength={120} />
-                <input className="in" style={{ flex: '1 1 160px' }} value={vis.person} onChange={upV('person')} placeholder="Person you are meeting" maxLength={80} />
-                <input className="in" style={{ flex: '1 1 130px' }} value={vis.phone} onChange={upV('phone')} placeholder="Their contact no." inputMode="tel" maxLength={40} />
+                <input className="in" style={{ flex: '1 1 160px' }} value={vis.person} onChange={upV('person')} placeholder="Person you are meeting (can add later)" maxLength={80} />
+                <input className="in" style={{ flex: '1 1 130px' }} value={vis.phone} onChange={upV('phone')} placeholder="Their contact no. (can add later)" inputMode="tel" maxLength={40} />
                 <input className="in" style={{ flex: '1 1 160px' }} value={vis.place} onChange={upV('place')} placeholder="Place / address" maxLength={120} /></div>
               <span className="small muted">In the task box above, write the purpose of the visit. When you are back, press “Add outcome” on the visit to write what was decided.</span></div>}
             {(isVisit || (isOther && away)) && <span className="small muted">While this task runs, your manager and management see you as <b>Out of office</b>.</span>}
@@ -437,30 +468,32 @@ function Entries({ r, onDrop, onFinish, onFix, onNote }) {
   const [edit, setEdit] = useState(null), [rem, setRem] = useState(null), d = dayLine(r), mark = { padding: '6px 12px', fontSize: 12.5 };
   if (!r || (!d.rows.length && !r.dayStart)) return <p className="muted small" style={{ margin: 0 }}>No tasks yet.</p>;
   return <div className="list">
-    {r.dayStart && <div className="li" style={mark}><span className="num muted" style={{ width: 132, flex: 'none' }}>{hm(d.start)}</span><b>Day started</b></div>}
+    {r.dayStart && <div className="li tl" style={mark}><span className="num muted tl-t" style={{ width: 132, flex: 'none' }}>{hm(d.start)}</span><b>Day started</b></div>}
     {d.rows.map((x, i) => { const dur = Math.round((x.en - x.s) / 60000);
-      if (x.gap) return <div className="li" key={'g' + i} style={{ ...mark, background: 'var(--bad-bg)', color: 'var(--bad)' }}><span className="num" style={{ width: 132, flex: 'none' }}>{hm(x.s)} – {x.tail ? 'now' : hm(x.en)}</span><span className="grow">Nothing recorded</span><span className="num">{fmtMins(dur)}</span></div>;
+      if (x.gap) return <div className="li tl" key={'g' + i} style={{ ...mark, background: 'var(--bad-bg)', color: 'var(--bad)' }}><span className="num tl-t" style={{ width: 132, flex: 'none' }}>{hm(x.s)} – {x.tail ? 'now' : hm(x.en)}</span><span className="grow">Nothing recorded</span><span className="num">{fmtMins(dur)}</span></div>;
       const e = x.e, run = e.state === 'running';
-      return <div className="li" key={e.id} style={{ padding: '7px 12px', background: run ? 'var(--warn-bg)' : '' }}>
-        <span className="num small muted" style={{ width: 118, flex: 'none' }}>{hm(x.s)} – {run ? 'now' : hm(x.en)}</span>
-        <div className="grow">{e.brk ? (e.out ? <><Pill k="warn">Out of office</Pill> {e.text}</> : <Pill>Break</Pill>) : <>{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.out && <><Pill k="warn">Out of office</Pill> </>}{e.text}{e.proj && !e.visit && <> <Pill k="gold">{e.proj}</Pill></>}{e.visit && <div className="small"><b>Client:</b> {e.visit.client} · <b>Met:</b> {e.visit.person} · <span className="num">{e.visit.phone}</span> · {e.visit.place}</div>}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</>}
+      return <div className="li tl" key={e.id} style={{ padding: '7px 12px', background: run ? 'var(--warn-bg)' : '' }}>
+        <span className="num small muted tl-t" style={{ width: 118, flex: 'none' }}>{hm(x.s)} – {run ? 'now' : hm(x.en)}</span>
+        <div className="grow tl-b">{e.brk ? (e.out ? <><Pill k="warn">Out of office</Pill> {e.text}</> : <Pill>Break</Pill>) : <>{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.out && <><Pill k="warn">Out of office</Pill> </>}{e.text}{e.proj && !e.visit && <> <Pill k="gold">{e.proj}</Pill></>}{e.visit && <div className="small"><b>Client:</b> {e.visit.client} · <b>Met:</b> {e.visit.person} · <span className="num">{e.visit.phone}</span> · {e.visit.place}
+            {(e.visit.reachedAt || e.visit.leftAt) && <div className="muted">{e.visit.reachedAt ? `Reached ${hm(e.visit.reachedAt)}` : 'Reaching time not marked'}{e.visit.leftAt ? ` · left ${hm(e.visit.leftAt)}` : ''}</div>}
+            {e.visit.outcome && <div><Pill k={e.visit.outcome === 'Deal accepted' ? 'ok' : e.visit.outcome === 'Not interested' ? 'bad' : 'warn'}>{e.visit.outcome}</Pill>{e.visit.next ? <span className="muted"> · follow up {fmtDate(e.visit.next)}</span> : ''}</div>}</div>}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</>}
           {rem?.id === e.id ? <div className="row" style={{ marginTop: 4 }}><input className="in grow" value={rem.v} onChange={(ev) => setRem({ id: e.id, v: ev.target.value })} placeholder="Result, issue or remark" maxLength={300} autoFocus /><button className="btn sm" type="button" onClick={() => { onNote(e.id, rem.v.trim()); setRem(null); }}>Save</button></div>
             : e.note ? <div className="small muted">{e.visit ? 'Outcome' : 'Remark'}: {e.note}</div> : null}</div>
-        {run ? <><Pill k="warn">{e.out ? 'Out of office' : e.brk ? 'On break' : 'In progress'} · {fmtMins(dur)} so far</Pill>{onFinish && <button className="btn primary sm" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}</>
+        <div className="tl-e">{run ? <><Pill k="warn">{e.out ? 'Out of office' : e.brk ? 'On break' : 'In progress'} · {fmtMins(dur)} so far</Pill>{onFinish && <button className="btn primary sm" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}</>
           : edit?.id === e.id ? <><input className="in" style={{ width: 80 }} type="number" min="1" max="1440" value={edit.v} onChange={(ev) => setEdit({ id: e.id, v: ev.target.value })} aria-label="Minutes" autoFocus />
               <button className="btn sm" type="button" disabled={!(+edit.v > 0)} onClick={() => { onFix(e.id, +edit.v); setEdit(null); }}>Save</button></>
             : <>{!e.brk && <Pill k="ok">Done</Pill>}<span className="num small" style={{ minWidth: 64, textAlign: 'right' }}>{fmtMins(e.mins || dur)}</span>
-              {onFix && <button className="btn ghost sm" type="button" title="Use this if you forgot to press Finish on time" onClick={() => setEdit({ id: e.id, v: e.mins || dur || '' })}>Fix time</button>}</>}
-        {onNote && !e.brk && <button className="btn ghost sm" type="button" onClick={() => setRem({ id: e.id, v: e.note || '' })}>{e.visit ? (e.note ? 'Edit outcome' : 'Add outcome') : e.note ? 'Edit remark' : 'Add remark'}</button>}
-        {onDrop && <button className="btn ghost sm" type="button" aria-label="Remove this line" onClick={() => onDrop(e.id)}>Remove</button>}</div>; })}
-    {r.dayEnd && <div className="li" style={mark}><span className="num muted" style={{ width: 132, flex: 'none' }}>{hm(d.end)}</span><b>Day ended</b></div>}
+              {onFix && <button className="btn ghost sm" type="button" title="Use this if you forgot to press Finish on time" onClick={() => setEdit({ id: e.id, v: e.mins || dur || '' })}>Fix time</button>}</>}</div>
+        {(onNote || onDrop) && <div className="tl-a">{onNote && !e.brk && <button className="btn ghost sm" type="button" onClick={() => setRem({ id: e.id, v: e.note || '' })}>{e.visit ? (e.note ? 'Edit outcome' : 'Add outcome') : e.note ? 'Edit remark' : 'Add remark'}</button>}
+          {onDrop && <button className="btn ghost sm" type="button" aria-label="Remove this line" onClick={() => onDrop(e.id)}>Remove</button>}</div>}</div>; })}
+    {r.dayEnd && <div className="li tl" style={mark}><span className="num muted tl-t" style={{ width: 132, flex: 'none' }}>{hm(d.end)}</span><b>Day ended</b></div>}
   </div>;
 }
 const Remarks = ({ r }) => <div className="stack gap4">{r.remarks.map((x, i) => <div className="comment" key={i}><div className="row between small"><b>{uname(x.by)}</b><span className="faint">{fmtDT(x.at)}</span></div>{x.text}</div>)}</div>;
 
 // ---------- manager and top-management view ----------
 function Team() {
-  const me = store.me, [date, setDate] = useState(today()), [team, setTeam] = useState('all'), [view, setView] = useState('day'), [open, setOpen] = useState('');
+  const me = store.me, [date, setDate] = useState(today()), [team, setTeam] = useState('all'), [view, setView] = useState('day'), [open, setOpen] = useState(''), [full, setFull] = useState(true); // full: the detailed team message
   const people = watched(me).filter((u) => team === 'all' || u.team === team).sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name));
   const rows = people.map((u) => ({ u, r: reportOf(u.id, date) }));
   const n = (f) => rows.filter(f).length;
@@ -484,8 +517,11 @@ function Team() {
     {me.title === 'ops' && <label className="check card" style={{ marginBottom: 12 }}><input type="checkbox" checked={!!settings().leadSeesReports}
       onChange={(e) => attempt(() => saveSetting('leadSeesReports', e.target.checked), e.target.checked ? "On: the IT Team Lead can now read the developers' reports." : "Off: only the IT Manager and top management read the developers' reports.")} />
       <span><b>IT Team Lead can read the developers' daily reports</b><br /><span className="small muted">Off for now. Switch it on when the IT team grows. The Team Lead can read and remark; review and send-back stay with the IT Manager.</span></span></label>}
-    {rows.length > 0 && isTop(me) && <div className="card" style={{ marginBottom: 12 }}><WaSend text={teamText(rows, date, team === 'all' ? (isTop(me) ? 'All departments' : TEAMS[me.team] + ' team') : TEAMS[team] + ' team')} to={management(me)} title={`Send the ${dayName(date).toLowerCase()} team report on WhatsApp to`} />
-      <span className="small muted">One tap opens WhatsApp with the report typed in; you press send. Sending by itself every evening needs a WhatsApp Business account (Settings → Connections).</span></div>}
+    {rows.length > 0 && isTop(me) && (() => { const text = teamText(rows, date, team === 'all' ? (isTop(me) ? 'All departments' : TEAMS[me.team] + ' team') : TEAMS[team] + ' team', full);
+      return <div className="card stack gap4" style={{ marginBottom: 12 }}><div className="row"><span className="lbl">Team report message</span><Seg value={full} onChange={setFull} options={[[true, 'Detailed'], [false, 'Short']]} /></div>
+        <WaSend text={text} to={management(me)} title={`Send the ${dayName(date).toLowerCase()} team report on WhatsApp to`} />
+        {text.length > 5000 && <span className="small" style={{ color: 'var(--warn)' }}>This message is long. If WhatsApp opens without it, press “Copy the message” and paste it in the chat.</span>}
+        <span className="small muted">One tap opens WhatsApp with the report typed in; you press send. Sending by itself every evening needs a WhatsApp Business account (Settings → Connections).</span></div>; })()}
     {!rows.length && <Empty>No people in this view. Add people in Settings → People.</Empty>}
     {view === 'week' ? <Week people={people} end={date} pick={(d, id) => { setDate(d); setView('day'); setOpen(id); }} />
       : <div className={isTop(me) ? 'stack gap16' : 'split'}>

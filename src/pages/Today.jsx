@@ -6,6 +6,7 @@ import { Seg, Pill, Due, Avs, Empty, Sample, Stat, attempt } from '../ui.jsx';
 import { Reveal, Ring, m, EASE } from '../motion.jsx';
 import { Ico } from '../icons.jsx';
 import { openGuide } from '../guide.jsx';
+import { openVisitNow } from '../visit.jsx';
 
 // The dashboard: the numbers that matter to this person's role, each one a link to its page.
 // It is built from what the person is allowed to see, so a BDE gets their own numbers, a manager the team's, management the whole group's.
@@ -67,6 +68,7 @@ function Hero() {
       <div className="acts-row">
         {writes && rep?.status !== 'submitted' && <Link className="btn primary" to="/daily"><Ico k="play" size={15} />{rep ? 'Continue my report' : 'Start my day'}</Link>}
         {caller && rep && rep.status !== 'submitted' && <Link className="btn" to="/daily" state={{ dial: true }}><Ico k="calls" size={16} />Open my calling list</Link>}
+        {me.team === 'sales' && writes && rep?.status !== 'submitted' && <button className="btn" type="button" onClick={openVisitNow}><Ico k="door" size={16} />Client visit now</button>}
         {mgr && <Link className="btn" to="/daily"><Ico k="daily" size={16} />{top ? 'Read today’s reports' : 'My team’s reports'}</Link>}
         {can('reports') && <Link className="btn" to="/reports"><Ico k="reports" size={16} />Full reports</Link>}
       </div></div>

@@ -10,6 +10,7 @@ import { Ico } from './icons.jsx';
 import { Search, openSearch } from './search.jsx';
 import { Guide } from './guide.jsx';
 import { Popups } from './popups.jsx';
+import { VisitPrompt } from './visit.jsx';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
 const Leads = lazy(() => import('./pages/Leads.jsx'));
@@ -40,12 +41,18 @@ function liftSplash() {
   const el = document.getElementById('splash'); if (!el || el.dataset.going) return; el.dataset.going = '1';
   setTimeout(() => { el.classList.add('up'); setTimeout(() => el.remove(), 950); }, Math.max(0, 900 - performance.now()));
 }
+// The practice copy of Aali One (the test site) says so on every screen, so nobody does real work there by mistake.
+function TestSite() {
+  const [on, setOn] = useState(false);
+  useEffect(() => { fetch('/api/health').then((r) => r.json()).then((j) => { if (j.test) { setOn(true); document.title = 'TEST · ' + document.title; } }, () => {}); }, []);
+  return on ? <><div className="testbar" role="note">TEST SITE – for practice only. Nothing done here reaches the real Aali One.</div><span className="testbadge" aria-hidden="true">TEST SITE</span></> : null;
+}
 export default function App() {
   const loc = useLocation(), open = loc.pathname === '/enquire' || loc.pathname.startsWith('/p/');
   useEffect(() => { if (open) liftSplash(); }, []); // the public pages need no sign-in check
   if (loc.pathname === '/enquire') return <Motion><Suspense fallback={null}><Enquire /><Toaster /></Suspense></Motion>;
   if (loc.pathname.startsWith('/p/')) return <Motion><Suspense fallback={null}><Routes><Route path="/p/:token" element={<Progress />} /></Routes></Suspense></Motion>;
-  return <Motion><Private /></Motion>;
+  return <Motion><TestSite /><Private /></Motion>;
 }
 // While a section is loading.
 const Waiting = () => <div className="stack" aria-busy="true" aria-label="Loading"><div className="skel" style={{ height: 38, width: 'min(340px,60%)' }} />
@@ -171,7 +178,7 @@ function Shell() {
           </AnimatePresence>
         </main>
         <ToTop />
-        <Search /><Guide /><Popups />
+        <Search /><Guide /><Popups /><VisitPrompt />
       </div>
     </div>
   );
