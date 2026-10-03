@@ -1,7 +1,7 @@
 // Collaborations of Aali Conssultancy: the colleges and employers it has tied up with. Management only.
 import { useState } from 'react';
 import { useStore, store, list, create, update } from '../api.js';
-import { isTop, fmtDate, diff, today } from '../lib.js';
+import { can, canEdit as mayEdit, fmtDate, diff, today } from '../lib.js';
 import { Tabs, Pill, Empty, Field, In, Area, Seg, Modal, Attachments, DeleteButton, Log, attempt } from '../ui.jsx';
 
 const KIND = { college: ['College', 'Colleges', 'Courses offered', 'e.g. B.Tech, MBA, Nursing'], employer: ['Employer', 'Employers', 'Roles they hire for', 'e.g. Sales executive, Accountant'] };
@@ -9,9 +9,9 @@ const BLANK = { name: '', city: '', contact: '', phone: '', email: '', offers: '
 const validity = (c) => c.status !== 'active' ? ['Ended', ''] : !c.validTill ? ['Active', 'ok'] : diff(c.validTill) < 0 ? ['Agreement expired', 'bad'] : diff(c.validTill) <= 30 ? [`Renew in ${diff(c.validTill)} days`, 'warn'] : ['Active', 'ok'];
 
 export default function Collab() {
-  useStore(); const me = store.me, canEdit = me.isAdmin || ['ops', 'cs'].includes(me.title);
+  useStore(); const canEdit = mayEdit('collab');
   const [tab, setTab] = useState('college'), [q, setQ] = useState(''), [edit, setEdit] = useState(null), [busy, setBusy] = useState(false);
-  if (!isTop(me)) return <Empty>This section is for management only.</Empty>;
+  if (!can('collab')) return <Empty>This section is for management only.</Empty>;
   const all = list('collab'), rows = all.filter((c) => c.kind === tab && (!q.trim() || `${c.name} ${c.city} ${c.offers} ${c.contact}`.toLowerCase().includes(q.trim().toLowerCase()))).sort((a, b) => a.name.localeCompare(b.name));
   const count = (k) => all.filter((c) => c.kind === k && c.status === 'active').length, soon = all.filter((c) => ['warn', 'bad'].includes(validity(c)[1]));
   const [one, many, offersLabel, offersHint] = KIND[tab], f = edit, up = (k) => (e) => setEdit({ ...f, [k]: e.target.value });

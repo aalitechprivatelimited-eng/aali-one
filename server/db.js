@@ -7,7 +7,10 @@ async function open() {
   const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
   if (url) {
     const { default: pg } = await import('pg');
-    const pool = new pg.Pool({ connectionString: url, max: 3, ssl: /localhost|127\.0\.0\.1/.test(url) || /sslmode=disable/.test(url) ? false : { rejectUnauthorized: false } });
+    // The database's certificate is checked, so nobody in between can pose as the database.
+    // (Set DB_SSL_NO_VERIFY=1 only for a private server that uses a certificate it made itself.)
+    const plain = /localhost|127\.0\.0\.1/.test(url) || /sslmode=disable/.test(url), address = url.replace(/([?&])sslmode=[^&]*&?/, '$1').replace(/[?&]$/, '');
+    const pool = new pg.Pool({ connectionString: address, max: 3, ssl: plain ? false : { rejectUnauthorized: !process.env.DB_SSL_NO_VERIFY } });
     const db = {
       query: (text, params) => pool.query(text, params),
       async tx(fn) {

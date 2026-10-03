@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore, list, get, create, update, store, http, poll } from '../api.js';
-import { settings, uname, fmtDate, today, addDays, mobile10, isManager, bdes } from '../lib.js';
-import { Modal, Field, In, Sel, Area, Pill, Due, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, attempt, toast, Seg } from '../ui.jsx';
+import { settings, uname, fmtDate, today, addDays, mobile10, isManager, canEdit, scope } from '../lib.js';
+import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, attempt, toast, Seg, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
 import { Activities } from '../activity.jsx';
 import { useId } from '../App.jsx';
 
@@ -17,22 +17,22 @@ export default function Leads() {
 
 function LeadList() {
   const nav = useNavigate();
-  const [f, setF] = useState({ q: '', status: 'open', source: '', owner: '', score: '' }), [add, setAdd] = useState(false), [imp, setImp] = useState(false);
+  const [f, setF] = useState({ q: '', status: 'open', source: '', owner: '', company: '', score: '' }), [add, setAdd] = useState(false), [imp, setImp] = useState(false);
   const rows = list('lead').filter((l) => (f.status === 'open' ? !['converted', 'junk'].includes(l.status) : !f.status || l.status === f.status)
-    && (!f.source || l.source === f.source) && (!f.owner || l.owner === f.owner) && (!f.score || l.score === f.score)
+    && (!f.source || l.source === f.source) && byTeam(l.owner, f) && (!f.score || l.score === f.score)
     && (!f.q || `${l.name} ${l.mobile} ${l.company} ${l.service}`.toLowerCase().includes(f.q.toLowerCase())))
     .sort((a, b) => (a.followUp || '9').localeCompare(b.followUp || '9'));
-  const up = (k) => (v) => setF({ ...f, [k]: v?.target ? v.target.value : v });
+  const up = (k) => (v) => setF({ ...f, [k]: v?.target ? v.target.value : v }), edit = canEdit('leads'), own = scope('leads') === 'own';
   return (
     <>
-      <div className="topbar"><h1>Leads & enquiries <small>{rows.length} shown</small></h1>
-        <div className="row"><a className="btn" href="/enquire" target="_blank" rel="noreferrer">Website form ↗</a><button className="btn" type="button" onClick={() => setImp(true)}>Import from Excel</button><button className="btn primary" type="button" onClick={() => setAdd(true)}>+ New enquiry</button></div></div>
+      <div className="topbar"><h1>{own ? 'My leads & enquiries' : 'Leads & enquiries'} <small>{rows.length} shown</small> <ViewOnly when={!edit} /></h1>
+        <div className="row"><a className="btn" href="/enquire" target="_blank" rel="noreferrer">Website form ↗</a>{edit && <button className="btn" type="button" onClick={() => setImp(true)}>Import from Excel</button>}{edit && <button className="btn primary" type="button" onClick={() => setAdd(true)}>+ New enquiry</button>}</div></div>
       <div className="row" style={{ marginBottom: 12 }}>
         <In placeholder="Search name, mobile, company, service" value={f.q} onChange={up('q')} style={{ maxWidth: 280 }} />
         <Sel value={f.status} onChange={up('status')} options={[['open', 'Open leads'], ...Object.entries(STATUS)]} blank="All statuses" style={{ width: 'auto' }} />
         <Sel value={f.source} onChange={up('source')} options={settings().sources} blank="All sources" style={{ width: 'auto' }} />
         <Sel value={f.score} onChange={up('score')} options={[['hot', 'Hot'], ['warm', 'Warm'], ['cold', 'Cold']]} blank="Any score" style={{ width: 'auto' }} />
-        <Person value={f.owner} onChange={up('owner')} blank="All BDEs" filter={(u) => u.team === 'sales'} />
+        {!own && <TeamFilter value={f} onChange={(v) => setF({ ...f, ...v })} />}
       </div>
       {rows.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Service</th><th>Source</th><th>Score</th><th>BDE</th><th>Follow-up</th><th>Status</th></tr></thead><tbody>
         {rows.map((l) => <tr key={l.id} className="click" onClick={() => nav('/leads/' + l.id)}>
@@ -51,15 +51,23 @@ export function NewEnquiry({ onClose, preset = {} }) {
   const nav = useNavigate(), [f, setF] = useState({ source: 'Walk-in', ...preset }), [busy, setBusy] = useState(false);
   const up = (k) => (v) => setF({ ...f, [k]: v?.target ? v.target.value : v });
   const m = mobile10(f.mobile), existing = m.length === 10 ? [...list('lead'), ...list('deal')].filter((r) => r.mobile10 === m) : [];
+  // One business, one caller: ask the call register about this number (it is with another BDE, or on the Do Not Call list).
+  const [chk, setChk] = useState(null), stop = !!chk && !chk.ok && ['held', 'dnc'].includes(chk.kind);
+  useEffect(() => {
+    if (m.length !== 10) return setChk(null);
+    let live = true; const h = setTimeout(() => http('POST', '/prospects/check', { items: [{ phone: m, org: f.company || f.name || '', dupOk: true }] }).then((x) => live && setChk(x.results[0]), () => {}), 500);
+    return () => { live = false; clearTimeout(h); };
+  }, [m]);
   async function save() {
     setBusy(true); const r = await attempt(() => create('lead', f)); setBusy(false); if (!r) return;
+    if (r.hidden) { toast(`This mobile + service is already an open lead with ${uname(r.record.owner)}. Your enquiry was added to it as a repeat.`); return onClose(); }
     if (r.merged) toast(`Same mobile + same service is already open with ${uname(r.record.owner)}. Added as a repeat enquiry.`);
     else toast(r.record.existingClient ? `Existing client – given to ${uname(r.record.owner)}.` : `New lead given to ${uname(r.record.owner)}.`);
     onClose(); nav(`/${r.record.type === 'deal' ? 'deals' : 'leads'}/${r.record.id}`);
   }
   return (
     <Modal title="New enquiry" onClose={onClose} footer={<><span className="small muted">Same mobile + same service joins the existing lead. A known client asking for a new service goes to their BDE. Others go to BDEs in turn.</span>
-      <button className="btn primary" type="button" disabled={busy} onClick={save}>Save enquiry</button></>}>
+      <button className="btn primary" type="button" disabled={busy || (stop && scope('leads') === 'own')} onClick={save}>Save enquiry</button></>}>
       <div className="form">
         <Field label="Name *"><In value={f.name || ''} onChange={up('name')} autoFocus /></Field>
         <Field label="Mobile *"><In type="tel" value={f.mobile || ''} onChange={up('mobile')} placeholder="98765 43210" /></Field>
@@ -68,6 +76,7 @@ export function NewEnquiry({ onClose, preset = {} }) {
         <Field label="Company"><In value={f.company || ''} onChange={up('company')} /></Field>
         <Field label="Email"><In type="email" value={f.email || ''} onChange={up('email')} /></Field>
         <Field label="Message / requirement" full><Area value={f.message || ''} onChange={up('message')} /></Field>
+        {stop && <div className="banner bad full">{chk.msg}</div>}
         {existing.length > 0 && <div className="banner info full">This mobile is already known: {existing.map((e) => `${e.name || e.title} (${e.service || ''}, ${uname(e.owner)})`).join('; ')}.</div>}
       </div>
     </Modal>
@@ -99,13 +108,14 @@ function ImportLeads({ onClose }) {
 function LeadView({ id }) {
   const nav = useNavigate(), l = get(id), [conv, setConv] = useState(false);
   if (!l) return <Empty>This lead was not found. <Link to="/leads">Back to leads</Link></Empty>;
-  const set = (data, ok) => attempt(() => update(id, data), ok);
+  const set = (data, ok) => attempt(() => update(id, data), ok), edit = canEdit('leads'), own = scope('leads') === 'own';
   return (
     <>
-      <div className="topbar"><h1>{l.name} <small>{l.service} · {l.source}</small></h1>
+      <div className="topbar"><h1>{l.name} <small>{l.service} · {l.source}</small> <ViewOnly when={!edit} /></h1>
         <div className="row"><Link className="btn" to="/leads">All leads</Link>
-          {l.status !== 'converted' && <button className="btn primary" type="button" onClick={() => setConv(true)}>Convert to client + deal</button>}
+          {edit && l.status !== 'converted' && <button className="btn primary" type="button" onClick={() => setConv(true)}>Convert to client + deal</button>}
           {l.status === 'converted' && l.dealId && <Link className="btn primary" to={'/deals/' + l.dealId}>Open deal</Link>}</div></div>
+      <RO when={!edit}>
       {l.repeatPending && <div className="banner" style={{ marginBottom: 14 }}>
         <b>This client asked again about {l.service}.</b> Ask them whether it is about the earlier enquiry or a new requirement:
         <div style={{ margin: '8px 0' }}><Message phone={l.mobile} defaultId="tp-repeat" vars={{ client: l.name.split(' ')[0], service: l.service }} /></div>
@@ -123,7 +133,7 @@ function LeadView({ id }) {
             <Field label="Email"><In defaultValue={l.email} onBlur={(e) => set({ email: e.target.value })} /></Field>
             <Field label="Service"><Sel value={l.service} onChange={(v) => set({ service: v })} options={services()} /></Field>
             <Field label="Source"><Sel value={l.source} onChange={(v) => set({ source: v })} options={settings().sources} /></Field>
-            <Field label="BDE"><Person value={l.owner} onChange={(v) => set({ owner: v, _note: `Lead given to ${uname(v)}` }, 'Reassigned.')} filter={(u) => u.team === 'sales'} /></Field>
+            <Field label="BDE" hint={own ? 'Only the Sales Manager can give a lead to someone else.' : ''}><Person value={l.owner} disabled={own} onChange={(v) => set({ owner: v, _note: `Lead given to ${uname(v)}` }, 'Reassigned.')} filter={(u) => u.team === 'sales'} /></Field>
             <Field label="Next follow-up"><In type="date" value={l.followUp || ''} onChange={(e) => set({ followUp: e.target.value })} /></Field>
             <Field label="Score"><Seg value={l.score || ''} onChange={(v) => set({ score: v })} options={[['hot', 'Hot'], ['warm', 'Warm'], ['cold', 'Cold']]} /></Field>
             <Field label="Status"><Sel value={l.status} onChange={(v) => set({ status: v })} options={STATUS} /></Field>
@@ -139,6 +149,7 @@ function LeadView({ id }) {
         <div className="card stack"><h2>Files</h2><Attachments value={l.files || []} onChange={(files) => set({ files })} /></div>
         <div className="card stack" style={{ gridColumn: '1/-1' }}><h2>History</h2><Log items={l.log} /></div>
       </div>
+      </RO>
       {conv && <Convert lead={l} onClose={() => setConv(false)} />}
     </>
   );
@@ -162,7 +173,7 @@ function Convert({ lead, onClose }) {
   return (
     <Modal title="Convert lead" onClose={onClose} footer={<button className="btn primary" type="button" onClick={go}>Convert</button>}>
       <div className="form">
-        <Field label="Client" full><Sel value={f.clientId} onChange={up('clientId')} options={clients.map((c) => [c.id, c.name])} blank="Create a new client" /></Field>
+        <Field label="Client" full><Pick value={f.clientId} onChange={up('clientId')} options={clients.map((c) => [c.id, c.name, c.city])} blank="Create a new client" /></Field>
         {!f.clientId && <Field label="New client name" full><In value={f.clientName} onChange={up('clientName')} /></Field>}
         <Field label="Deal name" full><In value={f.title} onChange={up('title')} /></Field>
         <Field label="Expected value (₹)"><In type="number" value={f.value} onChange={up('value')} /></Field>

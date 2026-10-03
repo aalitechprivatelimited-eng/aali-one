@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { useStore, list, get, create, update, store } from '../api.js';
-import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney } from '../lib.js';
+import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney, canEdit } from '../lib.js';
 import { receiptTotals, docTotals, fyLabel } from '../../shared/money.js';
-import { Modal, Field, In, Sel, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs } from '../ui.jsx';
+import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
 import { ReceiptSheet, QuoteSheet } from '../doc.jsx';
 
 export default function Payments() {
   useStore(); const p = useParams()['*'] || '', [kind, id] = p.split('/');
   if (!canMoney()) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>;
+  if (id === 'new' && !canEdit('money')) return <Empty>Your access to payments is view only. <Link to="/payments">Back</Link></Empty>;
   if (kind === 'receipt' && id) return <ReceiptEditor id={id === 'new' ? null : id} />;
   if (kind === 'invoice' && id) return <InvoiceEditor id={id === 'new' ? null : id} />;
   return <Home />;
@@ -18,15 +19,15 @@ const KINDS = [['advance', 'Advance'], ['milestone', 'Instalment'], ['final', 'F
 const REP = [['none', 'No'], ['monthly', 'Every month'], ['quarterly', 'Every 3 months'], ['half', 'Every 6 months'], ['yearly', 'Every year']];
 
 function Home() {
-  const nav = useNavigate(), [tab, setTab] = useState('collect'), [add, setAdd] = useState(false), [remind, setRemind] = useState(null), [owner, setOwner] = useState('');
-  const t = today(), month = t.slice(0, 7);
-  const open = list('payment').filter((p) => p.status !== 'paid' && (!owner || p.owner === owner)).sort((a, b) => a.due.localeCompare(b.due));
+  const nav = useNavigate(), [tab, setTab] = useState('collect'), [add, setAdd] = useState(false), [remind, setRemind] = useState(null), [tf, setTf] = useState({ owner: '', company: '' });
+  const t = today(), month = t.slice(0, 7), edit = canEdit('money');
+  const open = list('payment').filter((p) => p.status !== 'paid' && byTeam(p.owner, tf)).sort((a, b) => a.due.localeCompare(b.due));
   const bal = (p) => Math.max(0, (+p.amount || 0) - (+p.paid || 0));
   const groups = [['Overdue', open.filter((p) => p.due < t)], ['Rest of this month', open.filter((p) => p.due >= t && p.due.slice(0, 7) === month)], ['Later', open.filter((p) => p.due.slice(0, 7) > month)]];
   const receipts = list('receipt').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number)), invoices = list('invoice').sort((a, b) => (b.seq || 0) - (a.seq || 0));
   const gotMonth = receipts.filter((r) => r.date.slice(0, 7) === month).reduce((s, r) => s + (r.totals?.received || 0), 0);
   return <>
-    <div className="topbar"><h1>Payments & receipts</h1><div className="row"><button className="btn" type="button" onClick={() => setAdd(true)}>+ Payment to collect</button><Link className="btn" to="/payments/invoice/new">+ Tax invoice</Link><Link className="btn primary" to="/payments/receipt/new">+ Receipt</Link></div></div>
+    <div className="topbar"><h1>Payments & receipts <ViewOnly when={!edit} /></h1>{edit && <div className="row"><button className="btn" type="button" onClick={() => setAdd(true)}>+ Payment to collect</button><Link className="btn" to="/payments/invoice/new">+ Tax invoice</Link><Link className="btn primary" to="/payments/receipt/new">+ Receipt</Link></div>}</div>
     <div className="stats">
       <div className="stat"><span className="l">Received this month</span><span className="v">{inr(gotMonth)}</span></div>
       <div className={'stat' + (groups[0][1].length ? ' hot' : '')}><span className="l">Overdue</span><span className="v">{inr(groups[0][1].reduce((s, p) => s + bal(p), 0))}</span><span className="small muted">{groups[0][1].length} items</span></div>
@@ -34,7 +35,7 @@ function Home() {
       <div className="stat"><span className="l">Total still to collect</span><span className="v">{inr(open.reduce((s, p) => s + bal(p), 0))}</span></div>
     </div>
     <Tabs value={tab} onChange={setTab} tabs={[['collect', 'To collect'], ['receipts', `Receipts (${receipts.length})`], ['invoices', `Tax invoices (${invoices.length})`], ['clients', 'Who owes what'], ['export', 'Export for Tally / accounts']]} />
-    {tab === 'collect' && <div className="stack"><div className="row"><Person value={owner} onChange={setOwner} blank="All BDEs" filter={(u) => u.team === 'sales'} /><span className="small muted">Each BDE collects from their own clients. Record payment makes the receipt and updates the balance.</span></div>
+    {tab === 'collect' && <div className="stack"><div className="row"><TeamFilter value={tf} onChange={setTf} /><span className="small muted">Each BDE collects from their own clients. Record payment makes the receipt and updates the balance.</span></div>
       {!open.length && <Empty>Nothing to collect. Add payments from a won deal, or with “+ Payment to collect”.</Empty>}
       {groups.map(([title, rows]) => rows.length ? <section key={title}><h2 style={{ marginBottom: 8 }}>{title} <span className="num small muted">{inr(rows.reduce((s, p) => s + bal(p), 0))}</span></h2>
         <div className="list">{rows.map((p) => <div className="li" key={p.id}>
@@ -42,8 +43,8 @@ function Home() {
             <div className="row small"><Due date={p.due} /><Pill>{KINDS.find((k) => k[0] === p.kind)?.[1] || p.kind}</Pill>{p.repeat && p.repeat !== 'none' && <span className="muted">↻ {REP.find((r) => r[0] === p.repeat)?.[1]}</span>}
               <span className="muted">{uname(p.owner)}</span>{+p.paid > 0 && <span className="muted">paid {inr(p.paid)} so far</span>}<Sample on={p.sample} /></div></div>
           <b className="num">{inr(bal(p))}</b>
-          <button className="btn sm" type="button" onClick={() => setRemind(p)}>Remind client</button>
-          <Link className="btn sm primary" to={`/payments/receipt/new?payment=${p.id}`}>Record payment</Link></div>)}</div></section> : null)}</div>}
+          {edit && <button className="btn sm" type="button" onClick={() => setRemind(p)}>Remind client</button>}
+          {edit && <Link className="btn sm primary" to={`/payments/receipt/new?payment=${p.id}`}>Record payment</Link>}</div>)}</div></section> : null)}</div>}
     {tab === 'receipts' && (receipts.length ? <div className="tbl"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Mode</th><th className="n">Received</th><th className="n">Balance</th><th>By</th></tr></thead><tbody>
       {receipts.map((r) => <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b></td><td>{fmtDate(r.date)}</td><td>{r.payerName}<Sample on={r.sample} /></td><td>{r.mode}</td>
         <td className="n">{inr(r.totals?.received)}</td><td className="n">{r.totals?.balance ? inr(r.totals.balance) : '—'}</td><td>{uname(r.createdBy)}</td></tr>)}</tbody></table></div> : <Empty>No receipts yet.</Empty>)}
@@ -64,8 +65,8 @@ export function PaymentModal({ onClose, preset = {} }) {
   return <Modal title="Payment to collect" onClose={onClose} footer={<button className="btn primary" type="button" onClick={async () => (await attempt(() => create('payment', { ...p, amount: +p.amount || 0, baseAmount: +p.amount || 0 }), 'Added. It shows in Today for the BDE.')) && onClose()}>Save</button>}>
     <div className="form"><Field label="For *"><In value={p.title} onChange={up('title')} placeholder="e.g. Website maintenance fee" /></Field>
       <Field label="Type"><Sel value={p.kind} onChange={up('kind')} options={KINDS} /></Field>
-      <Field label="Client"><Sel value={p.clientId} onChange={up('clientId')} options={list('client').map((c) => [c.id, c.name])} blank="Choose…" /></Field>
-      <Field label="Deal"><Sel value={p.dealId} onChange={up('dealId')} options={list('deal').filter((d) => !p.clientId || d.clientId === p.clientId).map((d) => [d.id, d.title])} blank="None" /></Field>
+      <Field label="Client"><Pick value={p.clientId} onChange={up('clientId')} options={list('client').map((c) => [c.id, c.name, c.city])} blank="Choose…" /></Field>
+      <Field label="Deal"><Pick value={p.dealId} onChange={up('dealId')} options={list('deal').filter((d) => !p.clientId || d.clientId === p.clientId).map((d) => [d.id, d.title, clientName(d.clientId)])} blank="None" /></Field>
       <Field label="Amount (₹)"><In type="number" value={p.amount} onChange={up('amount')} /></Field><Field label="Due date"><In type="date" value={p.due} onChange={up('due')} /></Field>
       <Field label="Repeats"><Sel value={p.repeat} onChange={up('repeat')} options={REP} /></Field><Field label="BDE who collects"><Person value={p.owner} onChange={up('owner')} filter={(u) => u.team === 'sales'} /></Field>
     </div></Modal>;
@@ -115,12 +116,12 @@ function ReceiptEditor({ id }) {
     if (!saved) { toast(`Receipt ${rec.number} saved. ${r.paymentId ? 'The payment balance was updated.' : ''}`); nav('/payments/receipt/' + rec.id, { replace: true }); }
   }
   return <>
-    <div className="topbar no-print"><h1>{saved ? saved.number : 'New receipt'}</h1><div className="row"><Link className="btn" to="/payments">Payments</Link>{saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}<button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button></div></div>
+    <div className="topbar no-print"><h1>{saved ? saved.number : 'New receipt'} <ViewOnly when={!canEdit('money')} /></h1><div className="row"><Link className="btn" to="/payments">Payments</Link>{saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}{canEdit('money') && <button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
-      <div className="stack"><div className="card form">
+      <RO when={!canEdit('money')}><div className="stack"><div className="card form">
         <Field label="Date" hint={saved ? 'The date is part of the number, so it cannot change.' : ''}><In type="date" value={r.date} onChange={up('date')} disabled={!!saved} /></Field>
-        <Field label="Client"><Sel value={r.clientId} onChange={(v) => { const c = get(v); setR({ ...r, clientId: v, payerName: c?.name || r.payerName, payerPhone: c?.phone || r.payerPhone, payerAddress: c?.address || r.payerAddress, payerGstin: c?.gstin || r.payerGstin }); }} options={list('client').map((c) => [c.id, c.name])} blank="Choose…" /></Field>
-        <Field label="Payment it settles"><Sel value={r.paymentId} onChange={up('paymentId')} options={list('payment').filter((p) => p.status !== 'paid' || p.id === r.paymentId).map((p) => [p.id, `${p.title} – ${clientName(p.clientId)}`])} blank="None" disabled={!!saved} /></Field>
+        <Field label="Client"><Pick value={r.clientId} onChange={(v) => { const c = get(v); setR({ ...r, clientId: v, payerName: c?.name || r.payerName, payerPhone: c?.phone || r.payerPhone, payerAddress: c?.address || r.payerAddress, payerGstin: c?.gstin || r.payerGstin }); }} options={list('client').map((c) => [c.id, c.name, c.city])} blank="Choose…" /></Field>
+        <Field label="Payment it settles"><Pick value={r.paymentId} onChange={up('paymentId')} options={list('payment').filter((p) => p.status !== 'paid' || p.id === r.paymentId).map((p) => [p.id, p.title, clientName(p.clientId)])} blank="None" disabled={!!saved} /></Field>
         <Field label="Received from"><In value={r.payerName} onChange={up('payerName')} /></Field><Field label="Phone"><In value={r.payerPhone} onChange={up('payerPhone')} /></Field><Field label="GSTIN"><In value={r.payerGstin} onChange={up('payerGstin')} /></Field>
         <Field label="Address" full><Area value={r.payerAddress} onChange={up('payerAddress')} /></Field>
       </div>
@@ -138,7 +139,7 @@ function ReceiptEditor({ id }) {
           <Field label="UTR / transaction / cheque no."><In value={r.reference} onChange={up('reference')} /></Field><Field label="Against (quote / invoice no.)"><In value={r.against} onChange={up('against')} /></Field>
         </div>
         {saved && <div className="row"><Sample on={saved.sample} /><span className="grow" /><DeleteButton id={saved.id} needsReason after={() => nav('/payments')} /></div>}
-      </div>
+      </div></RO>
       <div className="paper-wrap"><div style={{ transform: 'scale(.72)', transformOrigin: 'top left', width: '139%' }}><ReceiptSheet r={{ ...r, number: saved?.number }} /></div></div>
     </div>
     <style>{'@media print{.paper-wrap>div{transform:none!important;width:auto!important}.grid2.no-print{display:block!important}.grid2.no-print>.stack{display:none!important}}'}</style>
@@ -161,10 +162,10 @@ function InvoiceEditor({ id }) {
     if (res && !saved) { toast(`Invoice ${res.record.number} saved.`); nav('/payments/invoice/' + res.record.id, { replace: true }); }
   }
   return <>
-    <div className="topbar no-print"><h1>{saved ? saved.number : 'New tax invoice'}</h1><div className="row"><Link className="btn" to="/payments">Payments</Link>{saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}<button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button></div></div>
+    <div className="topbar no-print"><h1>{saved ? saved.number : 'New tax invoice'} <ViewOnly when={!canEdit('money')} /></h1><div className="row"><Link className="btn" to="/payments">Payments</Link>{saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}{canEdit('money') && <button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
     <div className="banner info no-print" style={{ marginBottom: 12 }}>Tax invoice format to be confirmed by the company's CA before live use. E-invoicing (IRN) is not switched on.</div>
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
-      <div className="stack"><div className="card form">
+      <RO when={!canEdit('money')}><div className="stack"><div className="card form">
         {!saved && <Field label="Copy from quotation" full><Sel value={q.quoteId} onChange={(v) => nav('/payments/invoice/new?quote=' + v)} options={list('quote').map((x) => [x.id, `${x.number} – ${x.clientName}`])} blank="None" /></Field>}
         <Field label="Client"><In value={q.clientName || ''} onChange={up('clientName')} /></Field><Field label="GSTIN"><In value={q.gstin || ''} onChange={up('gstin')} /></Field>
         <Field label="Date"><In type="date" value={q.date} onChange={up('date')} disabled={!!saved} /></Field><Field label="Due date"><In type="date" value={q.dueDate} onChange={up('dueDate')} /></Field>
@@ -174,7 +175,7 @@ function InvoiceEditor({ id }) {
         <div className="card stack"><h3>Lines</h3>{q.items.map((it, i) => <div key={i} className="form"><Field label="Description" full><In value={it.desc} onChange={(e) => item(i, 'desc', e.target.value)} /></Field>
           <Field label="SAC"><In value={it.sac || '998314'} onChange={(e) => item(i, 'sac', e.target.value)} /></Field><Field label="Qty"><In type="number" value={it.qty} onChange={(e) => item(i, 'qty', e.target.value)} /></Field><Field label="Rate"><In type="number" value={it.rate} onChange={(e) => item(i, 'rate', e.target.value)} /></Field></div>)}
           <button className="btn sm" type="button" onClick={() => setQ({ ...q, items: [...q.items, { desc: '', qty: 1, unit: 'Nos', rate: 0, sac: '998314' }] })}>+ Line</button></div>
-        {saved && <div className="row"><span className="grow" /><DeleteButton id={saved.id} needsReason after={() => nav('/payments')} /></div>}</div>
+        {saved && <div className="row"><span className="grow" /><DeleteButton id={saved.id} needsReason after={() => nav('/payments')} /></div>}</div></RO>
       <div className="paper-wrap"><div style={{ transform: 'scale(.72)', transformOrigin: 'top left', width: '139%' }}><QuoteSheet invoice q={{ ...q, number: saved?.number }} /></div></div>
     </div>
     <style>{'@media print{.paper-wrap>div{transform:none!important;width:auto!important}.grid2.no-print{display:block!important}.grid2.no-print>.stack{display:none!important}.banner.no-print{display:none!important}}'}</style>

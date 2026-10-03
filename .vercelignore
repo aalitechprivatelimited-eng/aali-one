@@ -6,3 +6,5 @@ test
 .claude
 node_modules
 LOCAL-TEST-LOGINS.md
+.review
+e2e

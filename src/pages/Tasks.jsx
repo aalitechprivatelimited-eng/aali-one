@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useStore, list, create, update, store } from '../api.js';
-import { today, addDays, TEAMS, activeUsers, parse, MONTHS, iso } from '../lib.js';
+import { today, addDays, TEAMS, activeUsers, parse, MONTHS, iso, scope as reachOf } from '../lib.js';
 import { Seg, Sel, In, Empty, Pill, Due, attempt, toast } from '../ui.jsx';
-import { TaskModal, TaskRow, TSTATUS, PRIORITY, pTone } from '../task.jsx';
+import { TaskModal, TaskRow, TSTATUS, PRIORITY, pTone, canChange } from '../task.jsx';
 
 // Zoho ToDo: personal and team tasks, list / board / calendar views, quick add.
 export function quickParse(text) {
@@ -28,7 +28,7 @@ export default function Tasks() {
   async function quick() { const p = quickParse(q); if (!p.title) return; if (await attempt(() => create('task', { ...p, status: 'todo', team: scope.startsWith('team:') ? scope.slice(5) : '' }), `Added for ${p.due === today() ? 'today' : p.due}.`)) setQ(''); }
   return <>
     <div className="topbar"><h1>Tasks <small>{rows.length} shown</small></h1><div className="row"><Seg value={view} onChange={setView} options={[['list', 'List'], ['board', 'Board'], ['calendar', 'Calendar']]} /><button className="btn primary" type="button" onClick={() => setOpen({})}>+ Task</button></div></div>
-    <div className="row" style={{ marginBottom: 10 }}><Seg value={scope} onChange={setScope} options={[['mine', 'My tasks'], ['personal', 'Personal'], ...Object.entries(TEAMS).map(([k, l]) => ['team:' + k, l + ' team']), ['all', 'Everything']]} /></div>
+    <div className="row" style={{ marginBottom: 10 }}><Seg value={scope} onChange={setScope} options={[['mine', 'My tasks'], ['personal', 'Personal'], ...Object.entries(TEAMS).filter(([k]) => reachOf('tasks') === 'all' || k === me.team).map(([k, l]) => ['team:' + k, l + ' team']), ...(reachOf('tasks') === 'all' ? [['all', 'Everything']] : [])]} /></div>
     <div className="card row" style={{ marginBottom: 12 }}><In className="in grow" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && quick()} placeholder='Quick add: "Send report to Ravi tomorrow 5pm !high @Priya"' style={{ flex: 1 }} />
       <button className="btn" type="button" onClick={quick} disabled={!q.trim()}>Add</button><span className="small muted">Understands today, tomorrow, weekdays, times, !high and @name.</span></div>
     <div className="row" style={{ marginBottom: 12 }}><Sel value={f.status} onChange={(v) => setF({ ...f, status: v })} options={[['open', 'Not done'], ...TSTATUS]} blank="Any status" style={{ width: 'auto' }} />
@@ -36,7 +36,7 @@ export default function Tasks() {
     {!rows.length ? <Empty>No tasks here. Use quick add above.</Empty> : view === 'list' ? <div className="list">{rows.sort((a, b) => (a.status === 'done') - (b.status === 'done') || (a.due || '9').localeCompare(b.due || '9') || (a.priority === 'high' ? -1 : 1)).map((t) => <TaskRow key={t.id} t={t} onOpen={(x) => setOpen({ task: x })} />)}</div>
       : view === 'board' ? <div className="board"><div className="cols">{TSTATUS.map(([k, l]) => <div key={k} className="col" onDragOver={(e) => e.preventDefault()} onDrop={(e) => attempt(() => update(e.dataTransfer.getData('text'), { status: k }))}>
         <div className="col-h"><b>{l}<span className="num">{rows.filter((t) => t.status === k).length}</span></b></div>
-        <div className="cards">{rows.filter((t) => t.status === k).map((t) => <div key={t.id} className="kc" draggable onDragStart={(e) => e.dataTransfer.setData('text', t.id)} onClick={() => setOpen({ task: t })}>
+        <div className="cards">{rows.filter((t) => t.status === k).map((t) => <div key={t.id} className="kc" draggable={canChange(t)} onDragStart={(e) => e.dataTransfer.setData('text', t.id)} onClick={() => setOpen({ task: t })}>
           <span className="t">{t.title}</span><div className="row small">{t.due && <Due date={t.due} />}<Pill k={pTone[t.priority]}>{t.priority}</Pill></div></div>)}</div></div>)}</div></div>
       : <Week rows={rows} onOpen={(t) => setOpen({ task: t })} />}
     {open && <TaskModal task={open.task} preset={scope.startsWith('team:') ? { team: scope.slice(5) } : {}} onClose={() => setOpen(null)} />}

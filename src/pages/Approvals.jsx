@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore, list, get, update } from '../api.js';
-import { uname, fmtDT, isManager } from '../lib.js';
+import { uname, fmtDT, can } from '../lib.js';
 import { Empty, Pill, In, attempt } from '../ui.jsx';
 
 const KIND = { discount: 'Discount above the limit', earlystart: 'Start work without advance', livenosign: 'Live without client sign-off' };
 export default function Approvals() {
   useStore(); const [note, setNote] = useState({});
-  if (!isManager()) return <Empty>Only managers decide approvals.</Empty>;
+  if (!can('approvals')) return <Empty>Only managers decide approvals.</Empty>;
   const all = list('approval').sort((a, b) => b.createdAt.localeCompare(a.createdAt)), pending = all.filter((a) => a.status === 'pending');
   const link = (a) => a.relType === 'quote' ? '/quotes/' + a.relId : a.relType === 'project' ? '/projects/' + a.relId : '/';
   const decide = (a, status) => attempt(() => update(a.id, { status, decisionNote: note[a.id] || '' }), status === 'approved' ? 'Approved.' : 'Rejected.');

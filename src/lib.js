@@ -1,6 +1,7 @@
 // Small shared helpers: dates, people, labels, and the "what needs me" feed.
 import { store, list, get } from './api.js';
 import { TITLES, TEAMS, MANAGER_TITLES, TOP_TITLES, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
+import { canSee, canEdit as mayEdit, scopeOf } from '../shared/access.js';
 export { COMPANIES, GROUP };
 export { inr, inr2, num, mobile10 } from '../shared/money.js';
 export { TITLES, TEAMS };
@@ -29,8 +30,14 @@ export const myJuniors = (u = store.me) => MANAGER_ADDS[u?.title] || [];
 export const canAddPeople = (u = store.me) => !!u && (u.isAdmin || myJuniors(u).length > 0);
 // What we call a person on screen: the designation typed for them; the access level's name if none was typed.
 export const desig = (u) => (u?.designation || '').trim() || TITLES[u?.title] || '';
+// Role based level access (shared/access.js): can this person open a section, change things in it, and how far do they see.
+export const can = (section, u = store.me) => canSee(u, section);
+export const canEdit = (section, u = store.me) => mayEdit(u, section);
+export const scope = (section, u = store.me) => scopeOf(u, section);
 // Quotations, invoices, receipts and payments: the Sales Manager and management only.
-export const canMoney = (u = store.me) => !!u && (u.isAdmin || ['salesmgr', 'ops', 'cs', 'chairman', 'admin'].includes(u.title));
+export const canMoney = (u = store.me) => canSee(u, 'money');
+// "For me / My team / Everyone" buttons: only as wide as the role reaches.
+export const reach = (section, u = store.me) => { const s = scopeOf(u, section); return [['mine', 'For me'], ...(s === 'team' ? [['team', 'My team']] : s === 'all' ? [['all', 'Everyone']] : [])]; };
 export const teamOf = (id) => user(id)?.team || '';
 export const initials = (n) => (n || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 export const stageLabel = (k) => settings().pipeline.find((s) => s.key === k)?.label || k;
@@ -59,6 +66,8 @@ export function feedItems() {
   for (const x of list('project')) if (!['live', 'onhold', 'awaiting'].includes(x.stage) && x.deadline) push({ kind: 'project', id: x.id, title: `Deadline: ${x.name}`, due: x.deadline, owner: x.lead, people: x.people || [], team: 'it', link: `/projects/${x.id}`, sample: x.sample });
   for (const x of list('project')) if (!x.lead && !['live', 'onhold', 'awaiting'].includes(x.stage)) push({ kind: 'project', id: x.id + ':lead', title: `Assign a lead: ${x.name}`, due: (x.createdAt || '').slice(0, 10) || t, owner: '', team: 'it', link: `/projects/${x.id}`, sample: x.sample });
   for (const x of list('ticket')) if (x.status !== 'resolved') push({ kind: 'ticket', id: x.id, title: `${x.number} ${x.title}`, due: x.promised || (x.createdAt || '').slice(0, 10), owner: x.owner, team: 'it', priority: x.priority === 'urgent' ? 'high' : '', link: '/support', sample: x.sample });
+  // A business that asked to be called back shows on that day for the BDE who holds it, until it is called again.
+  for (const x of list('prospect')) if (x.state === 'open' && x.backOn) push({ kind: 'callback', id: x.id, title: `Call back: ${x.name || x.phone}`, due: x.backOn, owner: x.owner, team: 'sales', link: '/daily', sample: x.sample });
   return out.sort((a, b) => (a.due + (a.time || '')).localeCompare(b.due + (b.time || '')));
 }
 export function forScope(items, scope, m = store.me) {

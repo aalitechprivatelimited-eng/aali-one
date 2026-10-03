@@ -53,6 +53,12 @@ export const DEFAULT_SETTINGS = {
     it: ['Development', 'Design', 'Testing', 'Client changes', 'Support', 'Meeting', 'Team management', 'Other'],
   },
   leadSeesReports: false, // when on, the IT Team Lead can read the developers' daily reports
+  // One business, one caller (server/prospects.js). holdDays: a business stays with its BDE this long after the last call.
+  // emptyHoldDays: a number that was reserved but never called is kept this long. maxTries: unanswered calls in a row before everyone must stop.
+  calling: { holdDays: 15, emptyHoldDays: 2, maxTries: 3 },
+  listSources: ['Google Maps', 'Instagram', 'Facebook', 'LinkedIn', 'Justdial', 'Referral', 'Walk-in', 'Other'], // where a BDE's calling list came from
+  industries: ['School / college', 'Hospital / clinic', 'Pharmacy', 'Hotel / restaurant', 'Retail shop', 'Textiles / garments', 'Real estate / builder', 'Manufacturing', 'Hostel / PG',
+    'Salon / beauty', 'Gym / fitness', 'Jewellery', 'Automobile', 'Travel / transport', 'Finance / insurance', 'Professional services', 'Government / NGO', 'Other'],
   escalateDays: 3,
   templates: [
     { id: 'tp-first', name: 'First follow-up', text: 'Hi {client}, this is {me} from Aali Conssultancy. Thank you for your enquiry about {service}. When is a good time to talk?' },

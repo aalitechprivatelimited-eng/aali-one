@@ -1,12 +1,15 @@
 // Daily work reports: everyone writes their day as it happens; the department manager and top management watch it live.
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useStore, store, list, create, update, poll, saveSetting } from '../api.js';
-import { today, addDays, fmtDate, fmtDT, iso, parse, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings, desig, user, mobile10 } from '../lib.js';
-import { Tabs, Seg, Pill, Av, Empty, Field, In, Area, Sel, Sample, DeleteButton, attempt, toast } from '../ui.jsx';
+import { Link, useLocation } from 'react-router-dom';
+import { useStore, store, list, create, update, poll, saveSetting, http } from '../api.js';
+import { m, AnimatePresence, SPRING, EASE } from '../motion.jsx';
+import { Ico } from '../icons.jsx';
+import { today, addDays, fmtDate, fmtDT, iso, parse, rel, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings, desig, user, mobile10 } from '../lib.js';
+import { Tabs, Seg, Pill, Av, Empty, Field, In, Area, Sel, Sample, Stat, DeleteButton, Modal, attempt, toast } from '../ui.jsx';
+import { Check } from './Calls.jsx';
 
 // Call sheet: the responses a BDE can pick, and what counts as positive.
-const RESP = [['Interested', 'ok'], ['Call back', 'warn'], ['Not interested', ''], ['No answer', ''], ['Busy', ''], ['Not reachable', ''], ['Wrong number', '']];
+const RESP = [['Interested', 'ok'], ['Call back', 'warn'], ['Not interested', ''], ['No answer', ''], ['Busy', ''], ['Not reachable', ''], ['Wrong number', ''], ['Asked not to call', 'bad']];
 const respKind = (x) => RESP.find((r) => r[0] === x)?.[1] ?? '';
 const callStats = (r) => { const c = r?.calls || []; return { n: c.length, pos: c.filter((x) => x.resp === 'Interested').length, back: c.filter((x) => x.resp === 'Call back').length, meet: c.filter((x) => x.meeting).length, met: c.filter((x) => x.met).length }; };
 const callLine = (k) => `${k.n} call${k.n === 1 ? '' : 's'} · ${k.pos} interested · ${k.back} to call back · ${k.meet} meeting${k.meet === 1 ? '' : 's'} fixed · ${k.met} met in person`;
@@ -14,6 +17,7 @@ const callLine = (k) => `${k.n} call${k.n === 1 ? '' : 's'} · ${k.pos} interest
 function guessResp(t) {
   const x = String(t || '').toLowerCase();
   if (!x.trim()) return '';
+  if (/do\s*n.?t\s*call|dnd|stop\s*call|harass|complain/.test(x)) return 'Asked not to call';
   if (/wrong/.test(x)) return 'Wrong number';
   if (/not\s*reach|switch/.test(x)) return 'Not reachable';
   if (/busy/.test(x)) return 'Busy';
@@ -145,20 +149,25 @@ function TeamSummary({ team, date }) {
 function CallTable({ calls, onDrop }) {
   if (!calls.length) return <p className="muted small" style={{ margin: 0 }}>No calls written yet.</p>;
   return <div className="tbl"><table><thead><tr><th className="n">#</th><th>Organisation</th><th>Contact no.</th><th>Location</th><th>Response</th><th>Meeting fixed</th><th>Met</th><th>Status / remark</th>{onDrop && <th />}</tr></thead>
-    <tbody>{calls.map((c, i) => <tr key={c.id}><td className="n">{i + 1}</td><td><b>{c.org}</b></td><td className="num">{c.phone || '—'}</td><td>{c.place || '—'}</td><td>{c.resp ? <Pill k={respKind(c.resp)}>{c.resp}</Pill> : '—'}</td>
+    <tbody>{calls.map((c, i) => <tr key={c.id}><td className="n">{i + 1}</td><td><b>{c.org}</b>{c.ind && <div className="small muted">{c.ind}</div>}</td><td className="num">{c.phone || '—'}</td><td>{c.place || '—'}</td><td>{c.resp ? <Pill k={respKind(c.resp)}>{c.resp}</Pill> : '—'}{c.back && <div className="small muted">on {fmtDate(c.back)}</div>}</td>
       <td>{c.meeting || '—'}</td><td>{c.met ? 'Yes' : '—'}</td><td style={{ maxWidth: 260 }}>{c.note || '—'}</td>{onDrop && <td><button className="btn ghost sm" type="button" aria-label={`Remove ${c.org}`} onClick={() => onDrop(c.id)}>Remove</button></td>}</tr>)}</tbody></table></div>;
 }
-function CallSheet({ r, locked, save }) {
-  const blank = { org: '', phone: '', place: '', resp: '', meeting: '', met: false, note: '' };
-  const [c, setC] = useState(() => { try { return { ...blank, place: localStorage.getItem('aali-callplace') || '' }; } catch { return blank; } }), [busy, setBusy] = useState(false), [paste, setPaste] = useState(null);
-  const calls = r?.calls || [], k = callStats(r), up = (key) => (e) => setC({ ...c, [key]: e.target.value });
+function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
+  const [busy, setBusy] = useState(false), [paste, setPaste] = useState(null), [skipped, setSkipped] = useState([]), [upl, setUpl] = useState(null);
+  const calls = r?.calls || [], k = callStats(r);
   const row = (x) => ({ id: Math.random().toString(36).slice(2, 10), at: new Date().toISOString(), ...x });
-  // Was this number called before (in my own earlier reports or today)?
-  const m10 = mobile10(c.phone), before = m10.length === 10 && list('report').filter((x) => x.owner === store.me.id).flatMap((x) => (x.calls || []).map((y) => ({ ...y, date: x.date }))).find((y) => mobile10(y.phone) === m10);
-  async function add(e) {
-    e?.preventDefault(); if (!c.org.trim() || !c.resp || busy) return; setBusy(true);
-    try { localStorage.setItem('aali-callplace', c.place); } catch {}
-    if (await attempt(() => save({ calls: [...calls, row(c)] }))) setC({ ...blank, place: c.place });
+  // My calling list: the businesses kept for me that I have not called today – new ones first, then the ones to try again.
+  const doneToday = new Set(calls.map((x) => mobile10(x.phone)));
+  const kept = !locked && (!r || r.date === today()) ? list('prospect').filter((p) => p.owner === store.me.id && p.state === 'open' && !doneToday.has(p.phone10)) : [];
+  const backDue = (p) => !!p.backOn && p.backOn <= today();
+  const todo = [...kept.filter(backDue), ...kept.filter((p) => !p.tries), ...kept.filter((p) => p.tries && !backDue(p) && p.lastResp !== 'Interested')];
+  // Calls already made and kept in Excel: pasted rows are checked too; the ones another person holds, or that must not be called, are left out and listed.
+  async function addPasted() {
+    setBusy(true); const good = parsed.filter((x) => mobile10(x.phone).length === 10), none = parsed.length - good.length;
+    const res = await attempt(() => http('POST', '/prospects/check', { items: good, claim: true }));
+    if (res) { const ok = good.filter((_, i) => res.results[i].ok), no = good.map((x, i) => ({ x, v: res.results[i] })).filter((y) => !y.v.ok);
+      if (!ok.length || await attempt(() => save({ calls: [...calls, ...ok.map(row)] }), `${ok.length} call${ok.length === 1 ? '' : 's'} added.`)) {
+        setSkipped([...no.map(({ x, v }) => `${x.org} (${x.phone}) – ${v.msg}`), ...(none ? [`${none} row${none === 1 ? '' : 's'} without a 10-digit number ${none === 1 ? 'was' : 'were'} left out.`] : [])]); setPaste(null); } }
     setBusy(false);
   }
   // Rows copied from Excel: find the phone number in each row; the organisation is the cell before it, and location, response, meeting, physical meet and status follow it.
@@ -170,27 +179,83 @@ function CallSheet({ r, locked, save }) {
     return { org, phone: /\d/.test(p[i] || '') ? p[i] : '', place: p[i + 1] || '', resp, meeting: blank(p[i + 3]) ? '' : p[i + 3], met: /^(yes|y|1|met)/i.test(p[i + 4] || ''),
       note: [raw && raw.toLowerCase() !== resp.toLowerCase() ? raw : '', blank(p[i + 5]) ? '' : p[i + 5]].filter(Boolean).join(' · ') };
   }).filter(Boolean);
-  return <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
-    <div className="row between"><h3 style={{ margin: 0 }}>Call sheet <span className="small muted">one row for every call</span></h3>
+  return <>{show && <m.div className="stack" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, ease: EASE }}>
+    <div className="row between"><h3 style={{ margin: 0 }}>My calls <span className="small muted">one row for every call</span></h3>
       <div className="row small"><Pill k="gold">Calls made: {k.n}</Pill><Pill k="ok">Interested: {k.pos}</Pill><Pill k="warn">Call back: {k.back}</Pill><Pill k="gold">Meetings fixed: {k.meet}</Pill><Pill k="gold">Met in person: {k.met}</Pill></div></div>
-    {!locked && <form className="stack gap4" onSubmit={add}>
-      <div className="row"><input className="in" style={{ flex: '2 1 200px' }} value={c.org} onChange={up('org')} placeholder="Organisation / person called" maxLength={120} />
-        <input className="in" style={{ flex: '1 1 130px' }} value={c.phone} onChange={up('phone')} placeholder="Contact no." inputMode="tel" maxLength={40} />
-        <input className="in" style={{ flex: '1 1 120px' }} value={c.place} onChange={up('place')} placeholder="Location" maxLength={60} /></div>
-      {before && <div className="banner">You called this number on {fmtDate(before.date)} ({before.org}): {before.resp || 'no response written'}.</div>}
-      <div className="row"><span className="small muted">Response:</span>{RESP.map(([x]) => <button key={x} type="button" className={'chip' + (c.resp === x ? ' on' : '')} aria-pressed={c.resp === x} onClick={() => setC({ ...c, resp: x })}>{x}</button>)}</div>
-      <div className="row"><input className="in" style={{ flex: '1 1 160px' }} value={c.meeting} onChange={up('meeting')} placeholder="Meeting fixed for… (if any)" maxLength={80} />
-        <label className="check" style={{ alignItems: 'center' }}><input type="checkbox" style={{ margin: 0 }} checked={c.met} onChange={(e) => setC({ ...c, met: e.target.checked })} /> Met in person</label>
-        <input className="in" style={{ flex: '2 1 200px' }} value={c.note} onChange={up('note')} placeholder="Status / remark, e.g. wants quotation for 5 pages" maxLength={300} />
-        <button className="btn primary" type="submit" disabled={!c.org.trim() || !c.resp || busy}>Add call</button>
-        <button className="btn" type="button" onClick={() => setPaste(paste === null ? '' : null)}>{paste === null ? 'Paste from Excel' : 'Close paste'}</button></div>
-      {paste !== null && <div className="stack gap4"><span className="small muted">Copy the rows in Excel (organisation, contact no., location, response, meeting, physical meet, status) and paste them here.</span>
-        <textarea className="in" style={{ minHeight: 90, fontFamily: 'var(--num)', fontSize: 12 }} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="Paste rows here" />
-        <div className="row"><button className="btn primary sm" type="button" disabled={!parsed.length || busy} onClick={async () => { setBusy(true); if (await attempt(() => save({ calls: [...calls, ...parsed.map(row)] }), `${parsed.length} calls added.`)) setPaste(null); setBusy(false); }}>Add {parsed.length} call{parsed.length === 1 ? '' : 's'}</button>
-          {parsed.length > 0 && <span className="small muted">First row: {parsed[0].org} · {parsed[0].phone || 'no number'} · {parsed[0].resp || 'response not understood – it will be kept in the remark'}</span>}</div></div>}
-    </form>}
+    {!locked && <><div className="row"><button className="btn primary" type="button" style={{ padding: '11px 20px', fontSize: 15 }} onClick={() => setDial(true)}><Ico k="calls" size={16} />Open my calling list{todo.length ? ` · ${todo.length} to call` : ''}</button>
+      <button className="btn" type="button" onClick={() => setUpl({ text: '', res: null })}>Upload my list (Excel)</button>
+      <button className="btn ghost sm" type="button" onClick={() => setPaste(paste === null ? '' : null)}>{paste === null ? 'Paste calls I already made' : 'Close paste'}</button></div>
+      <span className="small muted">Upload the businesses you collected. When you choose “Calling” as the kind of work, your list opens: pick the client you are calling and tap what happened.</span></>}
+    {paste !== null && <div className="stack gap4"><span className="small muted">Copy the rows in Excel (organisation, contact no., location, response, meeting, physical meet, status) and paste them here.</span>
+      <textarea className="in" style={{ minHeight: 90, fontFamily: 'var(--num)', fontSize: 12 }} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="Paste rows here" />
+      <div className="row"><button className="btn primary sm" type="button" disabled={!parsed.length || busy} onClick={addPasted}>Check and add {parsed.length} call{parsed.length === 1 ? '' : 's'}</button>
+        {parsed.length > 0 && <span className="small muted">First row: {parsed[0].org} · {parsed[0].phone || 'no number'} · {parsed[0].resp || 'response not understood – it will be kept in the remark'}</span>}</div></div>}
+    {skipped.length > 0 && <div className="banner bad"><div className="row between"><b>Not added to your call sheet ({skipped.length}):</b><button className="btn ghost sm" type="button" onClick={() => setSkipped([])}>Hide</button></div>
+      <ul className="access">{skipped.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
     <CallTable calls={calls} onDrop={!locked && ((id) => attempt(() => save({ calls: calls.filter((x) => x.id !== id) })))} />
-  </div>;
+  </m.div>}
+    {upl && <Check chk={upl} setChk={setUpl} />}
+    {dial && !locked && <Dialer todo={todo} calls={calls} k={k} row={row} save={save} pickId={pickId} onClose={() => setDial(false)} onUpload={() => { setDial(false); setUpl({ text: '', res: null }); }} />}</>;
+}
+// The calling window. It opens when "Calling" is chosen as the kind of work: pick the client from my list, call, tap what happened.
+const MAIN = ['Interested', 'Call back', 'No answer', 'Not interested'], REST = ['Busy', 'Not reachable', 'Wrong number', 'Asked not to call'];
+function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
+  const none = { meeting: '', met: false, note: '', back: addDays(today(), 1) }, fresh = { org: '', phone: '', place: '', ind: '', src: '', dupOk: false };
+  const [q, setQ] = useState(''), [pick, setPick] = useState(() => todo.find((x) => x.id === pickId) || null), [resp, setResp] = useState(''), [d, setD] = useState(none), [rest, setRest] = useState(false), [busy, setBusy] = useState(false);
+  const [n, setN] = useState(null), [chk, setChk] = useState(null); // n: a number that is not in the list yet; chk: what the call register says about it
+  const text = q.trim().toLowerCase(), shown = todo.filter((p) => !text || `${p.name} ${p.phone} ${p.place} ${p.ind}`.toLowerCase().includes(text));
+  const p = pick && (todo.find((x) => x.id === pick.id) || pick), m10 = mobile10(n?.phone), named = (n?.org || '').trim().length >= 3;
+  useEffect(() => {
+    if (!n || m10.length !== 10 || !named) return setChk(null);
+    let live = true; const h = setTimeout(() => http('POST', '/prospects/check', { items: [n], claim: true }).then((x) => live && setChk(x.results[0]), () => {}), 600);
+    return () => { live = false; clearTimeout(h); };
+  }, [m10, named && n?.org.trim(), n?.place, n?.dupOk]);
+  const back = () => { setPick(null); setResp(''); setD(none); setRest(false); };
+  async function log(r2) {
+    setBusy(true);
+    const ok = await attempt(() => save({ calls: [...calls, row({ org: p.name || p.phone, phone: p.phone, place: p.place || '', ind: p.ind || '', src: p.src || '', resp: r2, meeting: d.meeting, met: d.met, note: d.note, dupOk: !!p.dupOk, ...(r2 === 'Call back' ? { back: d.back } : {}) })] }), r2 === 'Call back' ? `${p.name || p.phone}: call back on ${fmtDate(d.back)}. It will show on your dashboard that day.` : `${p.name || p.phone}: ${r2}. Written on your call sheet.`);
+    setBusy(false); if (ok) back();
+  }
+  const tap = (x) => (['Interested', 'Call back'].includes(x) ? setResp(x) : log(x)), upN = (key) => (e) => setN({ ...n, [key]: e.target.value });
+  return <Modal wide title={p ? p.name || p.phone : n ? 'A number that is not in my list' : 'Who are you calling?'} onClose={onClose} footer={<><span className="small muted">Calls today {k.n} · Interested {k.pos} · Call back {k.back}</span>
+    <div className="row">{(p || n) && <button className="btn" type="button" onClick={() => { back(); setN(null); setChk(null); }}>← Back to my list</button>}<button className="btn" type="button" onClick={onClose}>Close</button></div></>}>
+    {p ? <div className="stack">
+      <div className="row between"><div><div className="small muted">{[p.place, p.ind, p.src].filter(Boolean).join(' · ') || 'No place or industry written'}</div>
+        <div className="small muted">{p.tries ? `Called ${p.tries} time${p.tries === 1 ? '' : 's'} before, last: ${p.lastResp || 'no response written'}` : 'Not called yet'}</div></div>
+        <a className="btn primary num" style={{ fontSize: 17, padding: '10px 16px' }} href={'tel:' + p.phone.replace(/[^\d+]/g, '')}>Call {p.phone}</a></div>
+      <span className="lbl">After the call – what happened?</span>
+      <div className="bigrow">{MAIN.map((x) => <button key={x} type="button" className={'btn big' + (resp === x ? ' primary' : '')} disabled={busy} onClick={() => tap(x)}>{x}</button>)}</div>
+      {rest ? <div className="row">{REST.map((x) => <button key={x} type="button" className="chip" disabled={busy} onClick={() => tap(x)}>{x}</button>)}</div>
+        : <button className="btn ghost sm" type="button" style={{ alignSelf: 'flex-start' }} onClick={() => setRest(true)}>More: busy, not reachable, wrong number, asked not to call</button>}
+      {resp && <div className="stack gap4" style={{ background: 'var(--gold-50)', border: '1px solid var(--line-2)', borderRadius: 10, padding: 10 }}>
+        <span className="lbl">{resp} – add the details</span>
+        {resp === 'Call back' && <div className="row"><span className="small" style={{ fontWeight: 600 }}>Call back on</span>
+          {[[1, 'Tomorrow'], [2, 'In 2 days'], [7, 'Next week']].map(([n, lab]) => <button key={n} type="button" className={'chip' + (d.back === addDays(today(), n) ? ' on' : '')} aria-pressed={d.back === addDays(today(), n)} onClick={() => setD({ ...d, back: addDays(today(), n) })}>{lab}</button>)}
+          <input className="in" type="date" style={{ width: 'auto' }} min={today()} value={d.back} onChange={(e) => e.target.value && setD({ ...d, back: e.target.value })} aria-label="Call back on this date" /></div>}
+        <input className="in" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder={resp === 'Interested' ? 'What do they want? e.g. quotation for a 5-page website' : 'What did they say? e.g. owner is travelling, call after 4 pm'} maxLength={300} autoFocus />
+        <div className="row"><input className="in" style={{ flex: '1 1 200px' }} value={d.meeting} onChange={(e) => setD({ ...d, meeting: e.target.value })} placeholder="Meeting fixed for… (if any)" maxLength={80} />
+          <label className="check" style={{ alignItems: 'center' }}><input type="checkbox" style={{ margin: 0 }} checked={d.met} onChange={(e) => setD({ ...d, met: e.target.checked })} /> Met in person</label>
+          <button className="btn primary" type="button" disabled={busy} onClick={() => log(resp)}>Save this call</button></div></div>}
+    </div> : n ? <div className="stack">
+      <div className="row"><input className="in" style={{ flex: '2 1 200px' }} value={n.org} onChange={upN('org')} placeholder="Business / person name" maxLength={120} autoFocus />
+        <input className="in" style={{ flex: '1 1 150px' }} value={n.phone} onChange={upN('phone')} placeholder="Contact no. (10 digits)" inputMode="tel" maxLength={40} /></div>
+      <div className="row"><input className="in" style={{ flex: '1 1 140px' }} value={n.place} onChange={upN('place')} placeholder="Place" maxLength={60} />
+        <Sel value={n.ind} onChange={(v) => setN({ ...n, ind: v })} options={settings().industries || []} blank="Industry" style={{ flex: '1 1 150px', width: 'auto' }} aria-label="Industry" />
+        <Sel value={n.src} onChange={(v) => setN({ ...n, src: v })} options={settings().listSources || []} blank="Where did you find it?" style={{ flex: '1 1 170px', width: 'auto' }} aria-label="Source" /></div>
+      {chk ? <div className={'banner ' + (chk.ok ? 'ok' : 'bad')}>{chk.ok ? '✓ ' : ''}{chk.msg}
+        {chk.kind === 'similar' && <label className="check" style={{ marginTop: 6 }}><input type="checkbox" checked={n.dupOk} onChange={(e) => setN({ ...n, dupOk: e.target.checked })} /> This is a different business (the Sales Manager is told)</label>}</div>
+        : <div className="small muted">{m10.length === 10 && named ? 'Checking the call register…' : 'Type the name and the 10-digit number. The system tells you if you may call it.'}</div>}
+      <button className="btn primary" type="button" style={{ alignSelf: 'flex-start' }} disabled={!chk?.ok} onClick={() => { setPick({ id: chk.id, name: n.org.trim(), phone: n.phone.trim(), place: n.place, ind: n.ind, src: n.src, dupOk: n.dupOk, tries: 0 }); setN(null); setChk(null); }}>Use this number</button>
+    </div> : <div className="stack">
+      <div className="row"><input className="in grow" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your list: name, number or place" autoFocus />
+        <button className="btn" type="button" onClick={() => setN(fresh)}>+ Not in my list</button><button className="btn" type="button" onClick={onUpload}>Upload a list</button></div>
+      {shown.length ? <div className="list" style={{ maxHeight: 380, overflow: 'auto' }}>{shown.slice(0, 200).map((x) => <button key={x.id} type="button" className="li" style={{ width: '100%', border: 'none', borderTop: '1px solid var(--line)', background: 'none', textAlign: 'left' }} onClick={() => setPick(x)}>
+        <div className="grow"><div className="t">{x.name || 'No name'}</div><div className="small muted">{[x.place, x.ind].filter(Boolean).join(' · ')}{x.tries ? `${x.place || x.ind ? ' · ' : ''}called ${x.tries} time${x.tries === 1 ? '' : 's'}, last: ${x.lastResp || 'no response'}` : ''}</div></div>
+        <span className="num">{x.phone}</span>{x.backOn ? <Pill k={x.backOn <= today() ? 'bad' : 'info'}>Call back {rel(x.backOn).toLowerCase()}</Pill> : x.tries ? <Pill k="warn">Try again</Pill> : <Pill k="ok">New</Pill>}</button>)}</div>
+        : <Empty>{todo.length ? 'Nothing in your list matches.' : 'Your calling list is empty. Upload the list you collected, or add one number with “+ Not in my list”.'}</Empty>}
+      <span className="small muted">Pick the client you are about to call. A business you have already called today leaves the list.</span>
+    </div>}
+  </Modal>;
 }
 
 export default function Daily() {
@@ -218,84 +283,135 @@ function Mine() {
       return <button key={d} type="button" className="btn sm" disabled={d < addDays(today(), -2)} onClick={() => setDate(d)} title={l}><span className="num">{fmtDate(d)}</span><Pill k={k}>{l}</Pill></button>; })}</div></div>
   </div>;
 }
+// What is running right now, with a live clock and one big Finish button.
+function NowCard({ e, onFinish }) {
+  const [, tick] = useState(0);
+  useEffect(() => { const h = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(h); }, []);
+  const sec = Math.max(0, Math.floor((Date.now() - new Date(e.start)) / 1000)), two = (n) => String(n).padStart(2, '0');
+  return <m.div className={'nowcard' + (e.out ? ' out' : '')} initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: EASE }}>
+    <span className="pulse" aria-hidden="true" />
+    <div className="grow" style={{ minWidth: 200 }}><div className="small muted">{e.out ? 'Out of office' : e.brk ? 'On a break' : 'Working on now'} · since {hm(e.start)}</div>
+      <div><b>{e.brk && !e.out ? 'Break' : e.text}</b>{e.kind && !e.brk && <> <Pill k="info">{e.kind}</Pill></>}</div>
+      {e.out && <div className="small">Your manager and management see you as Out of office until you press Finish or start your next task.</div>}</div>
+    <span className="clock" aria-label="Time so far">{two(Math.floor(sec / 3600))}:{two(Math.floor(sec / 60) % 60)}:{two(sec % 60)}</span>
+    {onFinish && <button className="btn primary" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}
+  </m.div>;
+}
 function Editor({ date, r }) {
-  const me = store.me, locked = r?.status === 'submitted';
+  const me = store.me, locked = r?.status === 'submitted', loc = useLocation();
   const [vis, setVis] = useState({ client: '', person: '', phone: '', place: '' }), upV = (k) => (e) => setVis({ ...vis, [k]: e.target.value });
   const [text, setText] = useState(''), [proj, setProj] = useState(''), [busy, setBusy] = useState(false), [mins, setMins] = useState(''), [from, setFrom] = useState('');
   const lastEnd = r ? (r.entries || []).reduce((m, e) => Math.max(m, bounds(e)[1]), r.dayStart ? new Date(r.dayStart).getTime() : 0) : 0, fromV = from || (lastEnd ? hm24(lastEnd) : '');
-  const onBreak = r?.entries?.some((e) => e.brk && e.state === 'running');
-  const types = typesFor(me.team), [kind, setKind] = useState(() => { try { const k = localStorage.getItem('aali-worktype'); return types.includes(k) ? k : ''; } catch { return ''; } });
+  const running = r?.entries?.find((e) => e.state === 'running'), onBreak = !!running?.brk;
+  const types = typesFor(me.team), [kind, setKind] = useState('');
   const isVisit = /visit/i.test(kind), visitOk = !isVisit || (vis.client.trim() && vis.person.trim() && vis.phone.trim() && vis.place.trim());
-  const ready = text.trim() && kind && visitOk, timed = +mins > 0 && /^\d\d:\d\d$/.test(fromV);
+  const [dial, setDial] = useState(false), [away, setAway] = useState(false), [perm, setPerm] = useState(null), [late, setLate] = useState(false); // the calling window; "I will be out of the office"; a permission to go out; adding a task that is already over
+  const [step, setStep] = useState('day'), sales = me.team === 'sales' && !!r; // the three steps of the report: my day, my calls, finish my day
+  const [other, setOther] = useState(''), isOther = /^other$/i.test(kind), kindV = isOther && other.trim() ? `Other – ${other.trim()}` : kind; // "Other" must say what it is
+  const ready = text.trim() && kind && visitOk && (!isOther || other.trim()), timed = +mins > 0 && /^\d\d:\d\d$/.test(fromV);
   const [f, setF] = useState({ plan: r?.plan || '', blockers: r?.blockers || '', nums: r?.nums || {} });
   const save = (data) => (r ? update(r.id, data) : create('report', { date, ...data }));
   const dirty = f.plan !== (r?.plan || '') || f.blockers !== (r?.blockers || '') || JSON.stringify(f.nums) !== JSON.stringify(r?.nums || {});
   const blur = () => { if (dirty && !locked) attempt(() => save(f)); };
+  // Coming from "Open my calling list" on the dashboard: the calling window opens straight away.
+  useEffect(() => { if (loc.state?.dial && sales && !locked && date === today()) { setStep('calls'); setDial(true); } }, []);
+  const pickId = loc.state?.pick;
   // Starting a new task (or a break) finishes whatever was running, so nobody has to press Finish in between.
   const closeRunning = (list) => list.map((x) => (x.state === 'running' ? { ...x, state: 'done', end: new Date().toISOString(), mins: Math.max(1, Math.round((Date.now() - new Date(x.start)) / 60000)) } : x));
   // Two ways to add a task: start it now and press Finish later (the app works out the time), or add one already done with its minutes.
-  async function add(running) {
-    const t = text.trim(); if (!ready || busy || (!running && !timed)) return; setBusy(true);
-    try { localStorage.setItem('aali-worktype', kind); } catch {}
-    const now = new Date().toISOString(), st = running ? 0 : new Date(`${date}T${fromV}:00`).getTime(), m = Math.round(+mins);
-    const line = { id: Math.random().toString(36).slice(2, 10), at: now, text: t, kind, ...(running ? { state: 'running', start: now } : { mins: m, start: new Date(st).toISOString(), end: new Date(st + m * 60000).toISOString() }), ...(isVisit ? { visit: vis, proj: vis.client.trim() } : proj.trim() ? { proj: proj.trim() } : {}) };
-    if (await attempt(() => save({ ...f, entries: [...(running ? closeRunning(r?.entries || []) : r?.entries || []), line] }), running ? 'Task started. The earlier task is closed.' : '')) { setText(''); setMins(''); setFrom(''); setProj(''); setVis({ client: '', person: '', phone: '', place: '' }); }
+  async function add(now) {
+    const t = text.trim(); if (!ready || busy || (!now && !timed)) return; setBusy(true);
+    const at = new Date().toISOString(), st = now ? 0 : new Date(`${date}T${fromV}:00`).getTime(), m2 = Math.round(+mins);
+    const line = { id: Math.random().toString(36).slice(2, 10), at, text: t, kind: kindV, ...(now ? { state: 'running', start: at } : { mins: m2, start: new Date(st).toISOString(), end: new Date(st + m2 * 60000).toISOString() }), ...(isVisit ? { visit: vis, proj: vis.client.trim() } : proj.trim() ? { proj: proj.trim() } : {}), ...(isVisit || (isOther && away) ? { out: true } : {}) };
+    if (await attempt(() => save({ ...f, entries: [...(now ? closeRunning(r?.entries || []) : r?.entries || []), line] }), now ? 'Task started. The earlier task is closed.' : 'Task added.')) { setText(''); setMins(''); setFrom(''); setProj(''); setOther(''); setAway(false); setKind(''); setLate(false); setVis({ client: '', person: '', phone: '', place: '' }); }
     setBusy(false);
   }
   const change = (id, fn, ok) => attempt(() => update(r.id, { ...f, entries: r.entries.map((x) => (x.id === id ? fn(x) : x)) }), ok);
   const finish = (id) => change(id, (x) => ({ ...x, state: 'done', end: new Date().toISOString(), mins: Math.max(1, Math.round((Date.now() - new Date(x.start)) / 60000)) }), 'Task finished. Time saved.');
-  const fix = (id, m) => change(id, (x) => { const n = Math.max(1, Math.round(m)), st = bounds(x)[0]; return { ...x, mins: n, start: new Date(st).toISOString(), end: new Date(st + n * 60000).toISOString() }; }, 'Time corrected.');
+  const fix = (id, m2) => change(id, (x) => { const n = Math.max(1, Math.round(m2)), st = bounds(x)[0]; return { ...x, mins: n, start: new Date(st).toISOString(), end: new Date(st + n * 60000).toISOString() }; }, 'Time corrected.');
   const remark = (id, note) => change(id, (x) => ({ ...x, note }), 'Remark saved.');
   const startBreak = () => { const now = new Date().toISOString(); return attempt(() => save({ ...f, entries: [...closeRunning(r?.entries || []), { id: Math.random().toString(36).slice(2, 10), at: now, text: 'Break', kind: 'Break', brk: true, state: 'running', start: now }] }), 'Break started. Press Finish when you are back.'); };
   const startDay = () => attempt(() => create('report', { date }), 'Your day has started. Add each task as you take it up.');
+  // Going out with permission (personal work, bank …): shown to the manager and management as Out of office and not counted as work time.
+  const goOut = async () => { const now = new Date().toISOString(), why = perm.trim(); if (why.length < 3) return;
+    if (await attempt(() => save({ ...f, entries: [...closeRunning(r?.entries || []), { id: Math.random().toString(36).slice(2, 10), at: now, text: why, kind: 'Out of office', brk: true, out: true, state: 'running', start: now }] }), 'You are shown as Out of office. Press Finish when you are back.')) setPerm(null); };
+  // Choosing "Calling" starts the calling time by itself and opens my calling list.
+  const pickKind = async (t) => {
+    if (me.team !== 'sales' || !/^calling$/i.test(t) || !r || date !== today()) return setKind(kind === t ? '' : t);
+    if (!(r.entries || []).some((e) => e.state === 'running' && /^calling$/i.test(e.kind || ''))) { const now = new Date().toISOString();
+      await attempt(() => save({ ...f, entries: [...closeRunning(r.entries || []), { id: Math.random().toString(36).slice(2, 10), at: now, text: 'Calling clients from my calling list', kind: t, state: 'running', start: now }] }), 'Calling time started. Pick the client you are calling.'); }
+    setKind(''); setStep('calls'); setDial(true); };
   const drop = (id) => attempt(() => update(r.id, { ...f, entries: r.entries.filter((x) => x.id !== id) }));
   const submit = () => attempt(() => update(r.id, { ...f, status: 'submitted' }), 'Report submitted. Your day is closed and your manager has been told.');
   const [l, k] = status(r), auto = autoStats(me.id, date);
-  if (!r && date === today()) return <div className="card stack" style={{ alignItems: 'flex-start' }}><h2 style={{ margin: 0 }}>{dayName(date)} <span className="small muted">{fmtDate(date)}</span></h2>
-    <p style={{ margin: 0 }}>Press the button when you begin work. Aali One notes the time your day started, and your manager can see you are in.</p>
-    <button className="btn primary" type="button" style={{ fontSize: 15, padding: '10px 18px' }} onClick={startDay}>▶ Start my day</button></div>;
+  if (!r && date === today()) return <m.div className="card stack" style={{ alignItems: 'center', textAlign: 'center', padding: '44px 24px' }} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: EASE }}>
+    <span className="empty-ic" style={{ width: 60, height: 60 }}><Ico k="clock" size={28} /></span>
+    <h2 style={{ margin: 0, fontSize: 24 }}>Ready to start, {me.display || me.name.split(' ')[0]}?</h2>
+    <p className="muted" style={{ margin: 0, maxWidth: 460 }}>Press the button when you begin work. Aali One notes the time your day started, and your manager can see you are in.</p>
+    <button className="btn primary" type="button" style={{ fontSize: 16, padding: '13px 26px', borderRadius: 14 }} onClick={startDay}><Ico k="play" size={16} />Start my day</button></m.div>;
+  const steps = [['day', 'My day'], ...(sales ? [['calls', `My calls${r.calls?.length ? ' · ' + r.calls.length : ''}`]] : []), ['end', locked ? 'End of day' : 'Finish my day']];
   return <div className="card stack">
     <div className="row between"><h2 style={{ margin: 0 }}>{dayName(date)} <span className="small muted">{fmtDate(date)}</span></h2>
       <div className="row"><Pill k={k}>{l}</Pill>{r && <span className="small muted">last saved {ago(r.updatedAt)}</span>}<Sample on={r?.sample} /></div></div>
-    {locked ? <div className="banner ok">Submitted{r.submittedAt ? ' at ' + hm(r.submittedAt) : ''}. It is locked now. If something must change, ask your manager to send it back.</div>
-      : <div className="banner info">Add each task as you take it up. Your manager sees it as soon as you add it. Press Submit at the end of the day.</div>}
+    {locked && <div className="banner ok">Submitted{r.submittedAt ? ' at ' + hm(r.submittedAt) : ''}. It is locked now. If something must change, ask your manager to send it back.</div>}
     <DaySummary r={r} />
     {(r?.remarks || []).length > 0 && <Remarks r={r} />}
-    {!locked && <form className="stack gap4" onSubmit={(e) => { e.preventDefault(); add(!timed); }}>
-      <span className="lbl">1. Kind of work</span>
-      <div className="row">{types.map((t) => <button key={t} type="button" className={'chip' + (kind === t ? ' on' : '')} aria-pressed={kind === t} onClick={() => setKind(t)}>{t}</button>)}</div>
-      <span className="lbl" style={{ marginTop: 6 }}>2. The task – write exactly what you are doing</span>
-      <div className="row">
-        <input className="in" style={{ flex: '3 1 260px' }} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Editing 6 photos for Hotel Leela Imperial gallery page" autoFocus maxLength={500} />
-        {!isVisit && <input className="in" style={{ flex: '1 1 170px' }} value={proj} onChange={(e) => setProj(e.target.value)} placeholder="Client / project" maxLength={120} />}</div>
-      {isVisit && <div className="stack gap4" style={{ background: 'var(--gold-50)', border: '1px solid var(--line-2)', borderRadius: 10, padding: 10 }}>
-        <span className="lbl">Client visit – who are you visiting? (all four are needed)</span>
-        <div className="row"><input className="in" style={{ flex: '2 1 200px' }} value={vis.client} onChange={upV('client')} placeholder="Client / business name" maxLength={120} />
-          <input className="in" style={{ flex: '1 1 160px' }} value={vis.person} onChange={upV('person')} placeholder="Person you are meeting" maxLength={80} />
-          <input className="in" style={{ flex: '1 1 130px' }} value={vis.phone} onChange={upV('phone')} placeholder="Their contact no." inputMode="tel" maxLength={40} />
-          <input className="in" style={{ flex: '1 1 160px' }} value={vis.place} onChange={upV('place')} placeholder="Place / address" maxLength={120} /></div>
-        <span className="small muted">In the task box above, write the purpose of the visit. When you are back, press “Add outcome” on the visit to write what was decided.</span></div>}
-      <span className="lbl" style={{ marginTop: 6 }}>3. Time</span>
-      <div className="row">
-        <button className="btn primary" type="button" disabled={!ready || busy} onClick={() => add(true)}>▶ Start this task now</button>
-        <button className="btn" type="button" disabled={busy || onBreak || !r} onClick={startBreak}>☕ Start a break</button></div>
-      <div className="row"><span className="small muted">Or, if the task is already done: it started at</span>
-        <input className="in" style={{ width: 120 }} type="time" value={fromV} onChange={(e) => setFrom(e.target.value)} aria-label="Time the task started" />
-        <span className="small muted">and took</span>
-        <input className="in" style={{ width: 100 }} type="number" min="1" max="1440" inputMode="numeric" value={mins} onChange={(e) => setMins(e.target.value)} placeholder="Minutes" aria-label="Minutes the task took" />
-        <button className="btn" type="button" disabled={!ready || !timed || busy} onClick={() => add(false)}>Add finished task</button></div>
-      <span className="small muted">Start a task when you begin it. When you start the next task or a break, the earlier one is closed by itself and its time is saved.</span></form>}
-    <Entries r={r} onDrop={!locked && drop} onFinish={!locked && finish} onFix={!locked && fix} onNote={!locked && remark} />
-    {me.team === 'sales' && r && <CallSheet r={r} locked={locked} save={(data) => update(r.id, { ...f, ...data })} />}
-    {r && <div><span className="lbl">Time by kind of work</span><TimeBars reports={[r]} empty="No timed work yet." /></div>}
-    {auto.length > 0 && <div className="row small"><span className="lbl">Recorded by Aali One</span>{auto.map((a) => <Pill key={a} k="gold">{a}</Pill>)}</div>}
-    {(r?.entries?.length > 0 || r?.calls?.length > 0) && <WaSend text={reportText(r)} to={activeUsers().filter((u) => u.id !== me.id && (['ops', 'cs', 'chairman'].includes(u.title) || (isManager(u) && u.team === me.team)))} title="Send my report on WhatsApp to" />}
-    <div className="form">
-      <Field label="Plan for tomorrow" full><Area disabled={locked} value={f.plan} onChange={(e) => setF({ ...f, plan: e.target.value })} onBlur={blur} placeholder="What you will do next" /></Field>
-      <Field label="Problems / help needed" full><Area disabled={locked} value={f.blockers} onChange={(e) => setF({ ...f, blockers: e.target.value })} onBlur={blur} placeholder="Anything stopping your work. Leave empty if none." /></Field>
-    </div>
-    {!locked && <div className="row between"><span className="small muted">{dirty ? 'Not saved yet – click outside the box to save.' : r ? 'All changes saved.' : 'Nothing written yet.'}</span>
-      <div className="row">{r && <DeleteButton id={r.id} label="Delete report" />}<button className="btn primary" type="button" disabled={!(r?.entries?.length || r?.calls?.length) || r.entries.some((e) => e.state === 'running')} title={r?.entries?.some((e) => e.state === 'running') ? 'Finish the running task first' : ''} onClick={submit}>Submit for the day</button></div></div>}
+    <div className="steps" role="tablist" aria-label="Parts of my report">{steps.map(([v, lab], i) => <button key={v} type="button" role="tab" aria-selected={step === v} onClick={() => setStep(v)}>
+      {step === v && <m.span layoutId="day-step" className="seg-pill" style={{ borderRadius: 11 }} transition={SPRING} />}<span className="n">{i + 1}</span>{lab}</button>)}</div>
+    <AnimatePresence mode="wait" initial={false}><m.div key={step} className="stack" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -14, transition: { duration: 0.12 } }} transition={{ duration: 0.3, ease: EASE }}>
+      {step === 'day' && <>
+        {running && <NowCard e={running} onFinish={!locked && finish} />}
+        {!locked && <form className="composer" onSubmit={(e) => { e.preventDefault(); add(!(late && timed)); }}>
+          <span className="q">{running ? 'What are you starting next?' : 'What are you starting now?'}</span>
+          <div className="row" role="group" aria-label="Kind of work">{types.map((t) => <button key={t} type="button" className={'chip' + (kind === t ? ' on' : '')} aria-pressed={kind === t} onClick={() => pickKind(t)}>{t}</button>)}</div>
+          <AnimatePresence initial={false}>{kind && <m.div key="task" className="stack" style={{ overflow: 'hidden', padding: 4, margin: -4 }} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3, ease: EASE }}>
+            {isOther && <div className="row"><input className="in" style={{ flex: '1 1 260px', maxWidth: 380 }} value={other} onChange={(e) => setOther(e.target.value)} placeholder="Type the kind of work, e.g. Bank work" maxLength={40} autoFocus aria-label="Type the kind of work" />
+              <label className="check" style={{ alignItems: 'center' }}><input type="checkbox" style={{ margin: 0 }} checked={away} onChange={(e) => setAway(e.target.checked)} /> I will be out of the office for this</label></div>}
+            <span className="lbl">Write exactly what you are doing</span>
+            <div className="row">
+              <input className="in" style={{ flex: '3 1 260px' }} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Editing 6 photos for Hotel Leela Imperial gallery page" autoFocus={!isOther} maxLength={500} />
+              {!isVisit && <input className="in" style={{ flex: '1 1 170px' }} value={proj} onChange={(e) => setProj(e.target.value)} placeholder="Client / project" maxLength={120} />}</div>
+            {isVisit && <div className="panel stack gap4">
+              <span className="lbl">Client visit – who are you visiting? (all four are needed)</span>
+              <div className="row"><input className="in" style={{ flex: '2 1 200px' }} value={vis.client} onChange={upV('client')} placeholder="Client / business name" maxLength={120} />
+                <input className="in" style={{ flex: '1 1 160px' }} value={vis.person} onChange={upV('person')} placeholder="Person you are meeting" maxLength={80} />
+                <input className="in" style={{ flex: '1 1 130px' }} value={vis.phone} onChange={upV('phone')} placeholder="Their contact no." inputMode="tel" maxLength={40} />
+                <input className="in" style={{ flex: '1 1 160px' }} value={vis.place} onChange={upV('place')} placeholder="Place / address" maxLength={120} /></div>
+              <span className="small muted">In the task box above, write the purpose of the visit. When you are back, press “Add outcome” on the visit to write what was decided.</span></div>}
+            {(isVisit || (isOther && away)) && <span className="small muted">While this task runs, your manager and management see you as <b>Out of office</b>.</span>}
+            {late && <div className="panel row"><span className="small muted">It started at</span>
+              <input className="in" style={{ width: 130 }} type="time" value={fromV} onChange={(e) => setFrom(e.target.value)} aria-label="Time the task started" />
+              <span className="small muted">and took</span>
+              <input className="in" style={{ width: 110 }} type="number" min="1" max="1440" inputMode="numeric" value={mins} onChange={(e) => setMins(e.target.value)} placeholder="Minutes" aria-label="Minutes the task took" /></div>}
+            <div className="row">{late ? <button className="btn primary" type="button" disabled={!ready || !timed || busy} onClick={() => add(false)}>Add this finished task</button>
+              : <button className="btn primary" type="button" style={{ padding: '11px 20px', fontSize: 15 }} disabled={!ready || busy} onClick={() => add(true)}><Ico k="play" size={15} />Start this task now</button>}
+              <button className="btn ghost sm" type="button" onClick={() => setLate(!late)}>{late ? 'No, I am starting it now' : 'I already finished this task'}</button></div>
+          </m.div>}</AnimatePresence>
+          <div className="quiet"><span className="small muted">Not a task?</span>
+            <button className="btn sm" type="button" disabled={busy || onBreak || !r} onClick={startBreak}><Ico k="cup" size={15} />Start a break</button>
+            <button className="btn sm" type="button" disabled={busy || !r} aria-expanded={perm !== null} onClick={() => setPerm(perm === null ? '' : null)}><Ico k="door" size={15} />Going out (permission)</button></div>
+          {perm !== null && <div className="panel row">
+            <input className="in" style={{ flex: '1 1 260px' }} value={perm} onChange={(e) => setPerm(e.target.value)} placeholder="Reason, e.g. personal work, bank, hospital" maxLength={120} autoFocus />
+            <button className="btn primary" type="button" disabled={perm.trim().length < 3} onClick={goOut}>I am going out now</button>
+            <span className="small muted">Your manager and management will see you as Out of office until you press Finish.</span></div>}
+          <span className="small muted">When you start the next task or a break, the earlier one is closed by itself and its time is saved.</span></form>}
+        <Entries r={r} onDrop={!locked && drop} onFinish={!locked && finish} onFix={!locked && fix} onNote={!locked && remark} />
+        {!locked && r && <div className="row between"><span className="small muted">Done with your work for today?</span><button className="btn" type="button" onClick={() => setStep('end')}>Finish my day →</button></div>}
+      </>}
+      {step === 'end' && <>
+        {r && <div><span className="lbl">Time by kind of work</span><TimeBars reports={[r]} empty="No timed work yet." /></div>}
+        {auto.length > 0 && <div className="row small"><span className="lbl">Recorded by Aali One</span>{auto.map((x) => <Pill key={x} k="gold">{x}</Pill>)}</div>}
+        <div className="form">
+          <Field label="Plan for tomorrow" full><Area disabled={locked} value={f.plan} onChange={(e) => setF({ ...f, plan: e.target.value })} onBlur={blur} placeholder="What you will do next" /></Field>
+          <Field label="Problems / help needed" full><Area disabled={locked} value={f.blockers} onChange={(e) => setF({ ...f, blockers: e.target.value })} onBlur={blur} placeholder="Anything stopping your work. Leave empty if none." /></Field>
+        </div>
+        {(r?.entries?.length > 0 || r?.calls?.length > 0) && <WaSend text={reportText(r)} to={activeUsers().filter((u) => u.id !== me.id && (['ops', 'cs', 'chairman'].includes(u.title) || (isManager(u) && u.team === me.team)))} title="Send my report on WhatsApp to" />}
+        {!locked && running && <div className="banner">A task is still running. Go to “My day” and press Finish first.</div>}
+        {!locked && <div className="row between"><span className="small muted">{dirty ? 'Not saved yet – click outside the box to save.' : r ? 'All changes saved.' : 'Nothing written yet.'}</span>
+          <div className="row">{r && <DeleteButton id={r.id} label="Delete report" />}<button className="btn primary" type="button" style={{ padding: '11px 20px', fontSize: 15 }} disabled={!(r?.entries?.length || r?.calls?.length) || !!running} title={running ? 'Finish the running task first' : ''} onClick={submit}><Ico k="check" size={16} />Submit for the day</button></div></div>}
+      </>}
+    </m.div></AnimatePresence>
+    {sales && <CallSheet r={r} show={step === 'calls'} pickId={pickId} locked={locked} save={(data) => update(r.id, { ...f, ...data })} dial={dial} setDial={setDial} />}
   </div>;
 }
 function Entries({ r, onDrop, onFinish, onFix, onNote }) {
@@ -308,10 +424,10 @@ function Entries({ r, onDrop, onFinish, onFix, onNote }) {
       const e = x.e, run = e.state === 'running';
       return <div className="li" key={e.id} style={{ padding: '7px 12px', background: run ? 'var(--warn-bg)' : '' }}>
         <span className="num small muted" style={{ width: 118, flex: 'none' }}>{hm(x.s)} – {run ? 'now' : hm(x.en)}</span>
-        <div className="grow">{e.brk ? <Pill>Break</Pill> : <>{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.text}{e.proj && !e.visit && <> <Pill k="gold">{e.proj}</Pill></>}{e.visit && <div className="small"><b>Client:</b> {e.visit.client} · <b>Met:</b> {e.visit.person} · <span className="num">{e.visit.phone}</span> · {e.visit.place}</div>}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</>}
+        <div className="grow">{e.brk ? (e.out ? <><Pill k="warn">Out of office</Pill> {e.text}</> : <Pill>Break</Pill>) : <>{e.kind && <><Pill k="info">{e.kind}</Pill> </>}{e.out && <><Pill k="warn">Out of office</Pill> </>}{e.text}{e.proj && !e.visit && <> <Pill k="gold">{e.proj}</Pill></>}{e.visit && <div className="small"><b>Client:</b> {e.visit.client} · <b>Met:</b> {e.visit.person} · <span className="num">{e.visit.phone}</span> · {e.visit.place}</div>}{e.refId && <> <Link className="pill gold" to={e.refLink || '/'} style={{ textDecoration: 'none' }}>{e.refLabel}</Link></>}</>}
           {rem?.id === e.id ? <div className="row" style={{ marginTop: 4 }}><input className="in grow" value={rem.v} onChange={(ev) => setRem({ id: e.id, v: ev.target.value })} placeholder="Result, issue or remark" maxLength={300} autoFocus /><button className="btn sm" type="button" onClick={() => { onNote(e.id, rem.v.trim()); setRem(null); }}>Save</button></div>
             : e.note ? <div className="small muted">{e.visit ? 'Outcome' : 'Remark'}: {e.note}</div> : null}</div>
-        {run ? <><Pill k="warn">{e.brk ? 'On break' : 'In progress'} · {fmtMins(dur)} so far</Pill>{onFinish && <button className="btn primary sm" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}</>
+        {run ? <><Pill k="warn">{e.out ? 'Out of office' : e.brk ? 'On break' : 'In progress'} · {fmtMins(dur)} so far</Pill>{onFinish && <button className="btn primary sm" type="button" onClick={() => onFinish(e.id)}>■ Finish</button>}</>
           : edit?.id === e.id ? <><input className="in" style={{ width: 80 }} type="number" min="1" max="1440" value={edit.v} onChange={(ev) => setEdit({ id: e.id, v: ev.target.value })} aria-label="Minutes" autoFocus />
               <button className="btn sm" type="button" disabled={!(+edit.v > 0)} onClick={() => { onFix(e.id, +edit.v); setEdit(null); }}>Save</button></>
             : <>{!e.brk && <Pill k="ok">Done</Pill>}<span className="num small" style={{ minWidth: 64, textAlign: 'right' }}>{fmtMins(e.mins || dur)}</span>
@@ -340,11 +456,11 @@ function Team() {
       <div className="row">{isTop(me) && <Seg value={team} onChange={setTeam} options={[['all', 'All'], ['sales', 'Sales'], ['it', 'IT'], ['management', 'Management']]} />}
         <Seg value={view} onChange={setView} options={[['day', 'Day'], ['week', 'Week']]} /></div></div>
     <div className="stats">
-      <div className="stat"><span className="l">Submitted</span><span className="v">{n((x) => x.r?.status === 'submitted')}<span className="muted small"> of {rows.length}</span></span></div>
-      <div className={'stat' + (n((x) => x.r?.status === 'open') ? ' warm' : '')}><span className="l">In progress</span><span className="v">{n((x) => x.r?.status === 'open')}</span></div>
-      <div className={'stat' + (n((x) => !x.r) ? ' hot' : '')}><span className="l">Not started</span><span className="v">{n((x) => !x.r)}</span></div>
-      <div className="stat"><span className="l">Waiting for review</span><span className="v">{n((x) => x.r?.status === 'submitted' && !x.r.reviewed)}</span></div>
-      <div className={'stat' + (help.length ? ' hot' : '')}><span className="l">Need help</span><span className="v">{help.length}</span></div>
+      <Stat label="Submitted" value={n((x) => x.r?.status === 'submitted')} sub={`of ${rows.length} people`} />
+      <Stat label="In progress" value={n((x) => x.r?.status === 'open')} tone={n((x) => x.r?.status === 'open') ? 'warm' : ''} />
+      <Stat label="Not started" value={n((x) => !x.r)} tone={n((x) => !x.r) ? 'hot' : ''} />
+      <Stat label="Waiting for review" value={n((x) => x.r?.status === 'submitted' && !x.r.reviewed)} />
+      <Stat label="Need help" value={help.length} tone={help.length ? 'hot' : ''} />
     </div>
     {me.title === 'ops' && <label className="check card" style={{ marginBottom: 12 }}><input type="checkbox" checked={!!settings().leadSeesReports}
       onChange={(e) => attempt(() => saveSetting('leadSeesReports', e.target.checked), e.target.checked ? "On: the IT Team Lead can now read the developers' reports." : "Off: only the IT Manager and top management read the developers' reports.")} />
@@ -370,14 +486,14 @@ function Team() {
   </>;
 }
 function PersonRow({ u, r, date, open, toggle, first }) {
-  const me = store.me, [l, k] = status(r), cs = callStats(r);
+  const me = store.me, [l, k] = status(r), cs = callStats(r), out = date === today() && list('presence').find((x) => x.user === u.id && x.out && x.date === date);
   const nudge = waLink(u.phone, `Hi ${u.name.split(' ')[0]}, please update your daily work report for ${fmtDate(date)} in Aali One: ${location.origin}/daily`);
   return <div style={{ borderTop: first ? 'none' : '1px solid var(--line)' }}>
     <button type="button" className="li" onClick={toggle} aria-expanded={open} style={{ width: '100%', border: 'none', background: 'none', textAlign: 'left' }}>
       <Av id={u.id} /><div className="grow" style={{ minWidth: 150 }}><div className="t">{u.name}</div><div className="small muted">{desig(u)} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} task${r.entries?.length === 1 ? '' : 's'} · last ${ago(r.updatedAt)}` : ''}</div></div>
       {r && <div style={{ flexBasis: '100%', order: 9, paddingLeft: 38 }}><DaySummary r={r} small /></div>}
       {cs.n > 0 && <span className="small muted"><span className="num">{cs.n}</span> calls · <span className="num">{cs.pos}</span> interested</span>}
-      {r?.blockers?.trim() && <Pill k="bad">Needs help</Pill>}<Pill k={k}>{l}</Pill><Sample on={r?.sample} /><span className="faint" aria-hidden>{open ? '▾' : '▸'}</span></button>
+      {out && <Pill k="warn">Out of office · {out.why} since {hm(out.since)}</Pill>}{r?.blockers?.trim() && <Pill k="bad">Needs help</Pill>}<Pill k={k}>{l}</Pill><Sample on={r?.sample} /><span className="faint" aria-hidden>{open ? '▾' : '▸'}</span></button>
     {open && <div className="stack" style={{ padding: '4px 14px 14px 52px' }}>
       {!r ? <div className="row"><span className="muted small">No report for {dayName(date).toLowerCase()} yet.</span>{nudge && isTop(me) && <a className="btn wa sm" href={nudge} target="_blank" rel="noreferrer">Remind on WhatsApp</a>}</div>
         : <ReportView r={r} me={me} />}</div>}

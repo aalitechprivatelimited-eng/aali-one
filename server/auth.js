@@ -1,4 +1,5 @@
 import { scryptSync, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
+import { isAdminUser } from '../shared/access.js';
 
 export const newId = (p = '') => p + randomBytes(9).toString('base64url');
 export function hashPassword(pw) {
@@ -12,6 +13,10 @@ export function checkPassword(pw, stored) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 const sha = (t) => createHash('sha256').update(t).digest('hex');
+export const tokenHash = sha;
+// A wrong email takes as long to refuse as a wrong password, so the timing does not show which emails exist.
+const NOBODY = hashPassword(randomBytes(12).toString('hex'));
+export const fakeCheck = (pw) => checkPassword(pw, NOBODY);
 const DAYS = 30;
 
 export async function createSession(db, userId) {
@@ -33,16 +38,8 @@ export function readCookie(req, name) {
   const m = String(req.headers.cookie || '').match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
   return m ? decodeURIComponent(m[1]) : '';
 }
-export const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.name, title: u.title, team: u.team, phone: u.phone, isAdmin: u.is_admin, active: u.active, designation: u.designation || '', createdAt: u.created_at, removedAt: u.removed_at || null, removedReason: u.removed_reason || '', removedBy: u.removed_by || null,
+// name is what the screens show: the display name the person chose, or their full name. fullName is always the real name.
+export const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.display || u.name, fullName: u.name, display: u.display || '', photo: u.photo || '', title: u.title, team: u.team, phone: u.phone, isAdmin: isAdminUser(u), active: u.active, designation: u.designation || '', createdAt: u.created_at, removedAt: u.removed_at || null, removedReason: u.removed_reason || '', removedBy: u.removed_by || null,
   surname: u.surname && u.name.endsWith(u.surname) ? u.surname : '', firstName: u.surname && u.name.endsWith(u.surname) ? u.name.slice(0, -u.surname.length).trim() : u.name,
   company: u.team === 'management' ? 'Aali Group' : u.company || 'Aali Conssultancy' });
 
-// Simple login throttle: 8 failures per email per 15 minutes (per server instance).
-const fails = new Map();
-export function tooManyFails(email) {
-  const f = fails.get(email); if (!f) return false;
-  if (Date.now() - f.at > 15 * 60e3) { fails.delete(email); return false; }
-  return f.n >= 8;
-}
-export function noteFail(email) { const f = fails.get(email) || { n: 0, at: Date.now() }; f.n++; fails.set(email, f); }
-export const clearFails = (email) => fails.delete(email);

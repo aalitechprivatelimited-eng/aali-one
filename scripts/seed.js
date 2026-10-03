@@ -65,8 +65,9 @@ else {
     ['Fresh Mart', '9701234505', 'SEO & digital marketing', 'Facebook / Instagram', 'warm', 'new'], ['Royal Tailors', '9701234506', 'Website – 5 pages', 'WhatsApp', '', 'new']])
     L.push(await add('nikhil', 'lead', { name, mobile, service, source, score, status, company: name, message: `Needs ${service.toLowerCase()}`, followUp: d(L.length % 3 - 1) }));
   await call('POST', '/public/enquiry', { name: 'Anil Kumar', mobile: '97012 34501', service: 'Website – 5 pages', message: 'Asked again on the website form' });
-  await add('ravi', 'activity', { kind: 'call', status: 'done', leadId: L[0].id, owner: L[0].owner, at: new Date().toISOString(), outcome: 'Interested', duration: 6, notes: 'Wants online booking. Send quote.' });
-  await add('sneha', 'activity', { kind: 'meeting', status: 'planned', leadId: L[2].id, owner: L[2].owner, at: `${d(1)}T16:00`, place: 'Clinic, Brodipet', subject: 'Demo of patient app' });
+  const keyOf = (id) => Object.keys(ids).find((k) => ids[k] === id); // a BDE logs calls only on their own leads
+  await add(keyOf(L[0].owner), 'activity', { kind: 'call', status: 'done', leadId: L[0].id, owner: L[0].owner, at: new Date().toISOString(), outcome: 'Interested', duration: 6, notes: 'Wants online booking. Send quote.' });
+  await add(keyOf(L[2].owner), 'activity', { kind: 'meeting', status: 'planned', leadId: L[2].id, owner: L[2].owner, at: `${d(1)}T16:00`, place: 'Clinic, Brodipet', subject: 'Demo of patient app' });
 
   // Deals across the pipeline
   const deal = async (who, k, title, service, value, stage, extra = {}) => { const x = await add(who, 'deal', { title, clientId: cl[k].id, contactName: cl[k].contacts[0].name, phone: cl[k].phone, service, value, stage: 'lead', owner: ids[who], closeDate: d(20), followUp: d(1), source: 'Referral', ...extra });
@@ -149,12 +150,14 @@ if (!(await db.query("select count(*)::int n from records where type = 'report'"
     const st = day ? dayMs(day, hh) : t0; t0 = st + (mins + 5) * 60e3;
     return { text, kind, start: iso2(st), end: iso2(st + mins * 60e3), mins, at: iso2(st), ...(kind === 'Break' ? { brk: true } : {}), ...extra }; }); };
   const visit = (client, person, phone, place, note) => ({ visit: { client, person, phone, place }, proj: client, ...(note ? { note } : {}) });
-  const ORGS = ['Sri Sai Furniture', 'Lotus Salon & Spa', 'Green Leaf Restaurant', 'Vijaya Dall Mill', 'Hotel R5', 'Crown Furnitures', 'Elite Glam Studio', 'Cake Box', 'GKR School', 'Ahalya Nursing Home', 'MF Foods', 'VR Boutique',
-    'Trends Beauty Hub', 'Raksha Pipes', 'KK Distributors', 'US Travels', 'Manikanta Industries', 'Venu Packaging', 'Bakers Pride', 'Shilpa Collection', 'Hi Tech Furniture', 'Balaji Furnitures', 'Youth Hostel', 'Sai Kusuma Boys Hostel'];
+  // Every sample call is to a different business: the call register refuses a business that another BDE already holds.
+  const PRE = ['Sri Sai', 'Lotus', 'Green Leaf', 'Vijaya', 'Crown', 'Elite', 'GKR', 'Ahalya', 'MF', 'VR', 'Trends', 'Raksha', 'KK', 'Manikanta', 'Venu', 'Shilpa', 'Balaji', 'Sai Kusuma', 'Lakshmi', 'Durga', 'Padma', 'Surya', 'Chandra', 'Annapurna'];
+  const KIND = ['Furniture', 'Salon & Spa', 'Restaurant', 'Dall Mill', 'Hotel', 'Boutique', 'School', 'Nursing Home', 'Foods', 'Pipes', 'Distributors', 'Travels', 'Industries', 'Packaging', 'Bakery', 'Hostel'];
+  let orgN = 0; const nextOrg = () => { const h = (orgN++ * 157) % (PRE.length * KIND.length); return `${PRE[h % PRE.length]} ${KIND[Math.floor(h / PRE.length)]}`; };
   const PLACES = ['Guntur', 'Vijayawada', 'Tenali', 'Bapatla', 'Eluru', 'Ongole'];
   const RESP = ['Not interested', 'Not interested', 'No answer', 'Not interested', 'Call back', 'Busy', 'Interested', 'Not interested', 'Wrong number', 'No answer', 'Not reachable', 'Call back'];
   let seedN = 7; const rnd = () => (seedN = (seedN * 1103515245 + 12345) % 2147483648) / 2147483648;
-  const calls = (n, off) => [...Array(n)].map((_, i) => { const resp = RESP[(i * 5 + off) % RESP.length], org = ORGS[(i * 7 + off * 3) % ORGS.length];
+  const calls = (n, off) => [...Array(n)].map((_, i) => { const resp = RESP[(i * 5 + off) % RESP.length], org = nextOrg();
     return { org, phone: '9' + String(Math.floor(rnd() * 9e8) + 1e8), place: PLACES[(i + off) % PLACES.length], resp, meeting: resp === 'Interested' ? (i % 2 ? 'Tomorrow 11 am' : 'Friday 4 pm') : '', met: false,
       note: resp === 'Interested' ? 'Wants a quotation for a 5-page website' : resp === 'Call back' ? 'Asked to call after 2 days' : '' }; });
   const report = async (who, day, data, { submit = true, review = '', remark = '' } = {}) => {

@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore, list, get, create, update, store } from '../api.js';
-import { settings, uname, fmtDate, today, addDays, inr, clientName, canMoney } from '../lib.js';
+import { settings, uname, fmtDate, today, addDays, inr, clientName, can, canEdit } from '../lib.js';
 import { docTotals, fyLabel } from '../../shared/money.js';
-import { Field, In, Sel, Area, Pill, Empty, Sample, DeleteButton, Message, attempt, toast } from '../ui.jsx';
+import { Field, In, Sel, Pick, Area, Pill, Empty, Sample, DeleteButton, Message, attempt, toast, RO, ViewOnly } from '../ui.jsx';
 import { QuoteSheet } from '../doc.jsx';
 import { useId } from '../App.jsx';
 
 export const STATUS = ['draft', 'needs approval', 'sent', 'accepted', 'declined', 'expired'];
 const tone = { accepted: 'ok', 'needs approval': 'warn', declined: 'bad', expired: 'bad', sent: 'info' };
-export default function Quotes() { useStore(); const id = useId(); if (!canMoney()) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>; return id ? <Editor id={id === 'new' ? null : id} /> : <Register />; }
+export default function Quotes() { useStore(); const id = useId(); if (!can('quotes')) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>; return id ? <Editor id={id === 'new' ? null : id} /> : <Register />; }
 
 function Register() {
   const nav = useNavigate(), [f, setF] = useState({ q: '', status: '', fy: fyLabel(today()) });
@@ -17,7 +17,7 @@ function Register() {
   const fys = [...new Set(list('quote').map((q) => q.fy))];
   const sum = (s) => rows.filter((q) => !s || q.status === s).reduce((a, q) => a + (q.totals?.total || 0), 0);
   return <>
-    <div className="topbar"><h1>Quotations <small>{rows.length}</small></h1><Link className="btn primary" to="/quotes/new">+ New quotation</Link></div>
+    <div className="topbar"><h1>Quotations <small>{rows.length}</small> <ViewOnly when={!canEdit('quotes')} /></h1>{canEdit('quotes') && <Link className="btn primary" to="/quotes/new">+ New quotation</Link>}</div>
     <div className="stats"><div className="stat"><span className="l">Quoted</span><span className="v">{inr(sum())}</span></div><div className="stat"><span className="l">Accepted</span><span className="v">{inr(sum('accepted'))}</span></div>
       <div className="stat"><span className="l">Waiting for approval</span><span className="v">{rows.filter((q) => q.status === 'needs approval').length}</span></div></div>
     <div className="row" style={{ marginBottom: 12 }}><In placeholder="Search number, client, subject" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} style={{ maxWidth: 280 }} />
@@ -40,7 +40,9 @@ function blankFrom(deal) {
 function Editor({ id }) {
   const nav = useNavigate(), [sp] = useSearchParams(), saved = id ? get(id) : null;
   const [q, setQ] = useState(() => saved ? { ...saved } : blankFrom(get(sp.get('deal')))), [busy, setBusy] = useState(false);
+  const edit = canEdit('quotes');
   if (id && !saved) return <Empty>This quotation was not found. <Link to="/quotes">Back</Link></Empty>;
+  if (!id && !edit) return <Empty>Your access to quotations is view only. <Link to="/quotes">Back</Link></Empty>;
   const up = (k) => (v) => setQ({ ...q, [k]: v?.target ? (v.target.type === 'checkbox' ? v.target.checked : v.target.value) : v });
   const item = (i, k, v) => setQ({ ...q, items: q.items.map((it, j) => (j === i ? { ...it, [k]: v } : it)) });
   const t = docTotals(q), limit = settings().discountApprovalPct;
@@ -58,16 +60,16 @@ function Editor({ id }) {
     if (s === 'accepted' && q.dealId && get(q.dealId)?.stage !== 'won') toast('Accepted. Open the deal and mark it Won to hand over to IT.');
   }
   return <>
-    <div className="topbar no-print"><h1>{saved ? saved.number : 'New quotation'} {saved && <span className={'pill ' + (tone[saved.status] || '')}>{saved.status}</span>}</h1>
+    <div className="topbar no-print"><h1>{saved ? saved.number : 'New quotation'} {saved && <span className={'pill ' + (tone[saved.status] || '')}>{saved.status}</span>} <ViewOnly when={!edit} /></h1>
       <div className="row"><Link className="btn" to="/quotes">Register</Link>{q.dealId && <Link className="btn" to={'/deals/' + q.dealId}>Open deal</Link>}
         {saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}
-        {saved && <button className="btn" type="button" onClick={() => { const c = { ...q }; ['id', 'number', 'seq', 'fy', 'status', 'createdAt', 'discountApprovedAt'].forEach((k) => delete c[k]); setQ({ ...c, date: today(), validUntil: addDays(today(), 15) }); nav('/quotes/new'); }}>Duplicate</button>}
-        <button className="btn primary" type="button" disabled={busy} onClick={() => save()}>{saved ? 'Save changes' : 'Save & get number'}</button></div></div>
+        {saved && edit && <button className="btn" type="button" onClick={() => { const c = { ...q }; ['id', 'number', 'seq', 'fy', 'status', 'createdAt', 'discountApprovedAt'].forEach((k) => delete c[k]); setQ({ ...c, date: today(), validUntil: addDays(today(), 15) }); nav('/quotes/new'); }}>Duplicate</button>}
+        {edit && <button className="btn primary" type="button" disabled={busy} onClick={() => save()}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
     {saved?.status === 'needs approval' && <div className="banner no-print" style={{ marginBottom: 12 }}>Discount {saved.totals?.discountPct}% is above the {limit}% limit. It waits for a manager's approval before it can be sent.</div>}
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
-      <div className="stack">
+      <RO when={!edit}><div className="stack">
         <div className="card form"><h3 className="full">Client</h3>
-          <Field label="Deal"><Sel value={q.dealId} onChange={(v) => setQ({ ...q, ...(v ? blankFrom(get(v)) : {}), dealId: v, items: q.items })} options={list('deal').map((d) => [d.id, d.title])} blank="Not linked" /></Field>
+          <Field label="Deal"><Pick value={q.dealId} onChange={(v) => setQ({ ...q, ...(v ? blankFrom(get(v)) : {}), dealId: v, items: q.items })} options={list('deal').map((d) => [d.id, d.title, clientName(d.clientId)])} blank="Not linked" /></Field>
           <Field label="Client name"><In value={q.clientName} onChange={up('clientName')} /></Field><Field label="Attention (person)"><In value={q.contactName} onChange={up('contactName')} /></Field>
           <Field label="Phone"><In value={q.phone} onChange={up('phone')} /></Field><Field label="Email"><In value={q.email} onChange={up('email')} /></Field><Field label="GSTIN"><In value={q.gstin} onChange={up('gstin')} /></Field>
           <Field label="Address" full><Area value={q.address} onChange={up('address')} /></Field><Field label="Subject" full><In value={q.subject} onChange={up('subject')} /></Field>
@@ -95,7 +97,7 @@ function Editor({ id }) {
         {saved && <div className="card stack"><h3>Status</h3><div className="row">{['sent', 'accepted', 'declined', 'expired'].map((s) => <button key={s} type="button" className="btn sm" disabled={saved.status === 'needs approval'} onClick={() => setStatus(s)}>Mark {s}</button>)}</div>
           <Message phone={q.phone} defaultId="tp-quote" vars={{ client: (q.contactName || q.clientName || '').split(' ')[0], service: q.subject, quote: saved.number, amount: inr(t.total) }} />
           <div className="row"><Sample on={saved.sample} /><span className="grow" /><DeleteButton id={saved.id} needsReason after={() => nav('/quotes')} /></div></div>}
-      </div>
+      </div></RO>
       <div className="paper-wrap"><div style={{ transform: 'scale(.72)', transformOrigin: 'top left', width: '139%' }}><QuoteSheet q={{ ...q, number: saved?.number }} /></div></div>
     </div>
     <div className="hide print-only" style={{ display: 'none' }} />

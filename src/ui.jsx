@@ -1,31 +1,47 @@
-import { useEffect, useRef, useState } from 'react';
+import { Children, cloneElement, isValidElement, useEffect, useId as useUid, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import { create, remove, upload, list, store } from './api.js';
-import { uname, initials, fmtDT, fmtDate, rel, due, activeUsers, TITLES, desig, fill, waLink, settings, isManager } from './lib.js';
+import { m, AnimatePresence, SPRING, EASE, CountUp, useDraw } from './motion.jsx';
+import { Ico } from './icons.jsx';
+import { uname, initials, fmtDT, fmtDate, rel, due, activeUsers, TITLES, desig, fill, waLink, settings, isManager, user, COMPANIES } from './lib.js';
 
 // ---------- toast ----------
 let toastSet = null;
 export function Toaster() {
   const [t, setT] = useState(null); toastSet = setT;
   useEffect(() => { if (!t) return; const h = setTimeout(() => setT(null), t.bad ? 5000 : 3000); return () => clearTimeout(h); }, [t]);
-  return t ? <div className={'toast' + (t.bad ? ' bad' : '')} role="status">{t.msg}</div> : null;
+  return <AnimatePresence>{t && <m.div key={t.k} className={'toast' + (t.bad ? ' bad' : '')} role="status" initial={{ opacity: 0, y: 26, x: '-50%', scale: 0.94 }} animate={{ opacity: 1, y: 0, x: '-50%', scale: 1 }} exit={{ opacity: 0, y: 14, x: '-50%', scale: 0.97, transition: { duration: 0.16 } }} transition={SPRING}>
+    <Ico k={t.bad ? 'alert' : 'check'} />{t.msg}</m.div>}</AnimatePresence>;
 }
 export const toast = (msg, bad = false) => toastSet?.({ msg, bad, k: Math.random() });
 export async function attempt(fn, ok) { try { const r = await fn(); if (ok) toast(ok); return r ?? true; } catch (e) { toast(e.message, true); return false; } }
 
+// The page behind stays still while a pop-up is open. The room its scroll bar took is kept, so nothing jumps sideways.
+let locks = 0;
+function lockPage(by) {
+  const el = document.documentElement, was = locks; locks += by;
+  if (!was && locks) { const bar = innerWidth - el.clientWidth; el.style.overflow = 'hidden'; document.body.style.paddingRight = bar ? bar + 'px' : ''; }
+  if (was && !locks) { el.style.overflow = ''; document.body.style.paddingRight = ''; }
+}
 export function Modal({ title, onClose, children, footer, wide }) {
-  useEffect(() => { const k = (e) => e.key === 'Escape' && onClose(); addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, [onClose]);
-  return (
-    <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-label={title}>
-        <div className="modal-h"><h2>{title}</h2><button className="btn ghost sm" onClick={onClose} type="button">Close</button></div>
+  const [shut, setShut] = useState(false), close = () => setShut(true); // closing plays first; the page is told when it has finished
+  useEffect(() => { const k = (e) => e.key === 'Escape' && close(); addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, []);
+  useEffect(() => { lockPage(1); return () => lockPage(-1); }, []);
+  return createPortal(
+    <m.div className="modal-bg" initial={{ opacity: 0 }} animate={{ opacity: shut ? 0 : 1 }} transition={{ duration: shut ? 0.15 : 0.22 }} onAnimationComplete={() => shut && onClose()} onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <m.div className={'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-label={title} initial={{ opacity: 0, y: 28, scale: 0.96 }} animate={shut ? { opacity: 0, y: 14, scale: 0.98 } : { opacity: 1, y: 0, scale: 1 }} transition={shut ? { duration: 0.15, ease: 'easeIn' } : SPRING}>
+        <div className="modal-h"><h2>{title}</h2><button className="btn ghost sm" onClick={close} type="button">Close</button></div>
         <div className="modal-b">{children}</div>
         {footer && <div className="modal-f">{footer}</div>}
-      </div>
-    </div>
-  );
+      </m.div>
+    </m.div>, document.body);
 }
 export function Field({ label, children, full, hint }) {
-  return <div className={'field' + (full ? ' full' : '')}><label>{label}</label>{children}{hint && <span className="small muted">{hint}</span>}</div>;
+  // The label is tied to its box, so a screen reader names the box and a click on the label puts the cursor in it.
+  const id = useUid(), kids = Children.toArray(children), at = kids.findIndex((c) => isValidElement(c) && typeof c.type !== 'string' && !c.props.id);
+  if (at >= 0) kids[at] = cloneElement(kids[at], { id }); // the first box inside the field is the one the label names
+  return <div className={'field' + (full ? ' full' : '')}><label htmlFor={at >= 0 ? id : undefined}>{label}</label>{kids}{hint && <span className="small muted">{hint}</span>}</div>;
 }
 export const In = (p) => <input className="in" {...p} />;
 export const Area = (p) => <textarea className="in" {...p} />;
@@ -34,22 +50,102 @@ export function Sel({ options, value, onChange, blank, ...p }) {
   return <select className="in" value={value ?? ''} onChange={(e) => onChange(e.target.value)} {...p}>{blank !== undefined && <option value="">{blank}</option>}{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>;
 }
 export function Seg({ value, onChange, options }) {
-  return <div className="seg" role="group">{options.map(([v, l]) => <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}>{l}</button>)}</div>;
+  const id = useUid();
+  return <div className="seg" role="group">{options.map(([v, l]) => <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}>{value === v && <m.span layoutId={'seg' + id} className="seg-pill" transition={SPRING} />}{l}</button>)}</div>;
 }
 export function Tabs({ value, onChange, tabs }) {
-  return <div className="tabs" role="tablist">{tabs.map(([v, l]) => <button key={v} role="tab" type="button" aria-selected={value === v} onClick={() => onChange(v)}>{l}</button>)}</div>;
+  const id = useUid();
+  return <div className="tabs" role="tablist">{tabs.map(([v, l]) => <button key={v} role="tab" type="button" aria-selected={value === v} onClick={() => onChange(v)}>{l}{value === v && <m.span layoutId={'tab' + id} className="tab-line" transition={SPRING} />}</button>)}</div>;
 }
 export const Pill = ({ k = '', children }) => <span className={'pill ' + k}>{children}</span>;
 export const Sample = ({ on }) => on ? <Pill k="sample">Sample</Pill> : null;
 export function Due({ date }) { return date ? <Pill k={due(date)}>{rel(date)}</Pill> : null; }
-export const Av = ({ id }) => <span className="av" title={uname(id)}>{id ? initials(uname(id) === 'You' ? store.me.name : uname(id)) : '–'}</span>;
+// A person's round picture: their photo if they added one, otherwise their initials.
+export const Avatar = ({ u, title }) => (u?.photo ? <img className="av" src={'/api/files/' + u.photo} alt="" title={title} /> : <span className="av" title={title}>{initials(u?.fullName || u?.name)}</span>);
+export const Av = ({ id }) => (id ? <Avatar u={user(id) || { name: uname(id) }} title={uname(id)} /> : <span className="av">–</span>);
 export const Avs = ({ ids }) => { const u = [...new Set(ids.filter(Boolean))]; return <span className="avs">{u.slice(0, 3).map((i) => <Av key={i} id={i} />)}{u.length > 3 && <span className="small muted">+{u.length - 3}</span>}</span>; };
-export const Empty = ({ children }) => <div className="empty">{children}</div>;
-
-export function Person({ value, onChange, filter, blank = 'Unassigned', disabled }) {
-  const us = activeUsers().filter(filter || (() => true));
-  return <Sel value={value} onChange={onChange} blank={blank} disabled={disabled} options={us.map((u) => [u.id, `${u.name} · ${desig(u)}`])} />;
+export function Empty({ children }) {
+  const draw = useDraw();
+  return <m.div className="empty" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: EASE }}><span className="empty-ic" ref={draw}><Ico k="empty" size={22} /></span><div>{children}</div></m.div>;
 }
+// A number tile. A number counts up; text is shown as it is. With "to" the whole tile is a link.
+export function Stat({ label, value, format, sub, tone = '', to, icon, children }) {
+  const body = <>{icon && <span className="ic"><Ico k={icon} /></span>}<span className="l">{label}</span>
+    <span className={'v' + (typeof value === 'number' ? '' : ' txt')}>{typeof value === 'number' ? <CountUp value={value} format={format} /> : value}</span>
+    {sub && <span className="small muted">{sub}</span>}{children}</>;
+  const cls = 'stat' + (tone ? ' ' + tone : '');
+  return to ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>;
+}
+// A long list shown a page at a time. usePaged(rows, 25, resetKey) → the rows of this page, and the page turner to put under the table.
+export function usePaged(rows, size = 25, resetKey = '') {
+  const [page, setPage] = useState(0), pages = Math.max(1, Math.ceil(rows.length / size)), at = Math.min(page, pages - 1);
+  useEffect(() => setPage(0), [resetKey]);
+  const from = at * size, to = Math.min(rows.length, from + size);
+  const pager = rows.length > size ? <div className="pager"><span className="small muted">Showing <b>{from + 1}–{to}</b> of {rows.length}</span>
+    <div className="row"><button className="btn sm" type="button" disabled={!at} onClick={() => setPage(at - 1)}>← Previous</button><span className="small muted">Page {at + 1} of {pages}</span>
+      <button className="btn sm" type="button" disabled={at >= pages - 1} onClick={() => setPage(at + 1)}>Next →</button></div></div> : null;
+  return [rows.slice(from, to), pager];
+}
+// View-only access: everything inside can be read, nothing can be changed.
+export const RO = ({ when, children }) => (when ? <fieldset disabled className="ro">{children}</fieldset> : children);
+export const ViewOnly = ({ when }) => (when ? <Pill k="info">View only</Pill> : null);
+
+// Choose one from a list that keeps growing – a client among hundreds, a deal, a person – by typing part of its name.
+// It opens like a drop-down (click it and the list shows); typing narrows the list; ↑ ↓ and Enter work too.
+// options: [[value, name, small text]]. Short fixed lists stay ordinary drop-downs (Sel).
+export function Pick({ options, value, onChange, blank = 'Choose…', disabled, id, style }) {
+  const [q, setQ] = useState(''), [open, setOpen] = useState(false), [at, setAt] = useState(0), [box, setBox] = useState(null), ref = useRef(null), pop = useRef(null);
+  const cur = options.find((o) => o[0] === value), text = q.trim().toLowerCase(), found = text ? options.filter((o) => `${o[1]} ${o[2] || ''}`.toLowerCase().includes(text)) : options;
+  const rows = [...(text ? [] : [['', blank]]), ...found.slice(0, 60)], more = found.length - 60; // the "none" choice leads the list until you type
+  const pick = (v) => { onChange(v); setOpen(false); setQ(''); }, show = () => { if (!disabled) { setOpen(true); setAt(0); } };
+  // The list is drawn over everything (a pop-up window would cut it off), right under the box – or above it when there is no room below.
+  useEffect(() => { if (!open) return; const place = () => { const r = ref.current.getBoundingClientRect(), up = innerHeight - r.bottom < 250 && r.top > innerHeight - r.bottom;
+    setBox({ left: r.left, width: r.width, ...(up ? { bottom: innerHeight - r.top + 6, maxHeight: Math.min(320, r.top - 16) } : { top: r.bottom + 6, maxHeight: Math.min(320, innerHeight - r.bottom - 16) }) }); };
+    place(); addEventListener('scroll', place, true); addEventListener('resize', place); return () => { removeEventListener('scroll', place, true); removeEventListener('resize', place); }; }, [open]);
+  useEffect(() => { pop.current?.children[at]?.scrollIntoView({ block: 'nearest' }); }, [at]);
+  function key(e) {
+    if (!open) { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); show(); } return; }
+    if (e.key === 'Escape') { e.nativeEvent.stopPropagation(); setOpen(false); setQ(''); } // closes the list, not the pop-up window behind it
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setAt((n) => Math.max(0, Math.min(rows.length - 1, n + (e.key === 'ArrowDown' ? 1 : -1)))); }
+    if (e.key === 'Enter') { e.preventDefault(); if (rows[at]) pick(rows[at][0]); }
+  }
+  return <div className={'pick' + (disabled ? ' off' : '')} style={style} ref={ref}>
+    <input className="in" id={id} role="combobox" aria-expanded={open} aria-autocomplete="list" autoComplete="off" disabled={disabled} value={open ? q : cur ? cur[1] : ''} placeholder={open && cur ? cur[1] : open ? 'Type a name to search' : blank}
+      onFocus={show} onClick={show} onBlur={() => { setOpen(false); setQ(''); }} onChange={(e) => { setQ(e.target.value); setOpen(true); setAt(0); }} onKeyDown={key} />
+    {cur && !open && !disabled ? <button type="button" className="clear" aria-label={`Clear: back to “${blank}”`} title={`Back to “${blank}”`} onClick={() => pick('')}>×</button> : <span className="caret" aria-hidden="true" />}
+    {open && box && createPortal(<div className="pick-pop" role="listbox" ref={pop} style={box} onMouseDown={(e) => e.preventDefault()}>
+      {rows.map((o, i) => <button key={o[0] || 'none'} type="button" role="option" tabIndex={-1} aria-selected={o[0] === (value || '')} className={i === at ? 'at' : ''} onMouseEnter={() => setAt(i)} onClick={() => pick(o[0])}>{o[0] ? <b>{o[1]}</b> : <span className="muted">{o[1]}</span>}{o[2] && <span className="small muted"> · {o[2]}</span>}</button>)}
+      {!found.length && <div className="small muted note">Nothing matches “{q}”.</div>}
+      {more > 0 && <div className="small muted note">{more} more – type a few letters to find one.</div>}</div>, document.body)}
+  </div>;
+}
+export function Person({ value, onChange, filter, blank = 'Unassigned', disabled, id }) {
+  const us = activeUsers().filter(filter || (() => true));
+  return <Pick id={id} value={value} onChange={onChange} blank={blank} disabled={disabled} options={us.map((u) => [u.id, u.name, desig(u)])} />;
+}
+// Find a person by typing part of their name, instead of scrolling a long list.
+export function PersonSearch({ value, onChange, filter, blank = 'Everyone', company }) {
+  const [q, setQ] = useState(''), [open, setOpen] = useState(false), cur = user(value), text = q.trim().toLowerCase();
+  const hits = activeUsers().filter(filter || (() => true)).filter((u) => (!company || u.company === company) && (!text || `${u.name} ${desig(u)} ${u.company}`.toLowerCase().includes(text))).slice(0, 40);
+  const pick = (id) => { onChange(id); setOpen(false); setQ(''); };
+  return <div className="psearch" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}>
+    <input className="in" role="combobox" aria-expanded={open} aria-label={`${blank}: type a name to search`} value={open ? q : cur ? cur.name : ''} placeholder={`${blank} – type a name`}
+      onFocus={() => setOpen(true)} onClick={() => setOpen(true)} onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+      onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); setQ(''); } if (e.key === 'Enter' && open && hits[0]) { e.preventDefault(); pick(hits[0].id); } }} />
+    {value && !open && <button type="button" className="clear" aria-label={`Back to ${blank}`} title={`Back to ${blank}`} onClick={() => pick('')}>×</button>}
+    {open && <div className="pop" role="listbox">
+      <button type="button" role="option" aria-selected={!value} onMouseDown={(e) => e.preventDefault()} onClick={() => pick('')}>{blank}</button>
+      {hits.map((u) => <button key={u.id} type="button" role="option" aria-selected={u.id === value} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(u.id)}><b>{u.name}</b><span className="small muted"> · {desig(u)} · {u.company}</span></button>)}
+      {!hits.length && <div className="small muted" style={{ padding: '8px 10px' }}>No one matches “{q}”.</div>}</div>}
+  </div>;
+}
+// The "All BDEs" filter on the list pages: narrow to one company of the group, or type a person's name.
+export function TeamFilter({ value, onChange, filter = (u) => u.team === 'sales', blank = 'All BDEs' }) {
+  return <><Sel value={value.company || ''} onChange={(v) => onChange({ company: v, owner: '' })} options={COMPANIES} blank="All companies" style={{ width: 'auto' }} aria-label="Company" />
+    <PersonSearch value={value.owner || ''} onChange={(v) => onChange({ company: value.company || '', owner: v })} filter={filter} blank={blank} company={value.company} /></>;
+}
+export const byTeam = (ownerId, f) => (!f.owner || ownerId === f.owner) && (!f.company || user(ownerId)?.company === f.company);
+
 export function People({ value = [], onChange }) {
   const rest = activeUsers().filter((u) => !value.includes(u.id));
   return (

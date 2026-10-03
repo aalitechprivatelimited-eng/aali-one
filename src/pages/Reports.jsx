@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore, list, create, update, store } from '../api.js';
-import { settings, uname, inr, today, addDays, diff, stageProb, stageLabel, pStageLabel, isManager, bdes, activeUsers, MONTHS } from '../lib.js';
+import { settings, uname, inr, today, addDays, diff, stageProb, stageLabel, pStageLabel, isTop, can, bdes, activeUsers, MONTHS } from '../lib.js';
 import { Empty, Pill, In, Sel, Field, Tabs, attempt } from '../ui.jsx';
 import { progress } from './Projects.jsx';
 
@@ -13,9 +13,11 @@ function Bars({ rows, money }) {
 }
 
 export default function Reports() {
-  useStore(); const [tab, setTab] = useState('overview');
-  return <><div className="topbar"><h1>Reports & dashboard</h1></div>
-    <Tabs value={tab} onChange={setTab} tabs={[['overview', 'Overview'], ['sales', 'Sales & BDEs'], ['delivery', 'Projects & IT'], ['custom', 'Build a report']]} />
+  useStore(); const team = store.me.team;
+  const tabs = [isTop() && ['overview', 'Overview'], (isTop() || team === 'sales') && ['sales', 'Sales & BDEs'], (isTop() || team === 'it') && ['delivery', 'Projects & IT'], ['custom', 'Build a report']].filter(Boolean);
+  const [tab, setTab] = useState(tabs[0][0]);
+  return <><div className="topbar"><h1>Reports</h1></div>
+    <Tabs value={tab} onChange={setTab} tabs={tabs} />
     {tab === 'overview' && <Overview />}{tab === 'sales' && <Sales />}{tab === 'delivery' && <Delivery />}{tab === 'custom' && <Custom />}</>;
 }
 
@@ -65,7 +67,7 @@ function Sales() {
       {rows.map((r) => <tr key={r.u.id}><td><b>{r.u.name}</b></td><td className="n">{r.leads}</td><td className="n">{r.calls}</td><td className="n">{r.open}</td><td className="n">{inr(r.pipe)}</td><td className="n" style={{ color: r.fuLate ? 'var(--bad)' : '' }}>{r.fuLate}</td>
         <td className="n">{inr(r.wonV)} ({r.wonN})</td><td className="n">{r.target ? `${Math.round(100 * r.wonV / r.target)}% of ${inr(r.target)}` : '—'}</td><td className="n" style={{ color: r.payLate ? 'var(--bad)' : '' }}>{r.payLate ? inr(r.payLate) : '—'}</td></tr>)}
       {!rows.length && <tr><td colSpan="9" className="muted">Add BDEs in Settings → People.</td></tr>}</tbody></table></div>
-    {isManager() && <Targets month={m} />}</div>;
+    {(store.me.isAdmin || store.me.title === 'salesmgr') && <Targets month={m} />}</div>;
 }
 
 function Targets({ month }) {
@@ -91,10 +93,12 @@ function Delivery() {
 }
 
 const TYPES = { lead: 'Leads', deal: 'Deals', quote: 'Quotations', receipt: 'Receipts', payment: 'Payments to collect', project: 'Projects', task: 'Tasks', ticket: 'Support requests', activity: 'Calls & meetings' };
+const TYPE_SECTION = { lead: 'leads', deal: 'deals', quote: 'quotes', receipt: 'money', payment: 'money', project: 'projects', task: 'tasks', ticket: 'support', activity: 'leads' };
 const GROUPS = { owner: 'Person', source: 'Source', stage: 'Stage', status: 'Status', service: 'Service', kind: 'Type', month: 'Month created', priority: 'Priority', outcome: 'Call outcome' };
 const VALUE = (r) => +r.value || r.totals?.total || +r.amount || 0;
 function Custom() {
-  const [c, setC] = useState({ type: 'deal', by: 'owner', measure: 'count' });
+  const types = Object.fromEntries(Object.entries(TYPES).filter(([k]) => can(TYPE_SECTION[k])));
+  const [c, setC] = useState({ type: Object.keys(types)[0], by: 'owner', measure: 'count' });
   const rows = list(c.type), g = {};
   rows.forEach((r) => { const k = c.by === 'month' ? (r.createdAt || '').slice(0, 7) : c.by === 'owner' ? uname(r.owner || r.createdBy) : c.by === 'stage' && c.type === 'deal' ? stageLabel(r.stage) : r[c.by] || '—';
     (g[k] ||= { n: 0, v: 0 }); g[k].n++; g[k].v += VALUE(r); });
@@ -102,7 +106,7 @@ function Custom() {
   function csv() { const text = [[GROUPS[c.by], c.measure === 'count' ? 'Count' : 'Total ₹'], ...out].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv' })); a.download = `report_${c.type}_by_${c.by}.csv`; a.click(); }
   return <div className="card stack"><div className="row">
-    <Field label="Show"><Sel value={c.type} onChange={(v) => setC({ ...c, type: v })} options={TYPES} /></Field>
+    <Field label="Show"><Sel value={c.type} onChange={(v) => setC({ ...c, type: v })} options={types} /></Field>
     <Field label="Grouped by"><Sel value={c.by} onChange={(v) => setC({ ...c, by: v })} options={GROUPS} /></Field>
     <Field label="Measure"><Sel value={c.measure} onChange={(v) => setC({ ...c, measure: v })} options={[['count', 'How many'], ['sum', 'Total value ₹']]} /></Field>
     <button className="btn" type="button" onClick={csv} style={{ alignSelf: 'end' }}>Download CSV</button></div>

@@ -1,18 +1,20 @@
 import { useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useStore, list, get, create, update, store } from '../api.js';
-import { uname, fmtDate, today, addDays, clientName, escalated } from '../lib.js';
-import { Modal, Field, In, Sel, Area, Pill, Due, Empty, Sample, Log, Comments, Person, attempt, Seg } from '../ui.jsx';
+import { uname, fmtDate, today, addDays, clientName, escalated, canEdit, scope, isTop } from '../lib.js';
+import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, Log, Comments, Person, attempt, Seg, RO, ViewOnly } from '../ui.jsx';
 import { Reason } from './Projects.jsx';
 
 const ST = [['open', 'Open'], ['progress', 'In progress'], ['waiting', 'Waiting for client'], ['resolved', 'Resolved']];
+// The person who fixes a request is chosen by the IT team or management, not by the BDE who raised it.
+const picksFixer = () => store.me.team === 'it' || isTop();
 export default function Support() {
   useStore(); const [sp] = useSearchParams(), [view, setView] = useState('open'), [open, setOpen] = useState(sp.get('client') ? { preset: { clientId: sp.get('client') } } : null);
   const rows = list('ticket').filter((t) => (view === 'open' ? t.status !== 'resolved' : view === 'mine' ? t.owner === store.me.id && t.status !== 'resolved' : t.status === 'resolved'))
     .sort((a, b) => (a.priority === 'urgent' ? -1 : 1) - (b.priority === 'urgent' ? -1 : 1) || (a.promised || '9').localeCompare(b.promised || '9'));
   const all = list('ticket'), late = all.filter((t) => t.status !== 'resolved' && t.promised && t.promised < today()).length;
   return <>
-    <div className="topbar"><h1>Support requests</h1><button className="btn primary" type="button" onClick={() => setOpen({})}>+ Support request</button></div>
+    <div className="topbar"><h1>{scope('support') === 'own' ? 'My support requests' : 'Support requests'} <ViewOnly when={!canEdit('support')} /></h1>{canEdit('support') && <button className="btn primary" type="button" onClick={() => setOpen({})}>+ Support request</button>}</div>
     <div className="stats"><div className="stat"><span className="l">Open</span><span className="v">{all.filter((t) => t.status !== 'resolved').length}</span></div>
       <div className={'stat' + (late ? ' hot' : '')}><span className="l">Past promised date</span><span className="v">{late}</span></div>
       <div className="stat"><span className="l">Resolved this month</span><span className="v">{all.filter((t) => (t.resolvedAt || '').startsWith(today().slice(0, 7))).length}</span></div></div>
@@ -30,11 +32,11 @@ function NewTicket({ onClose, preset = {} }) {
   const projects = list('project').filter((p) => !t.clientId || p.clientId === t.clientId);
   return <Modal title="New support request" onClose={onClose} footer={<button className="btn primary" type="button" onClick={async () => (await attempt(() => create('ticket', t), 'Support request opened.')) && onClose()}>Save</button>}>
     <div className="form"><Field label="Problem *" full><In value={t.title || ''} onChange={up('title')} autoFocus placeholder="e.g. Contact form not sending emails" /></Field>
-      <Field label="Client"><Sel value={t.clientId} onChange={up('clientId')} options={list('client').map((c) => [c.id, c.name])} blank="Choose…" /></Field>
-      <Field label="Project"><Sel value={t.projectId} onChange={up('projectId')} options={projects.map((p) => [p.id, p.name])} blank="None" /></Field>
+      <Field label="Client"><Pick value={t.clientId} onChange={up('clientId')} options={list('client').map((c) => [c.id, c.name, c.city])} blank="Choose…" /></Field>
+      <Field label="Project"><Pick value={t.projectId} onChange={up('projectId')} options={projects.map((p) => [p.id, p.name, clientName(p.clientId)])} blank="None" /></Field>
       <Field label="Priority"><Seg value={t.priority} onChange={up('priority')} options={[['normal', 'Normal'], ['urgent', 'Urgent']]} /></Field>
       <Field label="Promised fix date"><In type="date" value={t.promised} onChange={up('promised')} /></Field>
-      <Field label="Who fixes it"><Person value={t.owner} onChange={up('owner')} filter={(u) => u.team === 'it'} /></Field>
+      <Field label="Who fixes it" hint={picksFixer() ? '' : 'The IT Manager chooses.'}><Person value={t.owner} onChange={up('owner')} disabled={!picksFixer()} filter={(u) => u.team === 'it'} /></Field>
       <Field label="Details" full><Area value={t.detail || ''} onChange={up('detail')} /></Field></div></Modal>;
 }
 
@@ -42,14 +44,14 @@ function Ticket({ id, onClose }) {
   const t = get(id), [pd, setPd] = useState(null); if (!t) return null;
   const set = (d, ok) => attempt(() => update(id, d), ok), p = get(t.projectId);
   return <Modal wide title={`${t.number} · ${t.title}`} onClose={onClose}>
-    <div className="grid2"><div className="stack"><div className="form">
+    <div className="grid2"><RO when={!canEdit('support')}><div className="stack"><div className="form">
       <Field label="Status"><Sel value={t.status} onChange={(v) => set({ status: v }, 'Updated.')} options={ST} /></Field>
       <Field label="Priority"><Seg value={t.priority} onChange={(v) => set({ priority: v })} options={[['normal', 'Normal'], ['urgent', 'Urgent']]} /></Field>
       <Field label="Promised fix date"><In type="date" value={t.promised || ''} onChange={(e) => setPd(e.target.value)} /></Field>
-      <Field label="Who fixes it"><Person value={t.owner} onChange={(v) => set({ owner: v })} filter={(u) => u.team === 'it'} /></Field>
+      <Field label="Who fixes it"><Person value={t.owner} disabled={!picksFixer()} onChange={(v) => set({ owner: v })} filter={(u) => u.team === 'it'} /></Field>
       <Field label="Details" full><Area defaultValue={t.detail} onBlur={(e) => set({ detail: e.target.value })} /></Field></div>
       <div className="small">Client: <b>{clientName(t.clientId) || '—'}</b>{p && <> · Project <Link to={'/projects/' + p.id}>{p.name}</Link></>}</div>
-      {p && <button className="btn sm" type="button" onClick={() => attempt(() => update(p.id, { changes: [{ id: Date.now().toString(36), text: `${t.number}: ${t.title}`, from: 'client', severity: t.priority === 'urgent' ? 'high' : 'normal', owner: t.owner, status: 'open', at: new Date().toISOString(), by: store.me.id }, ...(p.changes || [])] }), 'Added to the project changes list.')}>Add to project changes</button>}</div>
+      {p && canEdit('projects') && <button className="btn sm" type="button" onClick={() => attempt(() => update(p.id, { changes: [{ id: Date.now().toString(36), text: `${t.number}: ${t.title}`, from: 'client', severity: t.priority === 'urgent' ? 'high' : 'normal', owner: t.owner, status: 'open', at: new Date().toISOString(), by: store.me.id }, ...(p.changes || [])] }), 'Added to the project changes list.')}>Add to project changes</button>}</div></RO>
       <div className="stack"><h3>Comments</h3><Comments relType="ticket" relId={id} /><h3>History</h3><Log items={t.log} /></div></div>
     {pd !== null && <Reason title="Why is the promised date changing?" onClose={() => setPd(null)} onSave={(r) => set({ promised: pd, _reason: r }, 'Promised date changed.').then((x) => x && setPd(null))} />}
   </Modal>;

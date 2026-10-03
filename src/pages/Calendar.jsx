@@ -2,12 +2,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore, store, list, get } from '../api.js';
-import { feedItems, forScope, iso, parse, MONTHS, today, addDays, diff, rel, fmtDate, isManager, pStageLabel, projectProgress, daysBetween, uname } from '../lib.js';
+import { feedItems, forScope, iso, parse, MONTHS, today, addDays, diff, rel, fmtDate, isManager, pStageLabel, projectProgress, daysBetween, uname, reach, can } from '../lib.js';
 import { Seg, Pill, Empty, Sample } from '../ui.jsx';
 
 const COLOR = { task: 'info', lead: 'gold', deal: 'gold', cadence: 'gold', activity: 'ok', payment: 'warn', project: 'bad', ticket: 'bad', start: '', milestone: 'info', delivery: 'bad', delivered: 'ok' };
-const GROUPS = [['proj', 'Projects', 'bad', ['project', 'start', 'milestone', 'delivery', 'delivered']], ['follow', 'Follow-ups', 'gold', ['lead', 'deal', 'cadence']], ['meet', 'Calls & meetings', 'ok', ['activity']],
-  ['task', 'Tasks', 'info', ['task']], ['pay', 'Payments', 'warn', ['payment']], ['help', 'Support', 'bad', ['ticket']]];
+const GROUPS = [['proj', 'Projects', 'bad', ['project', 'start', 'milestone', 'delivery', 'delivered'], 'projects'], ['follow', 'Follow-ups', 'gold', ['lead', 'deal', 'cadence'], 'leads'], ['meet', 'Calls & meetings', 'ok', ['activity', 'callback'], 'leads'],
+  ['task', 'Tasks', 'info', ['task'], 'tasks'], ['pay', 'Payments', 'warn', ['payment'], 'money'], ['help', 'Support', 'bad', ['ticket'], 'support']];
 const HUES = ['#b87400', '#2f5fa8', '#2f7d54', '#8a4fa8', '#b23a32', '#1f8a8a', '#a8620a', '#5b6b7a'];
 const STEPS = ['planning', 'design', 'development', 'testing', 'live'];
 const clamp = (n) => Math.max(0, Math.min(100, n));
@@ -39,7 +39,7 @@ function projectEvents(rows) {
 
 export default function Calendar() {
   useStore();
-  const [scope, setScope] = useState(isManager() ? 'team' : 'mine'), [view, setView] = useState('month'), [sel, setSel] = useState(today()), [off, setOff] = useState([]);
+  const wide = reach('calendar'), [scope, setScope] = useState(wide.at(-1)[0]), [view, setView] = useState('month'), [sel, setSel] = useState(today()), [off, setOff] = useState([]);
   const [m, setM] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const first = new Date(m), start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
   const days = [...Array(42)].map((_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return iso(d); });
@@ -52,10 +52,10 @@ export default function Calendar() {
   return <>
     <div className="topbar"><h1>{MONTHS[m.getMonth()]} {m.getFullYear()}</h1><div className="row">
       <Seg value={view} onChange={setView} options={[['month', 'Month'], ['projects', 'Project progress']]} />
-      <Seg value={scope} onChange={setScope} options={[['mine', 'For me'], ['team', 'My team'], ['all', 'Everyone']]} />
+      {wide.length > 1 && <Seg value={scope} onChange={setScope} options={wide} />}
       <button className="btn sm" type="button" onClick={() => shift(-1)} aria-label="Previous month">←</button><button className="btn sm" type="button" onClick={() => { setM(new Date(new Date().getFullYear(), new Date().getMonth(), 1)); setSel(today()); }}>Today</button><button className="btn sm" type="button" onClick={() => shift(1)} aria-label="Next month">→</button></div></div>
     {view === 'projects' ? <Timeline rows={rows} from={addDays(days[0], -28)} /> : <>
-      <div className="row small" style={{ marginBottom: 8 }}><span className="muted">Show:</span>{GROUPS.map(([k, l, c]) => <button key={k} type="button" className={'pill ' + (off.includes(k) ? '' : c)} aria-pressed={!off.includes(k)}
+      <div className="row small" style={{ marginBottom: 8 }}><span className="muted">Show:</span>{GROUPS.filter((g) => can(g[4])).map(([k, l, c]) => <button key={k} type="button" className={'pill ' + (off.includes(k) ? '' : c)} aria-pressed={!off.includes(k)}
         style={{ border: 'none', opacity: off.includes(k) ? 0.55 : 1, textDecoration: off.includes(k) ? 'line-through' : 'none' }} onClick={() => setOff(off.includes(k) ? off.filter((x) => x !== k) : [...off, k])}>{l}</button>)}</div>
       <div className="tbl"><div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,minmax(110px,1fr))', minWidth: 780 }}>
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="calhead">{d}</div>)}

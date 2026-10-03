@@ -1,58 +1,105 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
-import { useStore, store, http, saveSetting, setMe, upsertUser, poll } from '../api.js';
-import { settings, isManager, TITLES, TEAMS, uname, fmtDT, waLink, myJuniors, canAddPeople, COMPANIES, GROUP, desig } from '../lib.js';
-import { Field, In, Sel, Area, Pill, Empty, Modal, attempt, toast } from '../ui.jsx';
+import { NavLink, Link, Routes, Route, Navigate } from 'react-router-dom';
+import { useStore, store, http, saveSetting, setMe, upsertUser, poll, upload } from '../api.js';
+import { settings, isTop, TEAMS, uname, fmtDT, fmtDate, today, addDays, parse, waLink, myJuniors, canAddPeople, COMPANIES, GROUP, desig } from '../lib.js';
+import { ACCESS as TABLE, SECTIONS, ROLES, ROLE_NAME, ADMIN_TITLES, levelOf, levelText } from '../../shared/access.js';
+import { Field, In, Sel, Seg, Area, Pill, Empty, Modal, Avatar, attempt, toast } from '../ui.jsx';
 import { TITLE_TEAM } from '../../shared/defaults.js';
 import { ThemeToggle } from '../theme.jsx';
+import { displayOk, displayChoices } from '../../shared/names.js';
+import { openGuide } from '../guide.jsx';
 
 export default function Settings() {
-  useStore(); const admin = store.me.isAdmin;
+  useStore(); const admin = store.me.isAdmin, top = isTop(), people = canAddPeople() || top;
   const L = ({ to, children }) => <NavLink to={'/settings/' + to} className={({ isActive }) => 'btn sm' + (isActive ? ' primary' : '')}>{children}</NavLink>;
+  // A page opens only for a role that may use it; anyone else lands on My profile, even with a typed link.
+  const only = (ok, page) => (ok ? page : <Navigate to="/settings/me" replace />);
   return <>
     <div className="topbar"><h1>Settings</h1></div>
-    <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{canAddPeople() && <L to="people">{admin ? 'People & teams' : 'My team members'}</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales & report setup</L>}
-      {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{admin && <L to="projects">Project templates</L>}<L to="connections">Connections</L>
-      {isManager() && <L to="audit">Audit log</L>}{admin && <L to="staff">Staff register</L>}{admin && <L to="trash">Recycle bin</L>}{admin && <L to="data">Sample data</L>}<L to="help">Help</L></div>
+    <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{people && <L to="people">{top ? 'People & teams' : 'My team members'}</L>}{top && <L to="access">Who can see what</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales & report setup</L>}
+      {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{admin && <L to="projects">Project templates</L>}{top && <L to="connections">Connections</L>}
+      {top && <L to="audit">Audit log</L>}{top && <L to="staff">Staff register</L>}{admin && <L to="trash">Recycle bin</L>}{admin && <L to="data">Sample data</L>}<L to="help">Help</L></div>
     <Routes>
-      <Route path="me" element={<Me />} /><Route path="people" element={<People />} /><Route path="business" element={<Business />} /><Route path="sales" element={<Sales />} />
-      <Route path="templates" element={<Templates />} /><Route path="plans" element={<Plans />} /><Route path="projects" element={<ProjTemplates />} /><Route path="connections" element={<Connections />} />
-      <Route path="audit" element={<Audit />} /><Route path="staff" element={<Staff />} /><Route path="trash" element={<Trash />} /><Route path="data" element={<Data />} /><Route path="help" element={<Help />} /><Route path="*" element={<Navigate to="me" replace />} />
+      <Route path="me" element={<Me />} /><Route path="people" element={only(people, <People />)} /><Route path="access" element={only(top, <AccessChart />)} /><Route path="business" element={only(admin, <Business />)} /><Route path="sales" element={only(admin, <Sales />)} />
+      <Route path="templates" element={only(admin, <Templates />)} /><Route path="plans" element={only(admin, <Plans />)} /><Route path="projects" element={only(admin, <ProjTemplates />)} /><Route path="connections" element={only(top, <Connections />)} />
+      <Route path="audit" element={only(top, <Audit />)} /><Route path="staff" element={only(top, <Staff />)} /><Route path="trash" element={only(admin, <Trash />)} /><Route path="data" element={only(admin, <Data />)} /><Route path="help" element={<Help />} /><Route path="*" element={<Navigate to="me" replace />} />
     </Routes>
   </>;
 }
 
+// A chosen picture is cut to a square from its middle and made small (256 px), so it loads fast everywhere.
+async function squarePhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('That file is not a picture. Choose a photo (JPG or PNG).')); i.src = url; });
+    const s = Math.min(im.width, im.height), c = document.createElement('canvas'); c.width = c.height = 256;
+    c.getContext('2d').drawImage(im, (im.width - s) / 2, (im.height - s) / 2, s, s, 0, 0, 256, 256);
+    return new File([await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.86))], 'photo.jpg', { type: 'image/jpeg' });
+  } finally { URL.revokeObjectURL(url); }
+}
 function Me() {
-  const me = store.me, [f, setF] = useState({ name: me.name, phone: me.phone, currentPassword: '', password: '' });
-  return <div className="card stack" style={{ maxWidth: 520 }}><h2>My profile</h2>
-    <Field label="Name"><In value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+  const me = store.me, full = me.fullName || me.name, [f, setF] = useState({ name: full, display: me.display || '', phone: me.phone, currentPassword: '', password: '' }), [busy, setBusy] = useState(false);
+  const fits = displayOk(f.display, me.isAdmin ? f.name : full), choices = displayChoices(me.isAdmin ? f.name : full);
+  const savePhoto = (photo, ok) => attempt(async () => setMe((await http('PATCH', '/users/' + me.id, { photo })).user), ok);
+  async function pick(e) { const file = e.target.files[0]; e.target.value = ''; if (!file) return; setBusy(true);
+    await attempt(async () => { const up = await upload(await squarePhoto(file)); setMe((await http('PATCH', '/users/' + me.id, { photo: up.id })).user); }, 'Photo saved. Everyone sees it now.'); setBusy(false); }
+  // Left: what I can change. Right: what I can only read, so a wide screen is used and the page is short.
+  return <div className="profile-cols"><div className="card stack"><h2>My profile</h2>
+    <div className="row" style={{ gap: 14 }}>{me.photo ? <img className="photo-big" src={'/api/files/' + me.photo} alt="My photo" /> : <span className="photo-big" aria-hidden="true">{(full || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>}
+      <div className="stack gap4"><b>My photo</b><span className="small muted">Shown beside your name everywhere, instead of your initials.</span>
+        <div className="row"><label className="btn sm primary" style={{ cursor: 'pointer' }}>{busy ? 'Saving…' : me.photo ? 'Change photo' : 'Add my photo'}<input type="file" accept="image/*" hidden disabled={busy} onChange={pick} /></label>
+          {me.photo && <button className="btn sm" type="button" onClick={() => savePhoto('', 'Photo removed.')}>Remove</button>}</div></div></div>
+    <Field label="Full name" hint={me.isAdmin ? '' : 'Your full name is set by management. Ask them if it is wrong.'}><In value={f.name} disabled={!me.isAdmin} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+    <Field label="Display name – the name shown on screen" hint="Leave it empty to show your full name. It must be made from your own name.">
+      <In value={f.display} maxLength={40} onChange={(e) => setF({ ...f, display: e.target.value })} placeholder={`e.g. ${choices[0] || 'your first name'}`} aria-invalid={!fits} />
+      <div className="row" style={{ gap: 6 }}>{choices.map((x) => <button key={x} type="button" className={'chip' + (f.display.trim().toLowerCase() === x.toLowerCase() ? ' on' : '')} onClick={() => setF({ ...f, display: x })}>{x}</button>)}
+        {f.display && <button type="button" className="btn ghost sm" onClick={() => setF({ ...f, display: '' })}>Use my full name</button>}</div>
+      {!fits && <span className="small" style={{ color: 'var(--bad)' }}>“{f.display}” is not part of your name ({me.isAdmin ? f.name : full}). Each word must be the start of one of your names, at least 3 letters.</span>}</Field>
     <Field label="Mobile (for WhatsApp lists)"><In value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
     <Field label="Designation"><In value={desig(me)} disabled /></Field>
     <h3>Change password</h3><Field label="Current password"><In type="password" value={f.currentPassword} onChange={(e) => setF({ ...f, currentPassword: e.target.value })} autoComplete="current-password" /></Field>
     <Field label="New password (8+ characters)"><In type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="new-password" /></Field>
-    <button className="btn primary" type="button" onClick={async () => { const r = await attempt(() => http('PATCH', '/users/' + me.id, { name: f.name, phone: f.phone, ...(f.password ? { password: f.password, currentPassword: f.currentPassword } : {}) }), 'Saved.'); if (r) { setMe(r.user); setF({ ...f, password: '', currentPassword: '' }); } }}>Save</button>
-    <div className="row"><span className="lbl">Look</span><ThemeToggle label /></div>
-    <p className="small muted">Install on your phone: open Aali One in Chrome → menu → “Add to Home screen”.</p></div>;
+    <button className="btn primary" type="button" disabled={!fits} onClick={async () => { const r = await attempt(() => http('PATCH', '/users/' + me.id, { ...(me.isAdmin ? { name: f.name.trim() } : {}), display: f.display.trim(), phone: f.phone, ...(f.password ? { password: f.password, currentPassword: f.currentPassword } : {}) }), 'Saved.'); if (r) { setMe(r.user); setF({ ...f, password: '', currentPassword: '' }); } }}>Save</button></div>
+    <div className="stack side-info">
+      <div className="card stack"><h2>What your login can open</h2>
+        <ul className="access" style={{ fontSize: 14 }}>{SECTIONS.filter(([k]) => levelOf(me, k)).map(([k, l]) => <li key={k}><b>{l}</b> – {levelText(k, levelOf(me, k))}</li>)}</ul>
+        <p className="small muted" style={{ margin: 0 }}>Anything not in this list is not part of your role. If you need it for your work, ask the Operations Manager.</p></div>
+      <div className="card stack"><h2>Look and phone</h2>
+        <div className="row"><span className="lbl">Look</span><ThemeToggle label /></div>
+        <p className="small muted" style={{ margin: 0 }}>Install on your phone: open Aali One in Chrome → menu → “Add to Home screen”.</p></div>
+    </div></div>;
+}
+
+// The whole access table on one screen: every section against every role.
+function AccessChart() {
+  const tone = (l) => (!l ? '' : l.endsWith(':view') ? 'info' : l === 'all' ? 'ok' : 'gold');
+  return <div className="stack">
+    <p className="small muted" style={{ margin: 0 }}>This is the rule the whole system follows. A section marked “No access” does not appear in that person’s sidebar, its data is never sent to their screen, and the server refuses it even with a typed link.</p>
+    <div className="row small"><Pill k="ok">Full</Pill><span className="muted">sees and changes everything</span><Pill k="gold">Own team / Own only</Pill><span className="muted">limited to their department or to what is theirs</span><Pill k="info">View only</Pill><span className="muted">can look, cannot change</span></div>
+    <div className="tbl"><table className="chart"><thead><tr><th>Section</th>{ROLES.map((r) => <th key={r}>{ROLE_NAME[r]}</th>)}</tr></thead><tbody>
+      {SECTIONS.map(([k, label]) => <tr key={k}><td><b>{label}</b></td>{ROLES.map((r) => { const l = ADMIN_TITLES.includes(r) ? 'all' : TABLE[k][r] || '';
+        return <td key={r}>{l ? <Pill k={tone(l)}>{levelText(k, l)}</Pill> : <span className="faint">No access</span>}</td>; })}</tr>)}</tbody></table></div>
+    <p className="small muted" style={{ margin: 0 }}>The Operations Manager and the Company Secretary also have the admin features: adding and removing people, settings, the recycle bin. Daily reports: the Operations Manager, Company Secretary and Chairman read them and do not write one.</p>
+  </div>;
 }
 
 const TEAM_ROLES = { sales: ['salesmgr', 'bde'], it: ['itmgr', 'itlead', 'dev'], management: ['ops', 'cs', 'chairman'] };
 const TEAM_NOTE = { sales: 'Sales Manager and BDEs. They work on leads, deals, quotations and payments.', it: 'IT Manager, Team Lead and developers. They deliver the projects.', management: 'Operations Manager, Company Secretary and Chairman. They see every department.' };
 // What each role can see and do, in plain words. Shown next to every person and when a role is chosen.
 const ACCESS = {
-  bde: ['Works on own leads, deals, quotations and payments', 'Writes a daily report; sees only their own'],
-  salesmgr: ['Sees the whole Sales team’s work', 'Reads and reviews Sales daily reports', 'Approves discounts; adds BDEs', 'Writes a daily report'],
-  dev: ['Works on own tasks and projects', 'Writes a daily report; sees only their own'],
-  itlead: ['Leads projects and their tasks', 'Writes a daily report', 'Reads developers’ reports only when the Operations Manager switches that on'],
-  itmgr: ['Sees the whole IT team’s work', 'Reads and reviews IT daily reports', 'Approves early starts; adds Team Leads and developers', 'Writes a daily report'],
-  ops: ['Sees every department', 'Reads all daily reports', 'Controls the Team Lead report switch', 'Does not write a daily report'],
-  cs: ['Sees every department', 'Reads all daily reports', 'Does not write a daily report'],
-  chairman: ['Sees every department', 'Reads all daily reports and can remark', 'Does not write a daily report'],
-  admin: ['Sees every department'],
+  bde: ['Works on own leads, deals and clients only', 'Sees the projects and support requests of own clients', 'No quotations, payments, reports page or other people’s leads', 'Writes a daily report; sees only their own'],
+  salesmgr: ['Sees and works on all leads, deals and clients', 'Quotations, receipts and payments', 'Sees projects (view only); raises support requests', 'Reads and reviews Sales daily reports; approves discounts; adds BDEs', 'Writes a daily report'],
+  dev: ['Works on the projects, tasks and support requests given to them', 'No sales, client details or money', 'Writes a daily report; sees only their own'],
+  itlead: ['Works on all projects, tasks and support requests', 'No sales, client details or money', 'Writes a daily report', 'Reads developers’ reports only when the Operations Manager switches that on'],
+  itmgr: ['Runs all projects, tasks and support requests', 'No sales, client details or money', 'Reads and reviews IT daily reports; approves early starts; adds Team Leads and developers', 'Writes a daily report'],
+  ops: ['Sees and changes every department', 'Reads all daily reports', 'Controls the Team Lead report switch', 'Does not write a daily report'],
+  cs: ['Sees and changes every department', 'Reads all daily reports', 'Does not write a daily report'],
+  chairman: ['Sees every department, view only', 'Reads all daily reports and can remark', 'Decides approvals', 'Does not write a daily report'],
+  admin: ['Sees and changes every department'],
 };
 // Access levels are named by what they allow, because the designation is now typed by hand.
 const LEVEL = { bde: 'Sales team member', salesmgr: 'Sales team manager', dev: 'IT team member', itlead: 'IT team lead', itmgr: 'IT team manager', ops: 'Operations Manager', cs: 'Company Secretary', chairman: 'Founder & Chairman', admin: 'Administrator' };
 const ADMIN_ACCESS = 'Admin: adds people in any team, changes settings, sends back or deletes reports, opens the recycle bin';
-const accessOf = (u) => [...(ACCESS[u.title] || []), ...(u.isAdmin ? [ADMIN_ACCESS] : [])];
 const newPassword = () => { const a = new Uint32Array(2); crypto.getRandomValues(a); return 'Aali-' + [...a].map((n) => n.toString(36)).join('').slice(0, 9); };
 // Which company of the group the person works for. Management always belongs to Aali Group itself.
 function CompanyPicker({ team, value, onChange }) {
@@ -76,12 +123,12 @@ function RolePicker({ roles, value, onChange }) {
 function People() {
   const [add, setAdd] = useState(null), [pw, setPw] = useState(null), [made, setMade] = useState(null), [busy, setBusy] = useState(false), [edit, setEdit] = useState(null);
   const me = store.me, adm = me.isAdmin, jun = myJuniors(), can = (u) => adm || (u.id !== me.id && jun.includes(u.title) && !u.isAdmin);
-  if (!canAddPeople()) return <Empty>Only an admin or a department manager can add people.</Empty>;
+  if (!canAddPeople() && !isTop()) return <Empty>Only management or a department manager can open this page.</Empty>;
   const patch = (u, data, ok) => attempt(async () => upsertUser((await http('PATCH', '/users/' + u.id, data)).user), ok);
   const rolesFor = (team) => (adm ? TEAM_ROLES[team] : jun);
   const [ask, setAsk] = useState(null); // a confirm window: { kind: 'off' | 'remove', u, work }
   async function act(a, u) {
-    if (a === 'edit') setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '', firstName: u.firstName || u.name, surname: u.surname || '', pw: '' });
+    if (a === 'edit') setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '', firstName: u.firstName || u.fullName || u.name, surname: u.surname || '', pw: '' });
     if (a === 'password') { if (await attempt(() => http('PATCH', '/users/' + u.id, { password: edit.pw }), u.id === me.id ? 'Your password is changed.' : `Password set. ${u.name} is signed out everywhere. Share the new password privately.`)) setEdit({ ...edit, pw: '' }); }
     if (a === 'on') { if (await patch(u, { active: true }, `${u.name} can sign in again.`)) setEdit(null); }
     if (a === 'off') { setEdit(null); setAsk({ kind: 'off', u }); }
@@ -103,17 +150,22 @@ function People() {
   }
   const loginText = (u) => `Hi ${u.name.split(' ')[0]}, your Aali One login:\n${location.origin}\nEmail: ${u.email}\nPassword: ${u.password}\nPlease change the password after you sign in (Settings → My profile).`;
   return <div className="stack gap16">
-    <p className="small muted" style={{ margin: 0 }}>{adm ? 'Add each person under their team. Beside every name you can read exactly what that person can see and do.' : 'You can add members to your own team, set their password and switch them off or on. Details, company, access and removal are handled by management.'}</p>
-    {Object.entries(TEAMS).filter(([team]) => adm || team === me.team).map(([team, label]) => { const us = store.users.filter((u) => u.team === team && !u.removedAt).sort((x, y) => TEAM_ROLES[team].indexOf(x.title) - TEAM_ROLES[team].indexOf(y.title) || x.name.localeCompare(y.name));
+    <p className="small muted" style={{ margin: 0 }}>{adm ? 'Add each person under their team. Open “What each access level can see and do” to read what a person with that access can open.' : jun.length ? 'You can add members to your own team, set their password and switch them off or on. Details, company, access and removal are handled by management.' : 'You can read who is in each team and what each person can see and do. Changes are made by the Operations Manager or the Company Secretary.'}</p>
+    {Object.entries(TEAMS).filter(([team]) => adm || isTop() || team === me.team).map(([team, label]) => { const us = store.users.filter((u) => u.team === team && !u.removedAt).sort((x, y) => TEAM_ROLES[team].indexOf(x.title) - TEAM_ROLES[team].indexOf(y.title) || x.name.localeCompare(y.name));
       return <section key={team} className="stack" style={{ gap: 8 }}>
         <div className="row between"><div><h2 style={{ margin: 0 }}>{label} team <span className="small muted">{us.filter((u) => u.active).length} active</span></h2><span className="small muted">{TEAM_NOTE[team]}</span></div>
-          <button className="btn primary" type="button" onClick={() => setAdd({ team, title: rolesFor(team).at(-1), password: newPassword(), company: team === 'management' ? GROUP : me.team === 'management' ? '' : me.company })}>+ Add {label} member</button></div>
-        {us.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Surname</th><th>Designation</th><th>What they can see and do</th><th>Status</th><th /></tr></thead><tbody>
+          {(adm || jun.length > 0) && <button className="btn primary" type="button" onClick={() => setAdd({ team, title: rolesFor(team).at(-1), password: newPassword(), company: team === 'management' ? GROUP : me.team === 'management' ? '' : me.company })}>+ Add {label} member</button>}</div>
+        {us.length > 0 && <details className="card" style={{ padding: '12px 16px' }}><summary style={{ cursor: 'pointer', fontWeight: 600 }}>What each access level in the {label} team can see and do</summary>
+          <div className="roles" style={{ marginTop: 10 }}>{[...new Set(us.map((u) => u.title))].map((k) => <div key={k} className="rolecard" style={{ cursor: 'default' }}><div><b>{LEVEL[k] || k}</b>
+            <ul>{(ACCESS[k] || []).map((x) => <li key={x}>{x}</li>)}</ul></div></div>)}
+            {us.some((u) => u.isAdmin) && <div className="rolecard" style={{ cursor: 'default' }}><div><b>Admin (extra)</b><ul><li>{ADMIN_ACCESS.replace('Admin: ', '')}</li></ul></div></div>}</div></details>}
+        {us.length ? <div className="tbl"><table><thead><tr><th>Person</th><th>Designation</th><th>Access level</th><th>Company</th><th>Status</th><th /></tr></thead><tbody>
           {us.map((u) => <tr key={u.id} style={{ opacity: u.active ? 1 : 0.55 }}>
-            <td><b>{u.firstName || u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}<div className="small"><Pill>{u.company}</Pill></div><div className="small muted">{u.email}</div><div className="small muted num">{u.phone || 'No mobile'}</div></td>
-            <td><b>{u.surname || '—'}</b></td>
-            <td><b>{desig(u)}</b><div className="small muted">Access: {LEVEL[u.title] || u.title}</div>{u.isAdmin && <Pill k="info">Admin</Pill>}</td>
-            <td><ul className="access">{accessOf(u).map((x) => <li key={x}>{x}</li>)}</ul></td>
+            <td><div className="row" style={{ flexWrap: 'nowrap', gap: 11 }}><Avatar u={u} /><div style={{ minWidth: 0 }}><b>{u.fullName || u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}{u.display && <span className="small muted"> · shown as “{u.display}”</span>}
+              <div className="small muted">{u.email}{u.phone ? <> · <span className="num">{u.phone}</span></> : ' · no mobile saved'}</div></div></div></td>
+            <td>{desig(u)}</td>
+            <td><Pill k="gold">{LEVEL[u.title] || u.title}</Pill>{u.isAdmin && <> <Pill k="info">Admin</Pill></>}</td>
+            <td className="small muted">{u.company}</td>
             <td>{u.active ? <Pill k="ok">Active</Pill> : <Pill k="bad">Deactivated</Pill>}</td>
             <td style={{ textAlign: 'right' }}>{can(u) || u.id === me.id ? <button className="btn sm" type="button" onClick={() => act('edit', u)}>Actions</button> : null}</td></tr>)}</tbody></table></div>
           : <Empty>No one in the {label} team yet.</Empty>}
@@ -130,22 +182,23 @@ function People() {
         <Field label="Designation" full hint="Type it as it should appear, e.g. BDE - Digital Marketing and Sales."><In value={add.designation || ''} maxLength={80} autoComplete="off" onChange={(e) => setAdd({ ...add, designation: e.target.value })} /></Field>
         <Field label="Company" full>{adm ? <CompanyPicker team={add.team} value={add.company} onChange={(v) => setAdd({ ...add, company: v })} /> : <div className="row"><span className="chip on">{me.company}</span><span className="small muted">Same company as you. Only management can choose another company.</span></div>}</Field>
         <Field label="Access level – what this person should be able to see and do" full><RolePicker roles={rolesFor(add.team)} value={add.title} onChange={(v) => setAdd({ ...add, title: v })} /></Field>
-        {adm && add.team === 'management' && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> <span><b>Also make them an admin</b><br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
+        {adm && add.team === 'management' && !ADMIN_TITLES.includes(add.title) && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> <span><b>Also make them an admin</b><br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
     {edit && <Modal wide title={`Actions for ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Close</button>
-      {adm && <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin && edit.company === edit.u.company && edit.designation === (edit.u.designation || '') && edit.firstName === (edit.u.firstName || edit.u.name) && edit.surname === (edit.u.surname || '')) || !edit.firstName.trim() || !edit.surname.trim() || (TITLE_TEAM[edit.title] !== 'management' && !COMPANIES.includes(edit.company))} onClick={saveEdit}>Save details</button>}</>}>
+      {adm && <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin && edit.company === edit.u.company && edit.designation === (edit.u.designation || '') && edit.firstName === (edit.u.firstName || edit.u.fullName || edit.u.name) && edit.surname === (edit.u.surname || '')) || !edit.firstName.trim() || !edit.surname.trim() || (TITLE_TEAM[edit.title] !== 'management' && !COMPANIES.includes(edit.company))} onClick={saveEdit}>Save details</button>}</>}>
       <div className="stack">{adm ? <><h3 style={{ margin: 0 }}>Details</h3><div className="form"><Field label="Name"><In value={edit.firstName} maxLength={60} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></Field>
         <Field label="Surname"><In value={edit.surname} maxLength={60} onChange={(e) => setEdit({ ...edit, surname: e.target.value })} /></Field></div>
         <Field label="Designation" hint="Leave empty to show the access level's name."><In value={edit.designation} maxLength={80} autoComplete="off" onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
         <div><span className="lbl">Company</span><CompanyPicker team={TITLE_TEAM[edit.title]} value={edit.company} onChange={(v) => setEdit({ ...edit, company: v })} /></div>
         {(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">Access level · {TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
         {TITLE_TEAM[edit.title] !== edit.u.team && <div className="banner">This moves {edit.u.name.split(' ')[0]} from the {TEAMS[edit.u.team]} team to the {TEAMS[TITLE_TEAM[edit.title]]} team.</div>}
-        {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin} disabled={edit.u.id === me.id} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}
+        {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin || ADMIN_TITLES.includes(edit.title)} disabled={edit.u.id === me.id || ADMIN_TITLES.includes(edit.title)} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{ADMIN_TITLES.includes(edit.title) ? <span className="small muted"> (the Operations Manager and Company Secretary are always admins)</span> : edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}
         </> : <div className="stack gap4"><div className="row"><b>{edit.u.name}</b><Pill>{desig(edit.u)}</Pill><Pill>{edit.u.company}</Pill></div><div className="banner info">Name, designation, company and access can be changed only by management. You can set a password and switch this member off or on.</div></div>}
         <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}><h3 style={{ margin: 0 }}>Password</h3>
+          {edit.u.id === me.id ? <span className="small muted">To change your own password, open <Link to="/settings/me">My profile</Link>. It asks for your current password first.</span> : <>
           <div className="row"><In className="in grow" style={{ minWidth: 180, maxWidth: 280 }} value={edit.pw} onChange={(e) => setEdit({ ...edit, pw: e.target.value })} placeholder="New password (8+ characters)" autoComplete="new-password" />
             <button className="btn sm" type="button" onClick={() => setEdit({ ...edit, pw: newPassword() })}>Suggest one</button>
             <button className="btn" type="button" disabled={(edit.pw || '').length < 8} onClick={() => act('password', edit.u)}>Set this password</button></div>
-          <span className="small muted">Note the password down before you press the button. It is not shown again.</span></div>
+          <span className="small muted">Note the password down before you press the button. It is not shown again.</span></>}</div>
         <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}><h3 style={{ margin: 0 }}>Account</h3>
           <div className="row"><span className="small muted">Status:</span>{edit.u.active ? <Pill k="ok">Active</Pill> : <Pill k="bad">Deactivated</Pill>}</div>
           <div className="acts">
@@ -192,6 +245,7 @@ function Lines({ label, value, onChange }) { return <Field label={label} hint="O
 function Sales() {
   const s = settings(), [pipe, setPipe] = useState(structuredClone(s.pipeline)), [srv, setSrv] = useState(structuredClone(s.services)), [src, setSrc] = useState(s.sources), [lost, setLost] = useState(s.lostReasons);
   const [disc, setDisc] = useState(s.discountApprovalPct), [esc, setEsc] = useState(s.escalateDays), [wt, setWt] = useState(structuredClone(s.workTypes));
+  const [cl, setCl] = useState({ ...s.calling }), [inds, setInds] = useState(s.industries), [srcs, setSrcs] = useState(s.listSources);
   return <div className="stack gap16" style={{ maxWidth: 900 }}>
     <div className="card stack"><h2>Deal stages and win chance</h2><p className="small muted" style={{ margin: 0 }}>Win chance is used for “likely income”. Stage keys stay the same; you can rename them.</p>
       {pipe.map((p, i) => <div key={p.key} className="row"><In value={p.label} onChange={(e) => setPipe(pipe.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} style={{ maxWidth: 260 }} />
@@ -204,6 +258,12 @@ function Sales() {
       <div className="row"><button className="btn sm" type="button" onClick={() => setSrv([...srv, { id: 'svc-' + Date.now().toString(36), name: 'New service', unit: 'Project', rate: 0, note: '' }])}>+ Service</button><button className="btn primary sm" type="button" onClick={() => attempt(() => saveSetting('services', srv), 'Saved.')}>Save services</button></div></div>
     <div className="grid2"><div className="card stack"><Lines label="Lead sources" value={src} onChange={setSrc} /><button className="btn primary sm" type="button" onClick={() => attempt(() => saveSetting('sources', src.filter(Boolean)), 'Saved.')}>Save sources</button></div>
       <div className="card stack"><Lines label="Reasons a deal is lost" value={lost} onChange={setLost} /><button className="btn primary sm" type="button" onClick={() => attempt(() => saveSetting('lostReasons', lost.filter(Boolean)), 'Saved.')}>Save reasons</button></div></div>
+    <div className="card stack"><h2>Calling rules – one business, one caller</h2><p className="small muted" style={{ margin: 0 }}>Every number is checked against the call register before it is called or written on a call sheet. These limits protect a business from being called again and again.</p>
+      <div className="form"><Field label="A business stays with its BDE for (days after the last call)"><In type="number" min="1" value={cl.holdDays} onChange={(e) => setCl({ ...cl, holdDays: e.target.value })} /></Field>
+        <Field label="A number kept but never called is freed after (days)"><In type="number" min="1" value={cl.emptyHoldDays} onChange={(e) => setCl({ ...cl, emptyHoldDays: e.target.value })} /></Field>
+        <Field label="Stop after this many calls in a row with no answer"><In type="number" min="1" value={cl.maxTries} onChange={(e) => setCl({ ...cl, maxTries: e.target.value })} /></Field></div>
+      <div className="grid2"><Lines label="Industries (picked on the call sheet)" value={inds} onChange={setInds} /><Lines label="Where calling lists come from (asked at upload)" value={srcs} onChange={setSrcs} /></div>
+      <button className="btn primary sm" type="button" style={{ alignSelf: 'start' }} onClick={() => attempt(async () => { await saveSetting('calling', { holdDays: Math.max(1, +cl.holdDays || 15), emptyHoldDays: Math.max(1, +cl.emptyHoldDays || 2), maxTries: Math.max(1, +cl.maxTries || 3) }); await saveSetting('industries', inds.filter(Boolean)); await saveSetting('listSources', srcs.filter(Boolean)); }, 'Saved.')}>Save calling rules</button></div>
     <div className="card stack"><h2>Kinds of work in the daily report</h2><p className="small muted" style={{ margin: 0 }}>People pick one of these for every line they write, with the minutes spent. Add anything your teams do, such as video making or photo editing.</p>
       <div className="grid2"><Lines label="Sales team" value={wt.sales} onChange={(v) => setWt({ ...wt, sales: v })} /><Lines label="IT team" value={wt.it} onChange={(v) => setWt({ ...wt, it: v })} /></div>
       <button className="btn primary sm" type="button" style={{ alignSelf: 'start' }} onClick={() => attempt(() => saveSetting('workTypes', { sales: wt.sales.filter(Boolean), it: wt.it.filter(Boolean) }), 'Saved.')}>Save kinds of work</button></div>
@@ -271,12 +331,65 @@ function Connections() {
     <div className="grid2">{CONNECT.map(([t, what, need]) => <div key={t} className="card stack gap4"><div className="row between"><h3>{t}</h3><Pill k="warn">Connect later</Pill></div><p style={{ margin: 0 }}>{what}</p><p className="small muted" style={{ margin: 0 }}><b>Needs:</b> {need}</p></div>)}</div></div>;
 }
 
+// Audit log: who did what, kept short on purpose. Every save is written down, so read line by line it never ends. Instead:
+//  · the server folds repeats – the same person changing the same item over a day is one line;
+//  · each day is one line, opened to read; inside it, what is worth a look (deletions, people, settings, money, wrong passwords)
+//    is shown in full, everyday adding and editing is one line for each person, and sign-ins are one line for the day.
+const THING = { lead: 'lead', deal: 'deal', client: 'client', quote: 'quotation', invoice: 'invoice', receipt: 'receipt', payment: 'payment', project: 'project', task: 'task', ticket: 'support request', report: 'daily report',
+  prospect: 'call-register number', asset: 'client-asset upload', collab: 'collaboration', signoff: 'sign-off certificate', approval: 'approval request', target: 'target', activity: 'call or meeting note', comment: 'comment', presence: 'out-of-office note' };
+const WATCH = ['delete', 'restore', 'user', 'settings', 'loginfail', 'import', 'calls', 'sample'], MONEY_TYPES = ['quote', 'invoice', 'receipt', 'payment', 'signoff'];
+const kindOf = (r) => (r.action === 'login' ? 'signin' : WATCH.includes(r.action) || MONEY_TYPES.includes(r.type) ? 'watch' : 'work');
+const thing = (r) => THING[r.type] || r.type || 'item', withA = (w) => (/^[aeiou]/i.test(w) ? 'an ' : 'a ') + w;
+const clock = (s) => new Date(s).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+// One line of the log in plain words: [what happened, the details].
+function say(r) {
+  const s = r.summary || '', times = r.n > 1 ? ` – ${r.n} times` : '', cut = s.lastIndexOf(': ');
+  switch (r.action) {
+    case 'login': return [r.n > 1 ? `Signed in ${r.n} times` : 'Signed in', ''];
+    case 'loginfail': return [`Wrong password tried for ${r.type}${times}`, ''];
+    case 'create': return [`Added ${withA(thing(r))}`, s];
+    case 'update': return [`Changed ${withA(thing(r))}${times}`, cut > 0 ? `${s.slice(0, cut)} · last changed: ${s.slice(cut + 2)}` : s.replace(/^: /, 'last changed: ')];
+    case 'delete': return [`Deleted ${withA(thing(r))}`, s];
+    case 'restore': return ['Restored an item from the recycle bin', ''];
+    case 'settings': return ['Changed a setting', s];
+    case 'import': return ['Brought in a list of leads', s];
+    default: return [s || r.action, ''];
+  }
+}
+// "added 6 leads, changed 3 deals" – one person's everyday work in a day.
+function workSum(rows) {
+  const n = {}; for (const r of rows) { const k = r.action === 'enquiry' ? 'received|website enquiry' : (r.action === 'create' ? 'added' : 'changed') + '|' + thing(r); n[k] = (n[k] || 0) + (r.action === 'update' ? 1 : r.n); }
+  return Object.entries(n).map(([k, c]) => { const [verb, w] = k.split('|'); return `${verb} ${c} ${c === 1 ? w : w.replace(/y$/, 'ie') + 's'}`; }).join(', ');
+}
+const LogLine = ({ r, who = true }) => { const [what, more] = say(r);
+  return <div className="log-line"><span className="num muted">{r.n > 1 ? `${clock(r.first)} – ${clock(r.at)}` : clock(r.at)}</span>{who && <span>{r.user_id ? uname(r.user_id) : '—'}</span>}<span><b>{what}</b>{more && <span className="muted"> · {more}</span>}</span></div>; };
+function LogDay({ day, rows, open }) {
+  const t = today(), name = day === t ? 'Today' : day === addDays(t, -1) ? 'Yesterday' : parse(day).toLocaleDateString('en-IN', { weekday: 'long' });
+  const watch = rows.filter((r) => kindOf(r) === 'watch'), work = rows.filter((r) => kindOf(r) === 'work'), sign = rows.filter((r) => kindOf(r) === 'signin'), people = [...new Set(work.map((r) => r.user_id))];
+  return <details className="log-day" open={open}>
+    <summary><b>{name}</b><span className="muted">{fmtDate(day)}</span><span className="grow" />
+      {watch.length > 0 && <Pill k="warn">{watch.length} worth a look</Pill>}{people.length > 0 && <Pill>{people.length} {people.length === 1 ? 'person' : 'people'} worked</Pill>}{sign.length > 0 && <Pill>{sign.length} signed in</Pill>}</summary>
+    {watch.length > 0 && <><h4>Worth a look</h4>{watch.map((r, i) => <LogLine key={i} r={r} />)}</>}
+    {people.length > 0 && <><h4>Everyday work</h4>{people.map((id) => { const mine = work.filter((r) => r.user_id === id);
+      return <details key={id || 'x'} className="log-who"><summary><b>{id ? uname(id) : 'From the website'}</b><span className="muted">{workSum(mine)}</span></summary>{mine.map((r, i) => <LogLine key={i} r={r} who={false} />)}</details>; })}</>}
+    {sign.length > 0 && <><h4>Sign-ins</h4><details className="log-who"><summary><b>{sign.length} {sign.length === 1 ? 'person' : 'people'} signed in</b><span className="muted">{sign.slice(0, 6).map((r) => uname(r.user_id)).join(', ')}{sign.length > 6 ? ` and ${sign.length - 6} more` : ''}</span></summary>
+      {sign.map((r, i) => <LogLine key={i} r={r} />)}</details></>}
+  </details>;
+}
 function Audit() {
-  const [rows, setRows] = useState(null);
-  useEffect(() => { http('GET', '/audit?limit=400').then((r) => setRows(r.rows), (e) => toast(e.message, true)); }, []);
+  const [rows, setRows] = useState(null), [days, setDays] = useState(7), [who, setWho] = useState(''), [q, setQ] = useState('');
+  useEffect(() => { http('GET', '/audit?days=' + days).then((r) => setRows(r.rows), (e) => toast(e.message, true)); }, [days]);
   if (!rows) return <Empty>Loading…</Empty>;
-  return <div className="tbl"><table><thead><tr><th>When</th><th>Who</th><th>What</th><th>Item</th><th>Details</th></tr></thead><tbody>
-    {rows.map((r) => <tr key={r.id}><td className="num">{fmtDT(r.at)}</td><td>{uname(r.user_id)}</td><td>{r.action}</td><td>{r.type}</td><td>{r.summary}</td></tr>)}</tbody></table></div>;
+  const since = addDays(today(), 1 - days), text = q.trim().toLowerCase(), names = [...new Set(rows.map((r) => r.user_id).filter(Boolean))].map((id) => [id, uname(id)]).sort((x, y) => x[1].localeCompare(y[1]));
+  const shown = rows.filter((r) => r.day >= since && (!who || r.user_id === who) && (!text || `${uname(r.user_id)} ${say(r).join(' ')}`.toLowerCase().includes(text)));
+  const byDay = [...new Set(shown.map((r) => r.day))].sort().reverse();
+  return <div className="stack">
+    <p className="small muted" style={{ margin: 0 }}>Who did what. Each day is one line: open it to read. What is worth a look is listed in full; everyday work is one line for each person, and repeats are folded together.</p>
+    <div className="row"><Seg value={days} onChange={setDays} options={[[1, 'Today'], [7, 'Last 7 days'], [30, 'Last 30 days']]} />
+      <Sel value={who} onChange={setWho} blank="Everyone" options={names} style={{ maxWidth: 220 }} aria-label="Show one person" />
+      <In placeholder="Search the log" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 220 }} /></div>
+    {byDay.length ? byDay.map((d, i) => <LogDay key={d} day={d} rows={shown.filter((r) => r.day === d)} open={i === 0 || !!text} />) : <Empty>{who || text ? 'Nothing matches.' : 'Nothing was done in this time.'}</Empty>}
+  </div>;
 }
 // Staff register: everyone ever added – active, deactivated and removed – with their details and history. Only active people can sign in.
 function Staff() {
@@ -295,10 +408,10 @@ function Staff() {
     <div className="seg" role="group">{[['all', 'Everyone'], ['active', 'Active'], ['deactivated', 'Deactivated'], ['removed', 'Removed']].map(([v, l]) => <button key={v} type="button" aria-pressed={f === v} onClick={() => setF(v)}>{l}</button>)}</div>
     {list.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Designation</th><th>Company · team</th><th>Status</th><th>Joined</th><th>Last signed in</th><th>Left on</th><th>Reason</th><th /></tr></thead><tbody>
       {list.map((u) => { const [l, k] = state(u); return <tr key={u.id} className="click" onClick={() => show(u)} style={{ opacity: u.removedAt ? 0.8 : 1 }}>
-        <td><b>{u.name}</b><div className="small muted">{u.email}</div><div className="small muted num">{u.phone || ''}</div></td><td>{desig(u)}</td><td>{u.company}<div className="small muted">{TEAMS[u.team]} team</div></td>
+        <td><b>{u.fullName || u.name}</b>{u.display && <span className="small muted"> · shown as “{u.display}”</span>}<div className="small muted">{u.email}</div><div className="small muted num">{u.phone || ''}</div></td><td>{desig(u)}</td><td>{u.company}<div className="small muted">{TEAMS[u.team]} team</div></td>
         <td><Pill k={k}>{l}</Pill>{u.isAdmin && <> <Pill k="info">Admin</Pill></>}</td><td className="num">{u.createdAt ? fmtDT(u.createdAt) : '—'}</td><td className="num">{u.lastLogin ? fmtDT(u.lastLogin) : 'Never'}</td>
         <td className="num">{u.removedAt ? fmtDT(u.removedAt) : '—'}</td><td style={{ maxWidth: 200 }}>{u.removedReason || '—'}</td><td className="small muted">History</td></tr>; })}</tbody></table></div> : <Empty>No one in this list.</Empty>}
-    {open && <Modal wide title={open.name} onClose={() => setOpen(null)} footer={<><span />{open.removedAt ? <button className="btn primary" type="button" onClick={() => restore(open)}>Restore to the team</button> : <button className="btn" type="button" onClick={() => setOpen(null)}>Close</button>}</>}>
+    {open && <Modal wide title={open.fullName || open.name} onClose={() => setOpen(null)} footer={<><span />{open.removedAt && store.me.isAdmin ? <button className="btn primary" type="button" onClick={() => restore(open)}>Restore to the team</button> : <button className="btn" type="button" onClick={() => setOpen(null)}>Close</button>}</>}>
       <div className="stack"><div className="row"><Pill k={state(open)[1]}>{state(open)[0]}</Pill><Pill>{desig(open)}</Pill><Pill>{open.company}</Pill><Pill>{TEAMS[open.team]} team</Pill></div>
         <div className="form"><div><span className="lbl">Login email</span><div>{open.email}</div></div><div><span className="lbl">Mobile</span><div className="num">{open.phone || '—'}</div></div>
           <div><span className="lbl">Joined</span><div className="num">{open.createdAt ? fmtDT(open.createdAt) : '—'}</div></div><div><span className="lbl">Last signed in</span><div className="num">{open.lastLogin ? `${fmtDT(open.lastLogin)} · ${open.logins} sign-in${open.logins === 1 ? '' : 's'} in all` : 'Never'}</div></div>
@@ -322,7 +435,9 @@ function Data() {
     <button className="btn danger" type="button" onClick={() => attempt(async () => { const r = await http('POST', '/sample/clear'); location.reload(); return r; }, 'Sample data removed.')}>Remove all sample data</button></div>;
 }
 function Help() {
-  return <div className="card stack" style={{ maxWidth: 820 }}><h2>How Aali One works</h2><ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
+  return <div className="card stack" style={{ maxWidth: 820 }}>
+    <div className="row between"><h2 style={{ margin: 0 }}>How Aali One works</h2><button className="btn" type="button" onClick={openGuide}>Show the first-day guide again</button></div>
+    <p className="small muted" style={{ margin: 0 }}>To find a lead, client or business quickly, press <b>Ctrl + K</b> anywhere and type a name or a number.</p><ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
     <li><b>Enquiry</b> (form, website /enquire, or import) → duplicate check on mobile + service → given to the next BDE, or the client's own BDE.</li>
     <li><b>Lead</b>: call, log the outcome, set the next follow-up, mark Hot / Warm / Cold. <b>Convert</b> → client + deal.</li>
     <li><b>Deal</b>: stages with win chance, quick actions, follow-up plans, quotation (discount over the limit needs approval).</li>

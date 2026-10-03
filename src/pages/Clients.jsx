@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore, list, get, create, update, remove, store } from '../api.js';
-import { uname, fmtDate, inr, stageLabel, pStageLabel, isManager, mobile10, canMoney } from '../lib.js';
-import { Modal, Field, In, Area, Pill, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, attempt, toast } from '../ui.jsx';
+import { uname, fmtDate, inr, stageLabel, pStageLabel, isManager, mobile10, canMoney, canEdit, scope } from '../lib.js';
+import { Modal, Field, In, Area, Pill, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, attempt, toast, RO, ViewOnly } from '../ui.jsx';
 import { useId } from '../App.jsx';
 
 export default function Clients() { useStore(); const id = useId(); return id ? <ClientView id={id} /> : <ClientList />; }
@@ -15,29 +15,29 @@ export function clientMoney(id) {
 }
 
 function ClientList() {
-  const nav = useNavigate(), [q, setQ] = useState(''), [add, setAdd] = useState(false);
+  const nav = useNavigate(), [q, setQ] = useState(''), [add, setAdd] = useState(false), edit = canEdit('clients'), own = scope('clients') === 'own', money = canMoney();
   const rows = list('client').filter((c) => !q || `${c.name} ${c.phone} ${c.city} ${c.gstin}`.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
   return <>
-    <div className="topbar"><h1>Clients <small>{rows.length}</small></h1><button className="btn primary" type="button" onClick={() => setAdd(true)}>+ New client</button></div>
+    <div className="topbar"><h1>{own ? 'My clients' : 'Clients'} <small>{rows.length}</small> <ViewOnly when={!edit} /></h1>{edit && <button className="btn primary" type="button" onClick={() => setAdd(true)}>+ New client</button>}</div>
     <In placeholder="Search name, phone, city, GSTIN" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 320, marginBottom: 12 }} />
-    {rows.length ? <div className="tbl"><table><thead><tr><th>Client</th><th>BDE</th><th className="n">Deals</th><th className="n">Projects</th><th className="n">Received</th><th className="n">Due</th><th>Rating</th></tr></thead><tbody>
+    {rows.length ? <div className="tbl"><table><thead><tr><th>Client</th><th>BDE</th><th className="n">Deals</th><th className="n">Projects</th>{money && <th className="n">Received</th>}{money && <th className="n">Due</th>}<th>Rating</th></tr></thead><tbody>
       {rows.map((c) => { const m = clientMoney(c.id); return <tr key={c.id} className="click" onClick={() => nav('/clients/' + c.id)}>
         <td><b>{c.name}</b><div className="small muted">{c.phone}{c.city ? ' · ' + c.city : ''}</div><Sample on={c.sample} /></td><td>{uname(c.owner)}</td>
         <td className="n">{list('deal').filter((d) => d.clientId === c.id).length}</td><td className="n">{list('project').filter((p) => p.clientId === c.id).length}</td>
-        <td className="n">{inr(m.received)}</td><td className="n">{m.due ? inr(m.due) : '—'}</td><td>{m.rating ? '★'.repeat(Math.round(m.rating)) : '—'}</td></tr>; })}
+        {money && <td className="n">{inr(m.received)}</td>}{money && <td className="n">{m.due ? inr(m.due) : '—'}</td>}<td>{m.rating ? '★'.repeat(Math.round(m.rating)) : '—'}</td></tr>; })}
     </tbody></table></div> : <Empty>No clients yet. Convert a lead, or add one with “+ New client”.</Empty>}
     {add && <ClientForm onClose={() => setAdd(false)} />}
   </>;
 }
 
 export function ClientForm({ onClose }) {
-  const nav = useNavigate(), [f, setF] = useState({ owner: store.me.id }); const up = (k) => (e) => setF({ ...f, [k]: e?.target ? e.target.value : e });
+  const nav = useNavigate(), [f, setF] = useState({ owner: store.me.id }), own = scope('clients') === 'own'; const up = (k) => (e) => setF({ ...f, [k]: e?.target ? e.target.value : e });
   return <Modal title="New client" onClose={onClose} footer={<button className="btn primary" type="button" onClick={async () => { const r = await attempt(() => create('client', { ...f, contacts: f.contact ? [{ name: f.contact, phone: f.phone, email: f.email, role: '' }] : [] })); if (r) { onClose(); nav('/clients/' + r.record.id); } }}>Save client</button>}>
     <div className="form">
       <Field label="Client / company name *" full><In value={f.name || ''} onChange={up('name')} autoFocus /></Field>
       <Field label="Main contact"><In value={f.contact || ''} onChange={up('contact')} /></Field><Field label="Phone"><In value={f.phone || ''} onChange={up('phone')} /></Field>
       <Field label="Email"><In value={f.email || ''} onChange={up('email')} /></Field><Field label="City"><In value={f.city || ''} onChange={up('city')} /></Field>
-      <Field label="GSTIN"><In value={f.gstin || ''} onChange={up('gstin')} /></Field><Field label="BDE"><Person value={f.owner} onChange={up('owner')} filter={(u) => u.team === 'sales'} /></Field>
+      <Field label="GSTIN"><In value={f.gstin || ''} onChange={up('gstin')} /></Field><Field label="BDE"><Person value={f.owner} onChange={up('owner')} disabled={own} filter={(u) => u.team === 'sales'} /></Field>
       <Field label="Address" full><Area value={f.address || ''} onChange={up('address')} /></Field>
     </div></Modal>;
 }
@@ -45,7 +45,7 @@ export function ClientForm({ onClose }) {
 function ClientView({ id }) {
   const nav = useNavigate(), c = get(id), [contact, setContact] = useState(null), [merge, setMerge] = useState(false);
   if (!c) return <Empty>This client was not found. <Link to="/clients">Back to clients</Link></Empty>;
-  const set = (data, ok) => attempt(() => update(id, data), ok), m = clientMoney(id);
+  const set = (data, ok) => attempt(() => update(id, data), ok), m = clientMoney(id), edit = canEdit('clients'), own = scope('clients') === 'own';
   const deals = list('deal').filter((d) => d.clientId === id), quotes = list('quote').filter((q) => q.clientId === id || deals.some((d) => d.id === q.dealId));
   const projects = list('project').filter((p) => p.clientId === id), pays = list('payment').filter((p) => p.clientId === id);
   const receipts = list('receipt').filter((r) => r.clientId === id), invoices = list('invoice').filter((r) => r.clientId === id);
@@ -53,22 +53,22 @@ function ClientView({ id }) {
   const leads = list('lead').filter((l) => l.clientId === id || (c.mobile10 && l.mobile10 === c.mobile10));
   const Sec = ({ title, children, empty }) => <div className="card stack"><h2>{title}</h2>{children}{empty && <p className="small muted" style={{ margin: 0 }}>{empty}</p>}</div>;
   return <>
-    <div className="topbar"><h1>{c.name} <small>{c.city}{c.gstin ? ' · GSTIN ' + c.gstin : ''}</small></h1>
-      <div className="row"><Link className="btn" to="/clients">All clients</Link><Link className="btn" to={`/support?client=${id}`}>+ Support request</Link>{isManager() && <button className="btn" type="button" onClick={() => setMerge(true)}>Merge duplicate</button>}</div></div>
+    <div className="topbar"><h1>{c.name} <small>{c.city}{c.gstin ? ' · GSTIN ' + c.gstin : ''}</small> <ViewOnly when={!edit} /></h1>
+      <div className="row"><Link className="btn" to="/clients">All clients</Link>{canEdit('support') && <Link className="btn" to={`/support?client=${id}`}>+ Support request</Link>}{isManager() && edit && <button className="btn" type="button" onClick={() => setMerge(true)}>Merge duplicate</button>}</div></div>
     <div className="stats">
       {canMoney() && <div className="stat"><span className="l">Received</span><span className="v">{inr(m.received)}</span></div>}
       {canMoney() && <div className={'stat' + (m.due ? ' warm' : '')}><span className="l">Still due</span><span className="v">{inr(m.due)}</span></div>}
       <div className="stat"><span className="l">Deals</span><span className="v">{deals.length}</span></div>
       <div className="stat"><span className="l">Rating</span><span className="v">{m.rating ? m.rating.toFixed(1) + ' ★' : '—'}</span></div>
     </div>
-    <div className="grid2">
+    <RO when={!edit}><div className="grid2">
       <Sec title="Details"><div className="form">
         <Field label="Name"><In defaultValue={c.name} onBlur={(e) => e.target.value !== c.name && set({ name: e.target.value })} /></Field>
         <Field label="Phone"><In defaultValue={c.phone} onBlur={(e) => set({ phone: e.target.value, mobile10: mobile10(e.target.value) })} /></Field>
         <Field label="Email"><In defaultValue={c.email} onBlur={(e) => set({ email: e.target.value })} /></Field>
         <Field label="City"><In defaultValue={c.city} onBlur={(e) => set({ city: e.target.value })} /></Field>
         <Field label="GSTIN"><In defaultValue={c.gstin} onBlur={(e) => set({ gstin: e.target.value })} /></Field>
-        <Field label="BDE"><Person value={c.owner} onChange={(v) => set({ owner: v })} filter={(u) => u.team === 'sales'} /></Field>
+        <Field label="BDE"><Person value={c.owner} disabled={own} onChange={(v) => set({ owner: v })} filter={(u) => u.team === 'sales'} /></Field>
         <Field label="Address" full><Area defaultValue={c.address} onBlur={(e) => set({ address: e.target.value })} /></Field>
         <Field label="Tags" full><In defaultValue={(c.tags || []).join(', ')} onBlur={(e) => set({ tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })} /></Field>
       </div><div className="row"><Sample on={c.sample} /><span className="grow" />{isManager() && <DeleteButton id={id} after={() => nav('/clients')} />}</div></Sec>
@@ -91,7 +91,7 @@ function ClientView({ id }) {
       <Sec title="Files"><Attachments value={c.files || []} onChange={(files) => set({ files })} /></Sec>
       <Sec title="Comments"><Comments relType="client" relId={id} /></Sec>
       <Sec title="History"><Log items={c.log} /></Sec>
-    </div>
+    </div></RO>
     {contact && <Modal title="Add contact" onClose={() => setContact(null)} footer={<button className="btn primary" type="button" onClick={async () => (await set({ contacts: [...(c.contacts || []), { ...contact, mobile10: mobile10(contact.phone) }] }, 'Contact added.')) && setContact(null)}>Add</button>}>
       <div className="form">{['name', 'role', 'phone', 'email'].map((k) => <Field key={k} label={k[0].toUpperCase() + k.slice(1)}><In value={contact[k] || ''} onChange={(e) => setContact({ ...contact, [k]: e.target.value })} /></Field>)}</div></Modal>}
     {merge && <Merge keep={c} onClose={() => setMerge(false)} />}

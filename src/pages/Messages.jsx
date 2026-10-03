@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useStore, list, store } from '../api.js';
-import { feedItems, forScope, today, addDays, diff, escalated, inr, isManager, isTop, activeUsers, TITLES, desig, waLink, stageProb, MONTHS, canMoney } from '../lib.js';
+import { feedItems, forScope, today, addDays, diff, escalated, inr, isManager, isTop, activeUsers, desig, waLink, stageProb, MONTHS, canMoney, can } from '../lib.js';
 import { Empty, Pill, toast } from '../ui.jsx';
 
 function digest(u) {
@@ -39,11 +39,11 @@ function Card({ u, text, sub }) {
 }
 export default function Messages() {
   useStore(); const me = store.me, all = isManager() ? activeUsers() : [me];
-  if (!me.isAdmin) return <Empty>WhatsApp messages are for management only.</Empty>;
+  if (!can('messages')) return <Empty>WhatsApp messages are for management only.</Empty>;
   const cards = all.map((u) => ({ u, d: digest(u) })).filter((x) => x.d);
   const tops = activeUsers().filter((u) => isTop(u) && !u.isAdmin || ['ops', 'cs', 'chairman'].includes(u.title));
   return <>
-    <div className="topbar"><h1>WhatsApp messages</h1><Link className="btn" to="/settings/connections">Switch on automatic sending</Link></div>
+    <div className="topbar"><h1>WhatsApp messages</h1>{me.isAdmin && <Link className="btn" to="/settings/connections">Switch on automatic sending</Link>}</div>
     <div className="banner info" style={{ marginBottom: 14 }}>Today these are one tap: tap “Send on WhatsApp” and press send. Automatic sending every morning needs a WhatsApp Business API account (Settings → Connections).</div>
     <h2 style={{ marginBottom: 8 }}>Daily lists <span className="small muted">{cards.length}</span></h2>
     {cards.length ? <div className="grid2">{cards.map(({ u, d }) => <Card key={u.id} u={u} text={d.text} sub={`${d.n} item${d.n === 1 ? '' : 's'}`} />)}</div> : <Empty>Nobody has anything due today or tomorrow.</Empty>}
