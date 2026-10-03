@@ -17,9 +17,9 @@ export function Toaster() {
 export const toast = (msg, bad = false) => toastSet?.({ msg, bad, k: Math.random() });
 export async function attempt(fn, ok) { try { const r = await fn(); if (ok) toast(ok); return r ?? true; } catch (e) { toast(e.message, true); return false; } }
 
-// The page behind stays still while a pop-up is open. The room its scroll bar took is kept, so nothing jumps sideways.
+// The page behind stays still while a pop-up (or the phone menu) is open. The room its scroll bar took is kept, so nothing jumps sideways.
 let locks = 0;
-function lockPage(by) {
+export function lockPage(by) {
   const el = document.documentElement, was = locks; locks += by;
   if (!was && locks) { const bar = innerWidth - el.clientWidth; el.style.overflow = 'hidden'; document.body.style.paddingRight = bar ? bar + 'px' : ''; }
   if (was && !locks) { el.style.overflow = ''; document.body.style.paddingRight = ''; }

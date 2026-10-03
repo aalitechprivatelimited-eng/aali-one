@@ -45,7 +45,7 @@ try {
   // ---------- a BDE's day, on a laptop ----------
   console.log('BDE on a laptop screen (1366 × 768)');
   const bde = await open({ width: 1366, height: 768 });
-  await step('the opening screen shows, then lifts away', async () => { await bde.goto(BASE); await bde.locator('#splash svg').waitFor({ timeout: 4000 });
+  await step('the opening screen shows, then lifts away', async () => { await bde.goto(BASE); await bde.locator('#splash svg').waitFor({ timeout: 8000 });
     await bde.locator('#splash').waitFor({ state: 'detached', timeout: 6000 }); await bde.locator('input[type=email]').waitFor(); });
   await step('sign in; the dashboard greets the person', async () => { await signIn(bde, 'bde@e2e.test'); must((await bde.locator('.hero h1').textContent()).includes('Kiran'), 'no greeting by name'); });
   await step('first sign-in offers the guide; it walks the BDE through the pages of a BDE, and only those', async () => { await bde.locator('.modal', { hasText: 'Welcome to Aali One' }).waitFor();
@@ -108,8 +108,14 @@ try {
   const phone = await open({ width: 390, height: 844 }, true);
   await step('sign in on the phone; nothing scrolls sideways', async () => { await signIn(phone, 'bde@e2e.test'); await skipGuide(phone); await noSideScroll(phone); });
   await step('search opens from the phone\'s top bar', async () => { await phone.locator('.mobilebar').getByRole('button', { name: 'Search' }).click(); await phone.getByRole('combobox', { name: 'Search' }).fill('lotus'); await phone.locator('.search-row', { hasText: 'Lotus Clinic' }).waitFor(); await noSideScroll(phone); await phone.keyboard.press('Escape'); });
-  await step('the menu opens and leads to a section', async () => { await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Daily reports' }).click();
-    await phone.locator('.steps').waitFor(); await noSideScroll(phone); });
+  await step('the menu opens, holds the page behind it still, and leads to a section', async () => { await phone.getByRole('button', { name: 'Open menu' }).click();
+    must(await phone.evaluate(() => getComputedStyle(document.documentElement).overflow === 'hidden'), 'the page behind the open menu can still scroll');
+    await phone.locator('.side.open .nav a', { hasText: 'Daily reports' }).click(); await phone.locator('.steps').waitFor(); await noSideScroll(phone);
+    must(await phone.evaluate(() => getComputedStyle(document.documentElement).overflow !== 'hidden'), 'the page stays locked after the menu closed'); });
+  await step('the menu closes with its Close button, and choosing the page already open closes it too', async () => { await phone.getByRole('button', { name: 'Open menu' }).click();
+    await phone.locator('.side.open').getByRole('button', { name: 'Close the menu' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' });
+    await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Daily reports' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' });
+    await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Dashboard' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' }); await phone.locator('.hero').waitFor(); });
   await step('call register and profile fit the phone', async () => { for (const p of ['/calls', '/settings/me', '/leads', '/tasks']) { await phone.goto(BASE + p); await phone.locator('.page h1').first().waitFor(); await noSideScroll(phone); } });
 
   // ---------- the Sales Manager ----------

@@ -1,7 +1,7 @@
 import { useEffect, useState, lazy, Suspense, Fragment } from 'react';
 import { Routes, Route, Navigate, Link, useLocation, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list } from './api.js';
-import { Toaster, In, Field, Empty, Avatar, attempt, toast } from './ui.jsx';
+import { Toaster, In, Field, Empty, Avatar, attempt, toast, lockPage } from './ui.jsx';
 import { feedItems, forScope, diff, isTop, can, desig } from './lib.js';
 import { SECTIONS } from '../shared/access.js';
 import { ThemeToggle } from './theme.jsx';
@@ -116,6 +116,12 @@ function Shell() {
   const [mini, setMini] = useState(() => { try { return localStorage.getItem('aali-side') === 'mini'; } catch { return false; } });
   const flip = (v) => { setMini(v); try { localStorage.setItem('aali-side', v ? 'mini' : 'full'); } catch {} };
   useEffect(() => setOpen(false), [loc.pathname]);
+  // While the phone menu is open the page behind it is held still: a fast swipe that reaches the end of the menu would otherwise
+  // carry on into the page, and the phone's address bar would hide, making the open menu look as if it flows upwards.
+  useEffect(() => { if (!open) return; lockPage(1); return () => lockPage(-1); }, [open]);
+  // The phone menu closes with its Close button, a tap on the dim area beside it, the Esc key, or by choosing any page in it –
+  // the page already open too (tapping Dashboard while on the dashboard closes the menu and shows it).
+  useEffect(() => { if (!open) return; const k = (e) => e.key === 'Escape' && setOpen(false); addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, [open]);
   useReminders();
   const late = forScope(feedItems(), 'mine').filter((i) => diff(i.due) <= 0).length;
   const unread = list('notice').filter((n) => n.to === me.id && !n.read).length;
@@ -128,9 +134,10 @@ function Shell() {
   return (
     <div className={'shell' + (mini ? ' mini' : '')}>
       <ScrollLine />
-      <aside className={'side' + (open ? ' open' : '')}>
+      <aside className={'side' + (open ? ' open' : '')} onClick={(e) => open && e.target.closest('a') && setOpen(false)}>
         <div className="brand"><button type="button" className="logo" onClick={() => mini && flip(false)} title={mini ? 'Open the sidebar' : 'Aali One'} aria-label={mini ? 'Open the sidebar' : 'Aali One'}><img src="/icon.svg" alt="" /><Ico k="side" /></button>
           <div className="brand-t"><b>Aali One</b><span>Aali Group</span></div>
+          <button type="button" className="btn ghost sm shut" onClick={() => setOpen(false)} aria-label="Close the menu">Close</button>
           <button type="button" className="collapse" onClick={() => flip(true)} title="Collapse the sidebar" aria-label="Collapse the sidebar"><Ico k="side" /></button></div>
         <button type="button" className="side-search" onClick={openSearch} data-tip="Search" aria-label="Search (Ctrl + K)"><Ico k="search" /><span className="lab">Search</span><kbd>Ctrl K</kbd></button>
         <m.nav className="nav" layoutScroll aria-label="Sections">
