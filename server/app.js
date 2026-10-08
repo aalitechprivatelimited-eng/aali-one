@@ -5,7 +5,7 @@ import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSwe
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
 import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE } from '../shared/access.js';
 import { hrmConnected, hrmMonth, hrmPeople, hrmEmailOf, hrmEnv, hrmFind } from './hrm.js';
-import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE } from './whatsapp.js';
+import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE, REPORT_BUTTON } from './whatsapp.js';
 // WhatsApp sending: in the background on the VPS; waited for on Vercel, which may stop a function once it has answered (server/whatsapp.js).
 const sendWa = async (db, now) => { const k = kickOutbox(db, now); if (waitForSending()) await k; };
 import { attendanceDays, onBasis, clientPay } from '../shared/payroll.js';
@@ -428,7 +428,7 @@ export async function handle(req, res) {
       if (!(admin || isTop(user))) throw new Rule('WhatsApp settings are for management and the admin.', 403);
       const people = (await db.query("select id, name, phone from users where active and removed_at is null and team = 'management' and title <> 'admin' order by name")).rows.map((u) => ({ id: u.id, name: u.name, number: waNumber(u.phone) }));
       const recent = (await db.query("select o.id, o.kind, o.to_user, o.status, o.tries, o.error, o.created_at, o.sent_at, r.data->>'owner' as writer, r.data->>'date' as date from outbox o left join records r on r.id = o.ref order by o.id desc limit 30")).rows;
-      return send(res, 200, { ready: waReady(), template: { ...waTemplate(), text: REPORT_TEMPLATE }, people, recent });
+      return send(res, 200, { ready: waReady(), template: { ...waTemplate(), text: REPORT_TEMPLATE, button: REPORT_BUTTON.url() }, people, recent });
     }
     if (path === '/whatsapp/template' && method === 'GET') {
       if (!(admin || isTop(user))) throw new Rule('WhatsApp settings are for management and the admin.', 403);

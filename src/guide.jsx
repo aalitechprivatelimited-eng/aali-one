@@ -102,7 +102,8 @@ function build(me) {
 
 export function Guide() {
   const me = store.me, nav = useNavigate(), loc = useLocation();
-  const [ask, setAsk] = useState(() => !seen(me.id)), [on, setOn] = useState(false), [at, setAt] = useState(0), [box, setBox] = useState(null);
+  // Not over a single report opened from a WhatsApp message (/daily/<date>/<person>): the welcome waits for the next ordinary visit.
+  const [ask, setAsk] = useState(() => !seen(me.id) && !/^\/daily\/\d{4}-\d\d-\d\d\//.test(loc.pathname)), [on, setOn] = useState(false), [at, setAt] = useState(0), [box, setBox] = useState(null);
   const list = useMemo(() => (on || ask ? build(me) : []), [on, ask, me.title, me.isAdmin]), s = list[at], last = at === list.length - 1;
   useEffect(() => { const show = () => { setAsk(false); setAt(0); setOn(true); }; addEventListener('aali-guide', show); return () => removeEventListener('aali-guide', show); }, []);
   // Each step opens its own section.

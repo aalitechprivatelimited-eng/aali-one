@@ -1084,7 +1084,7 @@ test('client payroll from an HRM: on a ÷ 26 or ÷ 30 rule a monthly salary is p
 });
 
 test('WhatsApp: a submitted daily report goes to each person in management on WhatsApp at once, as the approved template; failures are tried again', async () => {
-  const { setWaSender, flushOutbox, reportLine } = await import('../server/whatsapp.js');
+  const { setWaSender, flushOutbox, reportLines } = await import('../server/whatsapp.js');
   const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
   for (const [id, email, title, team, phone] of [['u_wops', 'wops@test.in', 'ops', 'management', '98480 22334'], ['u_wcs', 'wcs@test.in', 'cs', 'management', '+91 9000011111'], ['u_wch', 'wch@test.in', 'chairman', 'management', ''],
     ['u_wb', 'wb@test.in', 'bde', 'sales', '9123456780'], ['u_wb2', 'wb2@test.in', 'bde', 'sales', ''], ['u_wsm', 'wsm@test.in', 'salesmgr', 'sales', '9876501234']])
@@ -1099,16 +1099,21 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
   try {
     const t0 = new Date(Date.now() - 3 * 3600e3).toISOString(), t1 = new Date(Date.now() - 3600e3).toISOString();
     const r = (await add(B, 'report', { entries: [{ text: 'Called the Guntur list\twith 4 spaces    here', kind: 'Calling', start: t0, end: t1, state: 'done' }] })).record;
-    await patch(B, r.id, { calls: [{ org: 'Sri Sai Traders', phone: '9988776655', resp: 'Interested', meeting: 'Fri 11 am' }, { org: 'Ravi Stores', phone: '9988776644', resp: 'Call back' }], plan: 'Visit Sri Sai Traders\nand send the quote' });
+    await patch(B, r.id, { calls: [{ org: 'Sri Sai Traders', phone: '9988776655', resp: 'Interested', meeting: 'Fri 11 am' }, { org: 'Ravi Stores', phone: '9988776644', resp: 'Call back' }], blockers: 'Need the price list\tfrom the office    today\nplease' });
     assert.equal((await patch(B, r.id, { status: 'submitted' })).status, 200);
     await wait();
     // The Operations Manager and the Company Secretary (each with a mobile); not the Chairman (no number yet), not the Sales Manager (not management).
     assert.deepEqual(sent.map((m) => m.to).sort(), ['919000011111', '919848022334']);
     const p = sent[0].template.components[0].parameters.map((x) => x.text);
-    assert.equal(sent[0].template.name, 'daily_report'); assert.equal(p.length, 4);
-    assert.match(p[0], /^wb, BDE$/); assert.match(p[2], /1 task: Called the Guntur list · with 4 spaces   here · 2 calls: 1 interested, 1 call back, 1 meeting fixed · Tomorrow: Visit Sri Sai Traders · and send the quote/);
+    // The user's format: date · the person in bold · the day line · the calls line · the kinds of work · the problem · the link.
+    assert.equal(sent[0].template.name, 'daily_report'); assert.equal(p.length, 6);
+    assert.match(p[0], /^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4}$/); assert.equal(p[1], '*wb* (BDE)');
+    assert.match(p[2], /^\d{1,2}:\d\d (am|pm) – \d{1,2}:\d\d (am|pm) · Worked 2 h · Nothing recorded 1 h$/);
+    assert.equal(p[3], '2 calls · 1 interested · 1 to call back · 1 meeting fixed · 0 met in person');
+    assert.equal(p[4], 'Calling 2 h'); assert.equal(p[5], 'Need the price list · from the office   today · please');
     assert.ok(p.every((x) => !/[\n\t]| {4}/.test(x)), 'no line breaks, tabs or 4 spaces in a field (Meta refuses them)');
-    assert.match(p[3], new RegExp(`/daily\\?d=${r.date}&p=u_wb$`));
+    // The "Open full report" button: its address ends in <date>/<person>, which opens that report in Daily reports.
+    assert.deepEqual(sent[0].template.components[1], { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: `${r.date}/u_wb` }] });
     assert.deepEqual((await db.query("select status, wa_id from outbox where ref = $1 order by id", [r.id])).rows.map((x) => x.status), ['sent', 'sent']);
     // Someone in management can switch the messages off for themselves.
     assert.equal((await call('PUT', '/settings/waReports', { value: { on: true, skip: ['u_wcs'] } }, B)).status, 403);
@@ -1121,7 +1126,7 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
     assert.ok(q.length === 1 && q.every((x) => x.status === 'queued' && x.tries === 1 && /132001/.test(x.error)), 'only the Operations Manager now (the Company Secretary switched it off): ' + JSON.stringify(q));
     // Settings → WhatsApp shows it, for management only.
     const st = (await call('GET', '/whatsapp', null, OPS)).body;
-    assert.equal(st.ready, true); assert.match(st.template.text, /Daily report from \{\{1\}\} for \{\{2\}\}/); assert.ok(st.recent.some((x) => /132001/.test(x.error)));
+    assert.equal(st.ready, true); assert.match(st.template.text, /Daily work report from Aali One · \{\{1\}\}/); assert.ok(st.recent.some((x) => /132001/.test(x.error)));
     assert.equal((await call('GET', '/whatsapp', null, B)).status, 403);
     // On Vercel the submit waits until WhatsApp has the messages: they are sent by the time the page has its answer.
     process.env.VERCEL = '1'; setWaSender((to, template) => { sent.push({ to, template }); return 'wamid.v'; });
@@ -1136,7 +1141,7 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
     await db.query("update outbox set next_at = now() where status = 'queued'");
     await flushOutbox(db);
     assert.ok((await db.query("select status from outbox where ref = $1", [r2.id])).rows.every((x) => x.status === 'sent'));
-    assert.equal(reportLine({ entries: [], calls: [] }), '');
+    assert.deepEqual(reportLines({ entries: [], calls: [] }), ['No time recorded', 'No calls', 'No timed work', 'None']);
   } finally { setWaSender(null); }
 });
 
@@ -1145,7 +1150,8 @@ test('WhatsApp: "Check the template with Meta" says whether the template is appr
   const db = await getDb();
   await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', ['u_tch', 'tch@test.in', 'tch', 'chairman', 'management', hashPassword('password123')]);
   const CH = (await call('POST', '/auth/login', { email: 'tch@test.in', password: 'password123' })).cookie, ask = async () => (await call('GET', '/whatsapp/template', null, CH)).body;
-  const tpl = (over) => ({ name: 'daily_report', language: 'en', status: 'APPROVED', category: 'UTILITY', components: [{ type: 'BODY', text: REPORT_TEMPLATE }], ...over });
+  const tpl = (over) => ({ name: 'daily_report', language: 'en', status: 'APPROVED', category: 'UTILITY', components: [{ type: 'BODY', text: REPORT_TEMPLATE },
+    { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'Open full report', url: 'https://one.aaliconssultancy.com/daily/{{1}}' }] }], ...over });
   try {
     assert.match((await ask()).problems[0], /WHATSAPP_BUSINESS_ACCOUNT_ID/, 'not linked yet');
     setWaTemplates(() => []); assert.match((await ask()).problems[0], /No template named "daily_report"/);

@@ -322,11 +322,26 @@ export default function Daily() {
   // Faster refresh while this page is open, so a manager sees each update within a few seconds.
   useEffect(() => { poll(); const a = setInterval(poll, 4000), b = setInterval(() => tick((n) => n + 1), 20000); return () => { clearInterval(a); clearInterval(b); }; }, []);
   const noReport = NO_REPORT.includes(me.title);
+  // /daily/<YYYY-MM-DD>/<person>: only that person's report of that day – what the WhatsApp message's "Open full report" button opens.
+  const seg = useLocation().pathname.split('/');
+  if (/^\d{4}-\d\d-\d\d$/.test(seg[2] || '') && seg[3]) return <OneReport date={seg[2]} uid={decodeURIComponent(seg[3])} />;
   return <>
     <div className="topbar"><h1>Daily work reports <small>{boss ? (isTop(me) ? 'all departments' : leadOn(me) ? 'developers' : TEAMS[me.team] + ' team') : 'your day, as it happens'}</small></h1>
       <span className="pill ok" title="This page checks for new updates every few seconds">● Live</span></div>
     {boss && !noReport && <Tabs value={tab} onChange={setTab} tabs={[['team', isTop(me) ? 'All reports' : 'My team'], ['mine', 'My report']]} />}
     {boss && (tab === 'team' || noReport) ? <Team /> : <Mine />}
+  </>;
+}
+
+// ---------- one person's report, on its own (management opens it from the WhatsApp message) ----------
+function OneReport({ date, uid }) {
+  const me = store.me, u = user(uid), r = reportOf(uid, date);
+  return <>
+    <div className="topbar"><h1>{u ? u.name : 'Daily report'} <small>{fullDate(date)}</small></h1><Link className="btn" to="/daily">All reports</Link></div>
+    {!u || !r ? <Empty>{u ? `${u.name} has no report for ${fmtDate(date)} that you can open.` : 'This report is not available to you.'}</Empty>
+      : <div className="card stack"><div className="row"><Av id={u.id} /><div className="grow"><b>{u.name}</b><div className="small muted">{[desig(u), TEAMS[u.team]].filter(Boolean).join(' · ')}</div></div>
+          <Pill k={status(r)[1]}>{status(r)[0]}</Pill></div>
+        <ReportView r={r} me={me} /></div>}
   </>;
 }
 
@@ -507,7 +522,7 @@ const Remarks = ({ r }) => <div className="stack gap4">{r.remarks.map((x, i) => 
 
 // ---------- manager and top-management view ----------
 function Team() {
-  // ?d=YYYY-MM-DD&p=<person>: opens that person's report of that day (the link in the WhatsApp message to management).
+  // ?d=YYYY-MM-DD&p=<person>: the team view opened on that day, with that person's report open.
   const q = new URLSearchParams(useLocation().search), qd = /^\d{4}-\d\d-\d\d$/.test(q.get('d') || '') && q.get('d') <= today() ? q.get('d') : '', qu = user(q.get('p') || '');
   const me = store.me, [date, setDate] = useState(qd || today()), [team, setTeam] = useState(qu && isTop(me) ? qu.team : 'all'), [view, setView] = useState('day'), [open, setOpen] = useState(qu?.id || ''), [full, setFull] = useState(true); // full: the detailed team message
   const people = watched(me).filter((u) => team === 'all' || u.team === team).sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name));

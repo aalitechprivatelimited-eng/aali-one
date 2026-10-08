@@ -35,32 +35,40 @@ messages go to BDEs.
 
 ## Part B. The message template (Meta must approve it)
 
-A business may send the first message to someone only with a template Meta has approved. Aali One fills its four
-blanks with the report.
+A business may send the first message to someone only with a template Meta has approved. Aali One fills its six
+blanks with the report, and the button opens that one report.
 
 1. WhatsApp Manager → **Message templates** → **Create template**.
 2. **Category: Utility.** It's an update about work, not an advert.
 3. **Name: `daily_report`** (exactly this, small letters with the underscore). **Language: English** (choose "English",
    not "English (US)" or "English (UK)").
 4. **Type of variable: Number.**
-5. **Body:** paste exactly (Aali One → Settings → Connections → WhatsApp has a **Copy** button):
+5. **Body:** paste exactly (Aali One → Settings → Connections → WhatsApp has a **Copy** button). Each blank is one line,
+   because Meta allows no line breaks inside a blank. (Seven blanks were refused as "too many variables for its length",
+   so the link is a button and the body has more words.)
 
    ```
-   Daily report from {{1}} for {{2}}.
+   📋 Daily work report from Aali One · {{1}}
 
-   {{3}}
+   Employee: {{2}}
+   Day: {{3}}
+   Calls: {{4}}
+   Work: {{5}}
+   Problem: {{6}}
 
-   Full report: {{4}}
-
-   – Aali One
+   This report was just submitted in Aali One. Tap the button below to open it in full.
    ```
 
-6. **Samples** (Meta asks for one example per blank):
-   - {{1}} `Ravi Kumar, BDE`
-   - {{2}} `Wed 8 Oct 2026`
-   - {{3}} `Day 09:30–18:10, worked 7h 45m · 6 tasks · 42 calls: 7 interested`
-   - {{4}} `https://one.aaliconssultancy.com/daily`
-7. No header, no footer, no buttons. Press **Submit**.
+6. **Samples** (one per blank):
+   - {{1}} `Thu 8 Oct 2026`
+   - {{2}} `*Ravi Kumar* (BDE)`
+   - {{3}} `10:50 am – 7:12 pm · Worked 5 h 29 min · Break 1 h 26 min · Nothing recorded 1 h 19 min`
+   - {{4}} `1 call · 1 interested · 0 to call back · 1 meeting fixed · 0 met in person`
+   - {{5}} `Calling 3 h 21 min · Client work 1 h 19 min · Information gathering 13 min`
+   - {{6}} `None`
+7. **Buttons → Add button → Visit website:** text `Open full report`, URL type **Dynamic**, URL
+   `https://one.aaliconssultancy.com/daily/{{1}}`, sample `https://one.aaliconssultancy.com/daily/2026-10-08/u_sample`.
+   The button opens only that person's report of that day. No header, no footer. Press **Submit**.
 
 ### Checking the template
 
@@ -73,7 +81,7 @@ blanks with the report.
     as a work update, and submit again.
 - **In Aali One** (once Part C is done): Settings → Connections → WhatsApp → **Check the template with Meta**. It shows
   *approved · utility · same text as here*, or exactly what is wrong (not found, not approved yet, rejected and why,
-  wrong language, wrong category, not four blanks).
+  wrong language, wrong category, not six blanks or no button).
 - **A real message:** press **Send me a test message** there. It arrives on your phone from **Aali One**. The list below
   the button shows *Sent*, or Meta's reason if it was refused.
 
