@@ -22,7 +22,7 @@ function Register() {
       <div className="stat"><span className="l">Waiting for approval</span><span className="v">{rows.filter((q) => q.status === 'needs approval').length}</span></div></div>
     <div className="row" style={{ marginBottom: 12 }}><In placeholder="Search number, client, subject" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} style={{ maxWidth: 280 }} />
       <Sel value={f.status} onChange={(v) => setF({ ...f, status: v })} options={STATUS} blank="All statuses" style={{ width: 'auto' }} /><Sel value={f.fy} onChange={(v) => setF({ ...f, fy: v })} options={fys} blank="All years" style={{ width: 'auto' }} /></div>
-    {rows.length ? <div className="tbl"><table><thead><tr><th>Number</th><th>Client</th><th>Subject</th><th>Date</th><th className="n">Total</th><th>Status</th><th>By</th></tr></thead><tbody>
+    {rows.length ? <div className="tbl cards"><table><thead><tr><th>Number</th><th>Client</th><th>Subject</th><th>Date</th><th className="n">Total</th><th>Status</th><th>By</th></tr></thead><tbody>
       {rows.map((q) => <tr key={q.id} className="click" onClick={() => nav('/quotes/' + q.id)}><td className="num"><b>{q.number}</b></td><td>{q.clientName}<Sample on={q.sample} /></td><td>{q.subject}</td><td>{fmtDate(q.date)}</td>
         <td className="n">{inr(q.totals?.total)}</td><td><span className={'pill ' + (tone[q.status] || '')}>{q.status}</span></td><td>{uname(q.createdBy)}</td></tr>)}
     </tbody></table></div> : <Empty>No quotations yet. Make one from a deal, or with “+ New quotation”.</Empty>}
@@ -63,6 +63,7 @@ function Editor({ id }) {
     <div className="topbar no-print"><h1>{saved ? saved.number : 'New quotation'} {saved && <span className={'pill ' + (tone[saved.status] || '')}>{saved.status}</span>} <ViewOnly when={!edit} /></h1>
       <div className="row"><Link className="btn" to="/quotes">Register</Link>{q.dealId && <Link className="btn" to={'/deals/' + q.dealId}>Open deal</Link>}
         {saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}
+        {saved && canEdit('agreements') && <Link className="btn" to={`/agreements/new?kind=service&quote=${saved.id}`}>Make agreement</Link>}
         {saved && edit && <button className="btn" type="button" onClick={() => { const c = { ...q }; ['id', 'number', 'seq', 'fy', 'status', 'createdAt', 'discountApprovedAt'].forEach((k) => delete c[k]); setQ({ ...c, date: today(), validUntil: addDays(today(), 15) }); nav('/quotes/new'); }}>Duplicate</button>}
         {edit && <button className="btn primary" type="button" disabled={busy} onClick={() => save()}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
     {saved?.status === 'needs approval' && <div className="banner no-print" style={{ marginBottom: 12 }}>Discount {saved.totals?.discountPct}% is above the {limit}% limit. It waits for a manager's approval before it can be sent.</div>}

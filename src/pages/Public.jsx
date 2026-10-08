@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { http } from '../api.js';
 import { DEFAULT_SETTINGS } from '../../shared/defaults.js';
 import { Field, In, Sel, Area, attempt } from '../ui.jsx';
+const day = (s) => (s ? new Date(s + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''); // 10 Oct 2026
 
 // The public website enquiry form (no login). Share /enquire or embed it on aaliconssultancy.com.
 export function Enquire() {
@@ -35,9 +36,9 @@ export function Progress() {
   const at = stages.findIndex((s) => s.key === d.stage);
   return <div style={{ maxWidth: 720, margin: '0 auto', padding: 16 }} className="stack">
     <div className="row"><img src="/icon.svg" alt="" width="36" height="36" /><div><b style={{ fontFamily: 'var(--doc)', fontSize: 18 }}>{d.business.name}</b><div className="small muted">Project progress</div></div></div>
-    <div className="card stack"><h1>{d.name}</h1><div className="muted">{d.client}{d.deadline ? ` · target date ${d.deadline}` : ''}</div>
+    <div className="card stack"><h1>{d.name}</h1><div className="muted">{d.client}{d.deadline ? ` · target date ${day(d.deadline)}` : ''}</div>
       <div className="bar" style={{ height: 12 }}><i style={{ width: d.progress + '%' }} /></div><div className="small">{d.progress}% of the work is done</div>
       <div className="row">{stages.map((s, i) => <span key={s.key} className={'pill ' + (i < at ? 'ok' : i === at ? 'gold' : '')}>{i < at ? '✓ ' : ''}{s.label}</span>)}</div></div>
-    <div className="card stack"><h2>Milestones</h2>{d.milestones.length ? d.milestones.map((m, i) => <div key={i} className="row"><span>{m.done ? '◆✓' : '◆'}</span><span className="grow">{m.title}</span><span className="num small">{m.due}</span></div>) : <p className="muted">Milestones will appear here.</p>}</div>
+    <div className="card stack"><h2>Milestones</h2>{d.milestones.length ? d.milestones.map((m, i) => <div key={i} className="row"><span>{m.done ? '◆✓' : '◆'}</span><span className="grow">{m.title}</span><span className="num small">{day(m.due)}</span></div>) : <p className="muted">Milestones will appear here.</p>}</div>
     <p className="small muted">Questions? Call {d.business.phone} or email {d.business.email}.</p></div>;
 }

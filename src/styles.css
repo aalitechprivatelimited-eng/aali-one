@@ -140,7 +140,6 @@ a.me-who:hover{background:var(--gold-50)}
   .side-search kbd{display:none}
   .mobilebar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--paper) 86%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:calc(9px + env(safe-area-inset-top)) 16px 9px}
   .main{padding:16px 16px calc(90px + env(safe-area-inset-bottom))}
-  .popups{top:calc(62px + env(safe-area-inset-top))}
 }
 
 /* ---------- controls ---------- */
@@ -164,6 +163,14 @@ input.in:focus,select.in:focus,textarea.in:focus{outline:none;border-color:var(-
 input.in::placeholder,textarea.in::placeholder{color:var(--ink-faint);opacity:.85}
 input.in:disabled,select.in:disabled,textarea.in:disabled{background:var(--paper-2);color:var(--ink-soft)}
 textarea.in{min-height:78px;resize:vertical}
+/* Date boxes: DD-MM-YYYY whatever the browser's language (ui.jsx DateIn); the calendar button opens the browser's own picker. */
+.datein{position:relative;display:inline-block;width:100%;vertical-align:middle}
+.datein input.in{padding-right:40px;font-variant-numeric:tabular-nums}
+.datein.bad input.in{border-color:var(--bad)}
+.datein-pick{position:absolute;right:5px;top:50%;transform:translateY(-50%);border:0;background:none;color:var(--ink-soft);padding:6px;border-radius:6px;cursor:pointer;display:grid;place-items:center}
+.datein-pick:hover:not(:disabled){color:var(--gold-ink,var(--gold));background:var(--paper-2)}
+.datein-pick:disabled{opacity:.4;cursor:default}
+.datein-native{position:absolute;right:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0}
 .field{display:flex;flex-direction:column;gap:5px;min-width:0}
 .field>label,.lbl{font-size:12.5px;font-weight:600;color:var(--ink-soft)}
 .form{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px 16px}
@@ -288,11 +295,31 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 .act:hover{border-color:var(--gold);box-shadow:var(--e2);transform:translateY(-1px)} .act b{font-size:14px} .act span{font-size:12.5px;color:var(--ink-soft)}
 .act.danger b{color:var(--bad)} .act.danger:hover{border-color:var(--bad)}
 
+/* attendance calendar (Payroll): one cell per day, coloured by how the day counts */
+.att-grid{display:grid;grid-template-columns:repeat(7,minmax(92px,1fr));min-width:660px}
+.att-day{min-height:92px;padding:6px 8px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:2px;font-size:12.5px}
+.att-day.ok{background:var(--ok-bg);color:var(--ok)} .att-day.warn{background:var(--warn-bg);color:var(--warn)} .att-day.bad{background:var(--bad-bg);color:var(--bad)}
+.att-day.info{background:var(--info-bg);color:var(--info)} .att-day.off{background:var(--paper-2);color:var(--ink-soft)} .att-day.later,.att-day.blank{color:var(--ink-faint)}
+.att-day .att-k{font-weight:700;font-size:12.5px} .att-day .att-n{opacity:.85} .att-day .att-wd{display:none}
+@media (max-width:600px){ /* a phone: one line per day instead of a week grid */
+  .att-grid{grid-template-columns:1fr;min-width:0} .att-grid .calhead,.att-day.blank{display:none}
+  .att-day{min-height:0;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:8px 12px} .att-day .att-wd{display:inline;font-weight:500} }
+
+/* Reports: a bar that opens the list behind it */
+.barpick{width:100%;border:0;background:none;color:inherit;font:inherit;text-align:left;padding:3px 4px;margin:0 -4px;border-radius:8px;cursor:pointer}
+.barpick:hover,.barpick:focus-visible{background:var(--gold-50)}
+
 /* ---------- calendar + project progress ---------- */
 .calhead{padding:8px 10px;font-size:11.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);border-bottom:1px solid var(--line);background:var(--paper-2)}
 .calday{min-height:108px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:6px;cursor:pointer;overflow:hidden;transition:background-color .2s}
 .calday:hover{background:var(--gold-50)}
 .calday.now{background:var(--gold-50)} .calday.sel{box-shadow:inset 0 0 0 2px var(--gold)}
+/* on a phone the month fits the screen: a dot for each thing due (tap the day to see them), instead of a grid wider than the phone */
+.caldots{display:none;gap:3px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.caldots i{width:7px;height:7px;border-radius:50%;background:var(--gold)} .caldots i.bad{background:var(--bad)} .caldots i.warn{background:var(--warn)} .caldots i.ok{background:var(--ok)} .caldots i.info{background:var(--info)}
+.caldots span{font-size:10px;color:var(--ink-soft)}
+@media (max-width:640px){ .calgrid{grid-template-columns:repeat(7,minmax(0,1fr))!important;min-width:0!important} .calgrid .calhead{padding:6px 2px;text-align:center;font-size:10px;letter-spacing:.04em}
+  .calday{min-height:56px;padding:5px 3px} .calday .pill,.calday .more{display:none!important} .caldots{display:flex} }
 .lane{height:6px;margin-block:2px}
 .track{position:relative;height:30px;background:var(--gold-50);border:1px solid var(--line);border-radius:9px;overflow:hidden}
 .track.axis{height:20px;background:none;border:none}
@@ -333,6 +360,8 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 .popup-x{border:0;background:none;color:var(--ink-soft);font-size:20px;line-height:1;padding:9px 12px;border-radius:10px}
 .popup-x:hover{background:var(--gold-soft)}
 
+/* on a phone the pop-up cards come up from the bottom, above the toasts, so they never cover the page's title and first buttons */
+@media (max-width:900px){.popups{top:auto;left:12px;right:12px;width:auto;bottom:calc(70px + env(safe-area-inset-bottom))}}
 @media print{.popups{display:none}}
 .toast .ico{flex:none}
 
@@ -352,6 +381,47 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 .paper .rule{height:2px;background:#33280f;margin:8px 0 10px}
 .paper .tot td{border:none;padding:3px 8px}
 .paper .grand td{border-top:2px solid #33280f;font-weight:700;font-size:13.5px}
+/* agreements: the A4 agreement in the company's own template (doc.jsx AgreementSheet) and its editor (pages/Agreements.jsx).
+   Times New Roman 11 pt, justified; navy title, gold line naming both sides, blue clause headings; the Aali mark faded behind each page
+   (on screen a background tile one A4 page tall; in print a fixed image, which the browser repeats on every printed page). */
+.paper.agree{position:relative;font-family:'Times New Roman',Times,serif;font-size:14.6px;line-height:1.45;color:#111;text-align:justify;padding:16mm 18mm;
+  background:#fff url(/aali-mark-page.png) top center/100% auto repeat-y;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.agree p{margin:0 0 7px}.agree h3,.agree h4{font-family:inherit;letter-spacing:0}
+.agree .ag-wm{display:none}
+.agree .ag-no{text-align:right;font-size:12px;color:#555;margin-bottom:6px}
+.agree .ag-title{text-align:center;font-weight:700;color:#1F3864;font-size:19px;letter-spacing:.02em;margin:0 0 4px}
+.agree .ag-sub{text-align:center;font-style:italic;color:#B8860B;margin:0 0 18px}
+.agree .ag-rec{font-weight:700;font-size:14.6px;margin:12px 0 6px}
+.agree .ag-h{color:#2E75B6;font-weight:700;font-size:16px;margin:16px 0 7px;break-after:avoid}
+.agree .ag-note{font-style:italic;padding-left:18px}
+.agree .ag-annex{color:#2E75B6;font-weight:700;font-size:16.5px;margin:26px 0 10px;break-after:avoid}
+.agree .ag-gh{font-weight:700;margin:10px 0 4px;break-after:avoid}
+.agree .ag-grp ul{margin:0 0 8px;padding-left:24px}.agree .ag-grp li{margin:2px 0}
+.agree .ag-signs{width:100%;margin:14px 0 8px;border-collapse:collapse;break-inside:avoid;font-size:14.6px}
+.agree .ag-signs td{width:50%;vertical-align:top;padding:4px 14px 4px 0;border:none;line-height:2;text-align:left;font-size:14.6px}
+.agree table.ag-tbl{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:14px}
+.agree .ag-tbl th,.agree .ag-tbl td{border:1px solid #a9b2c3;padding:6px 9px;text-align:left;vertical-align:top;text-transform:none;letter-spacing:0;font-size:14px}
+.agree .ag-tbl thead th{background:#1F3864;color:#fff;font-weight:700}
+.agree .ag-kv th{width:24%;background:#F2F2F2;color:#111;font-weight:700}
+.agree .ag-tbl tr{break-inside:avoid}.agree .ag-total td{font-weight:700}
+.ag-edit{display:grid;grid-template-columns:minmax(300px,1fr) minmax(0,1.4fr);gap:16px;align-items:start}.ag-edit>*{min-width:0}
+/* zoom (not transform) so the shrunken page also takes less room and sits in place */
+.ag-scale{zoom:.72}
+.ag-sched{flex-wrap:nowrap;margin-bottom:6px;gap:6px}.ag-sched .in.grow{flex:1;min-width:120px}.btn.ag-x{font-size:20px;line-height:1;padding:5px 11px}
+.ag-sum{display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;font-size:14px}.ag-sum b{font-size:17px}
+.seg-phone{display:none;margin-bottom:12px}
+@media (max-width:900px){.ag-edit{grid-template-columns:1fr}.seg-phone{display:block}.ag-edit.show-form .ag-paper{display:none}.ag-edit.show-paper .ag-form{display:none}.ag-sched{flex-wrap:wrap}}
+@media (max-width:560px){.ag-scale{zoom:.4}}
+/* payroll: the payslip (doc.jsx PayslipSheet) and the figure tables in pages/Payroll.jsx */
+.paper.slip{min-height:0;margin-bottom:18px}
+.slip .slip-kv{width:100%;margin:6px 0 12px}.slip .slip-kv th{width:17%;text-align:left;background:#f7efd9;color:#4a3400;font-size:10.5px;letter-spacing:.04em;text-transform:none}.slip .slip-kv td{width:33%}
+.slip .slip-two{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;align-items:start}.slip .slip-two table{width:100%}
+.slip .slip-net{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:14px;padding:12px 14px;background:#fffcf3;border-left:3px solid #b87400}
+.slip .slip-amt{font-family:var(--doc);font-size:24px;font-weight:700;white-space:nowrap}
+table.kv{width:100%;border-collapse:collapse}table.kv td{padding:5px 2px;border-bottom:1px solid var(--line)}table.kv td.n{text-align:right;font-variant-numeric:tabular-nums}
+@media (max-width:640px){.slip .slip-two{grid-template-columns:1fr}}
+@media print{.slip-page{break-after:page;padding:0}.slip-page:last-child{break-after:auto}.paper.slip{margin:0}}
+@media print{.ag-edit{display:block}.ag-edit .ag-form,.seg-phone{display:none!important}.ag-edit .ag-paper{display:block!important}.ag-scale{zoom:1!important}.paper.agree{background:none;padding:4mm 6mm 0}.agree .ag-wm{display:block;position:fixed;top:50%;left:50%;width:380px;transform:translate(-50%,-50%);opacity:.055;z-index:0;pointer-events:none}}
 .sig{display:block;width:100%;height:190px;border:1.5px dashed var(--line-2);border-radius:12px;background:#fff;touch-action:none;cursor:crosshair}
 .stars button{background:none;border:none;font-size:28px;color:var(--line-2);padding:0 2px;transition:color .15s,transform .15s}.stars button:hover{transform:scale(1.15)}.stars button.on{color:var(--gold)}
 @media print{
@@ -491,10 +561,28 @@ table.chart td,table.chart th{white-space:normal;vertical-align:top;min-width:10
   .li.tl .tl-a{grid-column:1 / -1}
   .li.tl>b,.li.tl>.grow:not(.tl-b),.li.tl>.num:not(.tl-t){grid-column:2;grid-row:1;justify-self:end}
 }
+/* A wide table that has a phone version: the table on a wide screen, a card per row on a phone (.phone-cards). */
+.phone-cards{display:none}
+/* the same for a whole table marked .tbl.cards: each row a card, each value under its column's name (src/cardtables.js) */
+@media (max-width:640px){
+  .tbl.cards{background:none;border:0;box-shadow:none;overflow:visible;border-radius:0}
+  .tbl.cards table,.tbl.cards tbody{display:block;width:100%}
+  .tbl.cards thead{display:none}
+  .tbl.cards tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;padding:12px 14px;margin-bottom:10px;background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--e1)}
+  .tbl.cards td{display:block;padding:0;border:0;text-align:left!important;min-width:0;overflow-wrap:anywhere;max-width:none!important}
+  .tbl.cards td:first-child{grid-column:1 / -1;font-size:15px}
+  .tbl.cards td[data-label]:not([data-label='']):not(:first-child)::before{content:attr(data-label);display:block;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint);font-weight:600;margin-bottom:1px}
+  .tbl.cards td:empty{display:none}
+  .tbl.cards tr.click:active{background:var(--gold-50)}
+}
+.pcard{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--paper);display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}
+@media (max-width:640px){ .phone-cards{display:grid;gap:8px} .wide-only{display:none!important} }
+
 /* the test site: a strip at the top and a badge that stays in the corner, so nobody mistakes it for the real Aali One */
 .testbar{background:repeating-linear-gradient(135deg,#ffd84d 0 14px,#ffcc1a 14px 28px);color:#3a2a00;font-weight:700;font-size:13px;text-align:center;padding:7px 12px}
 .testbadge{position:fixed;left:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:70;background:#ffcc1a;color:#3a2a00;font-weight:800;font-size:11px;letter-spacing:.08em;padding:5px 9px;border-radius:8px;box-shadow:var(--e2);pointer-events:none}
 @media print{.testbar,.testbadge{display:none}}
+/* daily reports for management: one card per department, headed by its manager */
 /* the client-visit questions (src/visit.jsx) */
 .visit-q{display:flex;gap:14px;align-items:center;font-size:16px}
 .visit-q .visit-ic{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:var(--gold-soft);color:var(--gold-strong);flex:none}
@@ -530,11 +618,7 @@ table.chart td,table.chart th{white-space:normal;vertical-align:top;min-width:10
 @media (max-width:700px){.log-line,.log-who>.log-line:not(:has(>:nth-child(3))){grid-template-columns:1fr;gap:1px}.log-who>.log-line{margin-left:12px}}
 
 /* ---------- movement that needs no code ---------- */
-/* rows of a list rise into place as they scroll into view (number tiles and table rows are moved by Anime.js, see src/motion.jsx) */
-@keyframes rise-in{from{opacity:0;transform:translateY(18px)}}
-@media (prefers-reduced-motion:no-preference){
-  @supports (animation-timeline:view()){.list>.li,.cards>.kc{animation:rise-in linear both;animation-timeline:view();animation-range:entry 0% entry 110%}}
-}
+/* (List rows used to fade in as they scrolled into view; removed – on a phone they could stay invisible, and the user asked for no reveal-on-scroll.) */
 @media (max-width:900px){.btn,.chip,.seg button{min-height:44px}button.pill{min-height:40px;padding-inline:14px}.btn.sm{min-height:40px}input.in,select.in{min-height:46px}input.in,select.in,textarea.in{font-size:16px}.hero{padding:20px 18px}.hero h1{font-size:25px}}
 /* on a touch screen nothing lifts or stays lit after a tap */
 @media (hover:none){.btn:hover,.chip:hover,a.stat:hover,.kc:hover,.act:hover,button.pill:hover{transform:none}.btn:not(.primary):hover{box-shadow:var(--e1)}a.stat:hover,.kc:hover,.act:hover{box-shadow:var(--e1)}.btn.primary:hover{filter:none}.btn.primary:hover::after{transform:translateX(-120%);transition:none}.li:hover,tr.click:hover td,.nav a:hover:not(.active){background:none}}

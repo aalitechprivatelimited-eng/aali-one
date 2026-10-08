@@ -1,5 +1,5 @@
 // Record by record: may this person read it, may they change it? Built on the role table in shared/access.js.
-import { scopeOf, canSee, canEdit, SECTION_OF } from '../shared/access.js';
+import { scopeOf, canSee, canEdit, canClose, SECTION_OF, SECRET } from '../shared/access.js';
 import { TOP_TITLES, MANAGER_TITLES } from '../shared/defaults.js';
 
 const isTop = (u) => u.is_admin || TOP_TITLES.includes(u.title);
@@ -10,8 +10,8 @@ export const loadIndex = async (db) => (await db.query(`select id, type, created
   'clientId', data->'clientId', 'dealId', data->'dealId', 'projectId', data->'projectId', 'team', data->'team') as data from records where deleted_at is null and type = any($1)`, [INDEX_TYPES])).rows;
 
 // The kinds of item people add themselves. Notifications, presence and anything unknown are made by the server only (audit ACB-1, ACB-3).
-const CREATABLE = new Set(['lead', 'deal', 'client', 'quote', 'invoice', 'receipt', 'payment', 'project', 'task', 'ticket', 'activity', 'comment', 'approval', 'target', 'signoff', 'asset', 'collab', 'report', 'prospect']);
-const LABEL = { assets: 'client assets', calls: 'the call register', leads: 'leads', deals: 'deals', clients: 'clients', quotes: 'quotations', money: 'receipts and payments', projects: 'projects', support: 'support requests', collab: 'collaborations' };
+const CREATABLE = new Set(['lead', 'deal', 'client', 'quote', 'invoice', 'receipt', 'payment', 'project', 'task', 'ticket', 'activity', 'comment', 'approval', 'target', 'signoff', 'asset', 'collab', 'report', 'prospect', 'agreement', 'salary', 'payrun', 'loan', 'payee', 'pclient', 'pemp']);
+const LABEL = { assets: 'client assets', calls: 'the call register', leads: 'leads', deals: 'deals', clients: 'clients', quotes: 'quotations', money: 'receipts and payments', projects: 'projects', support: 'support requests', collab: 'collaborations', agreements: 'agreements', payroll: 'payroll' };
 
 // rows: every live record (or the light index). canSeeReport: the daily-report rule, passed in from logic.js.
 export function buildAccess(user, rows, canSeeReport) {
@@ -40,6 +40,8 @@ export function buildAccess(user, rows, canSeeReport) {
       case 'report': return canSeeReport(user, d);
       case 'collab': return canSee(user, 'collab');
       case 'quote': return canSee(user, 'quotes');
+      case 'agreement': return canSee(user, 'agreements'); // Operations Manager, Sales Manager, Company Secretary and Chairman only
+      case 'salary': case 'payrun': case 'loan': case 'payee': case 'pclient': case 'pemp': return canSee(user, 'payroll'); // HR and the Operations Manager only
       case 'invoice': case 'receipt': case 'payment': return canSee(user, 'money');
       case 'lead': return within('leads', myLeads, r.id) || (sc('leads') === 'own' && mine(r));
       case 'deal': return within('deals', myDeals, r.id) || (sc('deals') === 'own' && mine(r));
@@ -49,7 +51,7 @@ export function buildAccess(user, rows, canSeeReport) {
       case 'task': return d.projectId ? within('projects', myProjects, d.projectId) : top || mine(r) || (!!d.team && d.team === user.team);
       case 'ticket': { const s = sc('support'); return s === 'all' ? true : s === 'own' ? mine(r) || !!myProjects?.has(d.projectId) || !!myClients?.has(d.clientId) : false; }
       case 'activity': return d.leadId ? (sc('leads') === 'all' || parent(d.leadId)) : d.dealId ? (sc('deals') === 'all' || parent(d.dealId)) : top || mine(r);
-      case 'comment': return by.has(d.relId) ? parent(d.relId) : d.relType === 'quote' ? canSee(user, 'quotes') : top || r.created_by === uid;
+      case 'comment': return SECRET[d.relType] ? canSee(user, SECRET[d.relType]) : by.has(d.relId) ? parent(d.relId) : d.relType === 'quote' ? canSee(user, 'quotes') : top || r.created_by === uid;
       case 'approval': return d.requestedBy === uid || (isManager(user) && (top || (d.relType === 'quote' ? user.team === 'sales' : d.relType === 'project' ? user.team === 'it' : false)));
       case 'target': return top || user.title === 'salesmgr' || d.userId === uid;
       case 'presence': return top || (isManager(user) && d.team === user.team); // who is out of the office: only the person's manager and management, not teammates
@@ -69,6 +71,8 @@ export function buildAccess(user, rows, canSeeReport) {
     if (section && sc(section) === 'own' && ['lead', 'deal', 'client'].includes(type)) data.owner = uid;
     if (type === 'project' && sc('projects') === 'own') return 'Projects are created by the IT Manager or the Team Lead.';
     if (type === 'presence') return 'This is set by the system from the daily report.';
+    if (type === 'agreement' && data.kind !== 'service' && !canClose(user)) return 'Only the Operations Manager makes a closure agreement.'; // anything but a plain service agreement
+    if (type === 'comment' && SECRET[data.relType]) return 'This kind of item has no comments.';
     if (type === 'asset' && !(user.team === 'sales' || user.is_admin)) return 'Client assets are uploaded by the Sales team.';
     if (type === 'prospect' && sc('calls') !== 'all') return 'Numbers join the call register from your call sheet. Only a manager adds a Do Not Call number directly.';
     if (type === 'task' && data.projectId && !(canEdit(user, 'projects') && within('projects', myProjects, data.projectId))) return 'Your access does not allow adding tasks to this project.';
@@ -86,10 +90,16 @@ export function buildAccess(user, rows, canSeeReport) {
     // A notification can only be marked as read – never re-addressed or re-worded (audit ACB-2).
     if (r.type === 'notice' && Object.keys(patch).some((k) => k !== 'read')) return 'A notification can only be marked as read.';
     const section = SECTION_OF[r.type], d = r.data || {};
+    // Payroll: the Operations Manager reviews – the only change open to him is a remark on a month's payroll.
+    if (section === 'payroll' && !canEdit(user, 'payroll')) return r.type === 'payrun' && Object.keys(patch).length && Object.keys(patch).every((k) => k === '_remark') ? '' : 'Payroll is changed by HR. You can review it and write remarks.';
+    if (r.type === 'payrun' && !Object.keys(patch).length && d.status !== 'draft') return 'A locked or paid payroll cannot be deleted. A locked one can be reopened first.';
+    if (r.type === 'loan' && !Object.keys(patch).length && (d.recovered || []).length) return 'Money has already been cut for this loan. Stop it instead of deleting it.';
     if (section && !canEdit(user, section)) return `Your access is view only for ${LABEL[section]}.`;
     if (section && sc(section) === 'own' && 'owner' in patch && (patch.owner || '') !== (d.owner || '')) return 'Only a manager can give this to another person.';
     if (r.type === 'project' && 'lead' in patch && (patch.lead || '') !== (d.lead || '') && !isManager(user)) return 'The project lead is set by the IT Manager.';
     if (r.type === 'task' && d.projectId && !canEdit(user, 'projects')) return 'Your access is view only for this project.';
+    if (r.type === 'agreement' && d.kind !== 'service' && !canClose(user)) return 'Only the Operations Manager changes a closure agreement.';
+    if (r.type === 'agreement' && d.status === 'signed' && !Object.keys(patch).length && !canClose(user)) return 'Only the Operations Manager can delete a signed agreement.';
     // A task on the team list can be read by the whole team, but only the people it is given to, the person who made it, or a manager may change it.
     if (r.type === 'task' && !d.projectId && !(mine(r) || isManager(user))) return 'This task is not yours. Only the person it is given to, or a manager, can change it.';
     if (r.type === 'activity' && !canEdit(user, 'leads')) return 'Your access is view only here.';

@@ -2,6 +2,7 @@
 import { store, list, get } from './api.js';
 import { TITLES, TEAMS, MANAGER_TITLES, TOP_TITLES, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
 import { canSee, canEdit as mayEdit, scopeOf } from '../shared/access.js';
+import { deadlineItems, SOON_DAYS } from '../shared/deadlines.js';
 export { COMPANIES, GROUP };
 export { inr, inr2, num, mobile10 } from '../shared/money.js';
 export { TITLES, TEAMS };
@@ -92,6 +93,14 @@ export function projectProgress(p) {
   const ts = list('task').filter((t) => t.projectId === p.id);
   return ts.length ? Math.round(100 * ts.filter((t) => t.status === 'done').length / ts.length) : STAGE_PCT[p.stage] ?? 0;
 }
+// Deadlines this person keeps an eye on – the same people the 2-day reminders go to: management and the Sales Manager see every
+// deadline they can open, the IT Manager the IT ones; everyone else the deadlines given to them.
+export function myDeadlines(m = store.me) {
+  const all = deadlineItems(['project', 'client', 'task', 'ticket', 'payment'].flatMap((t) => list(t)));
+  if (isTop(m) || m.title === 'salesmgr') return all;
+  return all.filter((i) => (m.title === 'itmgr' && i.team === 'it') || i.owner === m.id || i.people.includes(m.id));
+}
+export const urgentDeadlines = (m = store.me) => myDeadlines(m).filter((i) => diff(i.due) <= SOON_DAYS).length;
 export const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
 export const escalated = (d) => diff(d) <= -(settings().escalateDays ?? 3);
 export const dealReceived = (dealId) => list('receipt').filter((r) => r.dealId === dealId).reduce((s, r) => s + (r.totals?.received || 0), 0);

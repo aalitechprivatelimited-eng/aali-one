@@ -32,6 +32,7 @@ try {
     console.log(`${table}: ${rows.length} copied`);
   }
   await to.query("select setval(pg_get_serial_sequence('audit', 'id'), coalesce((select max(id) from audit), 1))");
+  await to.query("delete from settings where key = 'jwtKey'"); // the test site makes its own sign-in key; the live site's is never copied
   await to.query('commit'); await from.query('rollback');
   console.log('The test copy is ready.');
 } catch (e) { await to.query('rollback').catch(() => {}); await from.query('rollback').catch(() => {}); console.error('Copy stopped, nothing was kept:', e.message); process.exitCode = 1; }

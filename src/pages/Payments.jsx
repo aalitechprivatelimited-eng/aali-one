@@ -45,10 +45,10 @@ function Home() {
           <b className="num">{inr(bal(p))}</b>
           {edit && <button className="btn sm" type="button" onClick={() => setRemind(p)}>Remind client</button>}
           {edit && <Link className="btn sm primary" to={`/payments/receipt/new?payment=${p.id}`}>Record payment</Link>}</div>)}</div></section> : null)}</div>}
-    {tab === 'receipts' && (receipts.length ? <div className="tbl"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Mode</th><th className="n">Received</th><th className="n">Balance</th><th>By</th></tr></thead><tbody>
+    {tab === 'receipts' && (receipts.length ? <div className="tbl cards"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Mode</th><th className="n">Received</th><th className="n">Balance</th><th>By</th></tr></thead><tbody>
       {receipts.map((r) => <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b></td><td>{fmtDate(r.date)}</td><td>{r.payerName}<Sample on={r.sample} /></td><td>{r.mode}</td>
         <td className="n">{inr(r.totals?.received)}</td><td className="n">{r.totals?.balance ? inr(r.totals.balance) : '—'}</td><td>{uname(r.createdBy)}</td></tr>)}</tbody></table></div> : <Empty>No receipts yet.</Empty>)}
-    {tab === 'invoices' && (invoices.length ? <div className="tbl"><table><thead><tr><th>Invoice</th><th>Date</th><th>Client</th><th className="n">Total</th><th>Status</th></tr></thead><tbody>
+    {tab === 'invoices' && (invoices.length ? <div className="tbl cards"><table><thead><tr><th>Invoice</th><th>Date</th><th>Client</th><th className="n">Total</th><th>Status</th></tr></thead><tbody>
       {invoices.map((r) => <tr key={r.id} className="click" onClick={() => nav('/payments/invoice/' + r.id)}><td className="num"><b>{r.number}</b></td><td>{fmtDate(r.date)}</td><td>{r.clientName}</td><td className="n">{inr(r.totals?.total)}</td><td>{r.status}</td></tr>)}</tbody></table></div>
       : <Empty>No tax invoices yet. Make one from an accepted quotation. (Format to be confirmed by the CA.)</Empty>)}
     {tab === 'clients' && <Owes />}

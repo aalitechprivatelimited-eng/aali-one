@@ -50,7 +50,7 @@ function Pipeline() {
               {d.stage === 'lost' && <Pill>{d.lostReason}</Pill>}{(d.tags || []).map((t) => <Pill key={t} k="gold">{t}</Pill>)}<Sample on={d.sample} /></div>
           </Link>)}</div></div>;
       })}</div></div>
-        : <div className="tbl"><table><thead><tr><th>Deal</th><th>Stage</th><th className="n">Value</th><th className="n">Chance</th><th>Closing</th><th>BDE</th><th>Follow-up</th></tr></thead><tbody>
+        : <div className="tbl cards"><table><thead><tr><th>Deal</th><th>Stage</th><th className="n">Value</th><th className="n">Chance</th><th>Closing</th><th>BDE</th><th>Follow-up</th></tr></thead><tbody>
           {deals.map((d) => <tr key={d.id} className="click" onClick={() => nav('/deals/' + d.id)}><td><b>{d.title}</b><div className="small muted">{clientName(d.clientId)}</div></td><td>{stageLabel(d.stage)}</td>
             <td className="n">{inr(d.value)}</td><td className="n">{stageProb(d.stage)}%</td><td>{fmtDate(d.closeDate)}</td><td>{uname(d.owner)}</td><td>{open(d) && d.followUp ? <Due date={d.followUp} /> : '—'}</td></tr>)}
         </tbody></table></div>}
@@ -105,6 +105,7 @@ function DealView({ id }) {
     <>
       <div className="topbar"><h1>{d.title} <small>{stageLabel(d.stage)} · {stageProb(d.stage)}% chance · {inr(d.value)}</small> <ViewOnly when={!edit} /></h1>
         <div className="row"><Link className="btn" to="/deals">Pipeline</Link>{canEdit('quotes') && <Link className="btn" to={`/quotes/new?deal=${id}`}>+ Quotation</Link>}
+          {canEdit('agreements') && <Link className="btn" to={`/agreements/new?kind=service&${d.quoteId && get(d.quoteId) ? 'quote=' + d.quoteId : 'deal=' + id}`}>+ Agreement</Link>}
           {edit && d.stage !== 'lost' && d.stage !== 'won' && <button className="btn" type="button" onClick={() => setLost(true)}>Mark lost</button>}
           {edit && d.stage !== 'won' && <button className="btn primary" type="button" onClick={() => set({ stage: 'won' }, 'Deal won! Write the handoff note for IT below.').then(() => setTab('handoff'))}>Mark won</button>}</div></div>
       <RO when={!edit}>
@@ -183,7 +184,7 @@ function Handoff({ d, set, project, pays, received, client }) {
       <Field label="What exactly was promised (scope) *"><Area style={{ minHeight: 120 }} value={f.scope} onChange={(e) => setF({ ...f, scope: e.target.value })} placeholder="Pages, features, and what is NOT included" disabled={!!project} /></Field>
       <div className="form"><Field label="Deadline promised to client"><In type="date" value={f.deadline} onChange={(e) => setF({ ...f, deadline: e.target.value })} disabled={!!project} /></Field>
         <Field label="Project template"><Sel value={f.template} onChange={(v) => setF({ ...f, template: v })} options={settings().projectTemplates.map((t) => [t.id, t.name])} blank="No template" disabled={!!project} /></Field></div>
-      <label className="check"><input type="checkbox" checked={f.agreement} onChange={(e) => setF({ ...f, agreement: e.target.checked })} /> Agreement signed (Company Secretary, for bigger deals)</label>
+      <label className="check"><input type="checkbox" checked={f.agreement} onChange={(e) => setF({ ...f, agreement: e.target.checked })} /> Service agreement signed with the client</label>
       <div className={'banner ' + (h.advance ? 'ok' : '')}>{h.advance ? 'Advance received – IT can start work.' : 'No advance yet. IT can see the project but cannot start work (not even planning) until the advance receipt is made.'}</div>
       {!project && <button className="btn primary" type="button" onClick={handOver}>Save & hand over to IT</button>}
     </div>

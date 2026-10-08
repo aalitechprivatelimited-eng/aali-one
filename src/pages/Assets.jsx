@@ -30,7 +30,7 @@ export default function Assets() {
     </div>
     <div className="row" style={{ marginBottom: 12 }}><In placeholder="Search client, work or person" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} style={{ maxWidth: 280 }} />
       <Seg value={f.st} onChange={(v) => setF({ ...f, st: v })} options={[['', 'All'], ['sent', 'Waiting'], ['allotted', 'Given'], ['done', 'Done']]} /></div>
-    {rows.length ? <div className="tbl"><table><thead><tr><th>Client</th><th>For</th><th>From</th><th>Sent to</th><th>Given to</th><th className="n">Files</th><th>Status</th><th>When</th></tr></thead><tbody>
+    {rows.length ? <div className="tbl cards"><table><thead><tr><th>Client</th><th>For</th><th>From</th><th>Sent to</th><th>Given to</th><th className="n">Files</th><th>Status</th><th>When</th></tr></thead><tbody>
       {rows.map((a) => { const [l, k] = ST[a.status] || ST.sent; return <tr key={a.id} className="click" onClick={() => setOpen(a.id)}>
         <td><b>{a.clientName}</b></td><td>{a.what || '—'}</td><td>{uname(a.owner)}</td><td>{TO[a.to]}</td><td>{a.assignee ? uname(a.assignee) : '—'}</td>
         <td className="n">{(a.files || []).length}{a.link ? ' + link' : ''}</td><td><Pill k={k}>{l}</Pill></td><td className="num small">{fmtDT(a.createdAt)}</td></tr>; })}</tbody></table></div>
@@ -52,7 +52,8 @@ export default function Assets() {
 }
 
 function Detail({ a, me, onClose }) {
-  const [to, setTo] = useState(a.assignee || ''), boss = isBoss(a, me) && canEdit('assets'), mine = a.owner === me.id, given = a.assignee === me.id, [l, k] = ST[a.status] || ST.sent;
+  const [to, setTo] = useState(a.assignee || ''), [dest, setDest] = useState(a.assignee ? a.to : ''), boss = isBoss(a, me) && canEdit('assets'), mine = a.owner === me.id, given = a.assignee === me.id, [l, k] = ST[a.status] || ST.sent;
+  const itMgr = activeUsers().find((u) => u.title === 'itmgr'), pickTeam = a.to === 'it' || dest === 'sales'; // the Sales Manager first says which team
   const set = (data, ok) => attempt(() => update(a.id, data), ok), team = activeUsers().filter((u) => u.team === (a.to === 'it' ? 'it' : 'sales'));
   const href = /^https?:\/\//i.test(a.link || '') ? a.link : a.link ? 'https://' + a.link : '';
   return <Modal wide title={`${a.clientName}${a.what ? ' – ' + a.what : ''}`} onClose={onClose} footer={<><span>{(boss || given) && a.status === 'allotted' && <button className="btn primary" type="button" onClick={() => set({ status: 'done' }, 'Marked done. The BDE is told.')}>Mark the work done</button>}</span>
@@ -63,8 +64,12 @@ function Detail({ a, me, onClose }) {
       <div><span className="lbl">Files</span><RO when={!(mine || boss) || !canEdit('assets')}><Attachments value={a.files || []} onChange={(files) => set({ files }, 'Files updated.')} /></RO></div>
       {href && <div><span className="lbl">Link</span><div><a href={href} target="_blank" rel="noreferrer">{a.link}</a></div></div>}
       {boss && a.status !== 'done' && <div className="card stack"><span className="lbl">Give these assets to</span>
-        <div className="row"><Sel value={to} onChange={setTo} options={team.map((u) => [u.id, `${u.name} · ${desig(u)}`])} blank="Choose the person who will do the work" style={{ flex: '1 1 260px', width: 'auto' }} />
-          <button className="btn primary" type="button" disabled={!to || to === a.assignee} onClick={() => set({ assignee: to }, `Given to ${uname(to)}. They have been told.`)}>{a.assignee ? 'Change person' : 'Give'}</button></div></div>}
+        {a.to === 'sales' && <Seg value={dest} onChange={setDest} options={[['sales', 'Sales team'], ['it', 'IT team']]} />}
+        {a.to === 'sales' && dest === 'it' && <div className="row"><span className="small grow">IT work goes to the IT Manager{itMgr ? `, ${itMgr.name},` : ''} who gives it to the right person in the IT team.</span>
+          <button className="btn primary" type="button" disabled={!itMgr} onClick={() => set({ _toIt: true }, 'Sent to the IT Manager. They have been told.')}>Send to the IT Manager</button></div>}
+        {pickTeam && <div className="row"><div style={{ flex: '1 1 260px' }}><Pick value={to} onChange={setTo} options={team.map((u) => [u.id, u.name, desig(u)])} blank={a.to === 'it' ? 'Search the IT team' : 'Search the Sales team'} /></div>
+          <button className="btn primary" type="button" disabled={!to || to === a.assignee} onClick={() => set({ assignee: to }, `Given to ${uname(to)}. They have been told.`)}>{a.assignee ? 'Change person' : 'Give'}</button></div>}
+        {a.to === 'sales' && !dest && <span className="small muted">Choose the team first.</span>}</div>}
       {!boss && a.status === 'sent' && <div className="banner">Waiting for the {TO[a.to]} to give these to a person.</div>}
       <div><span className="lbl">History</span><Log items={a.log} /></div>
     </div></Modal>;

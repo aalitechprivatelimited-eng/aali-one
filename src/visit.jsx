@@ -9,7 +9,7 @@
 // The same steps are on the running task's card (Daily reports), so nobody has to wait for the question.
 import { useEffect, useState } from 'react';
 import { useStore, store, list, update, create } from './api.js';
-import { Modal, Pick, attempt, toast } from './ui.jsx';
+import { Modal, Pick, In, attempt, toast } from './ui.jsx';
 import { today, addDays, settings } from './lib.js';
 import { Ico } from './icons.jsx';
 
@@ -137,7 +137,7 @@ function Outcome({ r, e, onClose }) {
         placeholder={o === 'Deal accepted' ? 'e.g. Agreed to the 5-page website at ₹25,000; advance on Monday' : 'e.g. Owner wants a quotation for a website and Google ads'} />
       {(follow || meet) && <div className="row"><span className="small" style={{ fontWeight: 600 }}>{meet ? 'Next meeting on' : 'Follow up on'}</span>
         {chips([[addDays(today(), 1), 'Tomorrow'], [addDays(today(), 2), 'In 2 days'], [addDays(today(), 7), 'Next week']], next, setNext)}
-        <input className="in" type="date" style={{ width: 'auto' }} min={today()} value={next} onChange={(ev) => ev.target.value && setNext(ev.target.value)} aria-label={meet ? 'Next meeting on this date' : 'Follow up on this date'} />
+        <In type="date" style={{ width: 'auto' }} min={today()} value={next} onChange={(ev) => ev.target.value && setNext(ev.target.value)} aria-label={meet ? 'Next meeting on this date' : 'Follow up on this date'} />
         {meet && <input className="in" type="time" style={{ width: 'auto' }} value={time} onChange={(ev) => setTime(ev.target.value)} aria-label="Next meeting at this time" />}</div>}
       {o === 'Deal accepted' && <div className="banner ok">The Sales Manager is told straight away. Remember to mark the deal as won on the Deals page.</div>}
       <span className="lbl">Where are you going now?</span>

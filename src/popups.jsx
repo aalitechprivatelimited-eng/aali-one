@@ -9,7 +9,7 @@ import { m, AnimatePresence, SPRING } from './motion.jsx';
 import { Ico } from './icons.jsx';
 import { uname } from './lib.js';
 
-const LINK = { lead: '/leads/', deal: '/deals/', project: '/projects/', quote: '/quotes/', client: '/clients/', task: '/tasks', ticket: '/support', approval: '/approvals', report: '/daily', prospect: '/calls', asset: '/assets' };
+const LINK = { lead: '/leads/', deal: '/deals/', project: '/projects/', quote: '/quotes/', client: '/clients/', task: '/tasks', ticket: '/support', approval: '/approvals', report: '/daily', prospect: '/calls', asset: '/assets', agreement: '/agreements/', payroll: '/payroll', clientpay: '/client-payroll', payment: '/payments' };
 // Where a notification leads: the lead, deal, project… it is about.
 export const noticeLink = (n) => { const base = LINK[n.relType] || '/'; return base.endsWith('/') ? base + n.relId : base; };
 

@@ -2,12 +2,19 @@
 // the advance gate, sign-off before Live, payments updating reminders, approvals, recurring tasks.
 import { newId } from './auth.js';
 import { docTotals, receiptTotals, fyLabel, dayLabel, mobile10, num, round2 } from '../shared/money.js';
-import { MANAGER_TITLES, TOP_TITLES, DEFAULT_SETTINGS } from '../shared/defaults.js';
+import { MANAGER_TITLES, TOP_TITLES, DEFAULT_SETTINGS, GROUP, COMPANIES } from '../shared/defaults.js';
 import { canSee, canEdit, scopeOf } from '../shared/access.js';
 import { applyCalls, checkCalls, claimForLead, holderOf, prospectCreate, prospectUpdate } from './prospects.js';
+import { payFor, clientPay, grossOf, fromSheet, sheetAttendance, attendanceDays, onBasis, daysIn, monthLabel, loanLeft, salaryFor } from '../shared/payroll.js';
+import { hrmMonth, hrmConnected, hrmEmailOf, hrmFind } from './hrm.js';
+import { queueReport } from './whatsapp.js';
+import { deadlineItems, SOON_DAYS } from '../shared/deadlines.js';
 
 export class Rule extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 const today = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10); // India date
+// A date in a message, the Indian way: 2026-10-08 → 8 Oct 2026.
+const SHORT_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const inDate = (s) => (/^\d{4}-\d\d-\d\d/.test(s || '') ? `${+s.slice(8, 10)} ${SHORT_MON[+s.slice(5, 7) - 1]} ${s.slice(0, 4)}` : s || '');
 const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const addMonths = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'), day = d.getUTCDate(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + n);
   const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate(); d.setUTCDate(Math.min(day, last)); return d.toISOString().slice(0, 10); };
@@ -41,8 +48,10 @@ export async function getSetting(t, key, fallback) {
 export async function setSetting(t, key, value) {
   await t.query('insert into settings (key, value) values ($1, $2) on conflict (key) do update set value = $2, updated_at = now()', [key, JSON.stringify(value)]);
 }
-async function getRec(t, id) {
-  const r = await t.query('select * from records where id = $1 and deleted_at is null', [id]);
+// A record by its id – only if it is of the kind expected. Ids come from what people send, so a payment, approval or quotation
+// must never be able to point the server at some other kind of record (for example a signed agreement).
+async function getRec(t, id, type) {
+  const r = await t.query('select * from records where id = $1 and type = $2 and deleted_at is null', [id, type]);
   return r.rows[0] || null;
 }
 async function putRec(t, rec, user) {
@@ -136,11 +145,68 @@ export async function beforeCreate(t, type, data, user, sample) {
       const d = today().replace(/-/g, ''); data.certNo = `DAC-${d}-${String(await counter(t, 'cert:' + d)).padStart(3, '0')}`;
       data.signedAt = new Date().toISOString(); data.collectedBy = me; break;
     }
+    case 'agreement': { // a client service agreement, or the closure (completion and delivery) agreement at the end of a project
+      // Only the two plain words – never a list, an object or a built-in name (review of the agreements feature).
+      if (!(typeof data.kind === 'string' && Object.hasOwn(AGREEMENT, data.kind))) throw new Rule('Choose the kind of agreement.');
+      if (!String(data.clientName || '').trim()) throw new Rule('Enter the client name.');
+      if (data.kind === 'closure' && !data.projectId) throw new Rule('Choose the project this closure agreement is for.');
+      data.date ||= today(); if (!/^\d{4}-\d\d-\d\d$/.test(data.date)) throw new Rule('Enter a proper agreement date.');
+      const fy = fyLabel(data.date);
+      data.seq = await counter(t, `agreement:${data.kind}:${fy}`); data.fy = fy;
+      data.number = `${AGREEMENT[data.kind].prefix}/${fy}/${String(data.seq).padStart(3, '0')}`;
+      data.status = 'draft'; for (const k of ['signedOn', 'signedAt', 'signedBy', 'signedCopy', 'sentOn', 'log']) delete data[k];
+      log(data, me, `${AGREEMENT[data.kind].name} made`); break;
+    }
+    case 'pclient': {
+      const clean = cleanPclient(data);
+      if ((await t.query("select 1 from records where deleted_at is null and type = 'pclient' and lower(data->>'name') = lower($1)", [clean.name])).rowCount) throw new Rule(`${clean.name} is already a payroll client.`);
+      await hrmCodeFree(t, clean.hrmCode, '');
+      for (const k of Object.keys(data)) delete data[k];
+      Object.assign(data, clean); log(data, me, 'Added as a payroll client'); break;
+    }
+    case 'pemp': {
+      const pc = await getRec(t, txt(data.pclientId, 40), 'pclient'); if (!pc) throw new Rule('Choose the payroll client.');
+      const clean = cleanPemp(data, pc.data.payModel); await pempCodeFree(t, pc.id, clean.code, '');
+      for (const k of Object.keys(data)) delete data[k];
+      Object.assign(data, clean, { pclientId: pc.id }); log(data, me, clean.payType === 'daily' ? `Added: ₹${clean.rate} a day` : `Added: ₹${clean.gross} a month`); break;
+    }
+    case 'payee': {
+      const clean = cleanPayee(data); await payeeEmailFree(t, clean.email, '');
+      for (const k of Object.keys(data)) delete data[k];
+      Object.assign(data, clean); log(data, me, 'Added as staff without a login'); break;
+    }
+    case 'salary': { // one salary sheet per person, kept by HR; the Founder & Chairman is not on the payroll
+      const u = await payPerson(t, data.userId);
+      if (!u) throw new Rule('Choose a person on the payroll.');
+      if ((await t.query("select 1 from records where deleted_at is null and type = 'salary' and data->>'userId' = $1", [u.id])).rowCount) throw new Rule(`${u.name} already has a salary sheet. Open it to change it.`);
+      const clean = { ...cleanSalary(data), userId: u.id, name: u.name };
+      for (const k of Object.keys(data)) delete data[k];
+      Object.assign(data, clean, { revisions: [{ from: clean.from, gross: clean.gross, at: new Date().toISOString(), by: me }] });
+      log(data, me, `Salary sheet made: ₹${clean.gross} a month`); break;
+    }
+    case 'loan': { // a loan or a salary advance, cut from the pay month by month (an advance in one go)
+      const u = await payPerson(t, data.userId);
+      if (!u) throw new Rule('Choose the person.');
+      const clean = { ...cleanLoan(data), userId: u.id, name: u.name, recovered: [], closed: false };
+      for (const k of Object.keys(data)) delete data[k];
+      Object.assign(data, clean); log(data, me, `${clean.kind === 'advance' ? 'Advance' : 'Loan'} of ₹${clean.amount}${clean.givenOn ? ' given on ' + clean.givenOn : ''}; cutting from ${monthLabel(clean.from)}`); break;
+    }
+    case 'payrun': { // one month's payroll: made from the salary sheets, Aali HRM's attendance, loans and HR's changes for the month
+      // – or, with pclientId, a payroll client's month: its employees and the attendance Excel the client sends (each client's months apart)
+      const month = mon(data.month); if (!month) throw new Rule('Choose the month.');
+      if (month > today().slice(0, 7)) throw new Rule('Payroll can be made for this month or a month before.');
+      const pcId = txt(data.pclientId, 40), pc = pcId ? await getRec(t, pcId, 'pclient') : null;
+      if (pcId && (!pc || pc.data.active === false)) throw new Rule('Choose the payroll client.');
+      if ((await t.query("select 1 from records where deleted_at is null and type = 'payrun' and data->>'month' = $1 and coalesce(data->>'pclientId', '') = $2", [month, pcId])).rowCount) throw new Rule(`Payroll for ${monthLabel(month)} is already made. Open it.`);
+      for (const k of Object.keys(data)) delete data[k];
+      Object.assign(data, { month, ...(pc ? { pclientId: pc.id } : {}), title: `${pc ? pc.data.name + ' – payroll' : 'Payroll'} ${monthLabel(month)}`, status: 'draft', adj: {}, remarks: [] });
+      await buildRun(t, data); log(data, me, 'Payroll made'); break;
+    }
     case 'ticket': if (!data.title?.trim()) throw new Rule('Describe the problem.');
       data.number = 'T-' + String(await counter(t, 'ticket')).padStart(4, '0'); data.status ||= 'open'; log(data, me, 'Support request opened'); break;
     case 'project': data.stage ||= 'planning'; data.progressToken ||= newId('');
       // IT cannot open the deal, so the project itself remembers whether the advance has come.
-      if (data.dealId) { const deal = await getRec(t, data.dealId); if (deal?.data.handoff?.advance) data.advance = true; else delete data.advance; }
+      if (data.dealId) { const deal = await getRec(t, data.dealId, 'deal'); if (deal?.data.handoff?.advance) data.advance = true; else delete data.advance; }
       log(data, me, 'Project created'); break;
     case 'task': if (!data.title?.trim()) throw new Rule('Enter the task.'); data.status ||= 'todo'; break;
     case 'payment': if (!data.title?.trim()) throw new Rule('Enter what the payment is for.'); data.status ||= 'open'; data.paid ||= 0; data.baseAmount ??= num(data.amount); break;
@@ -239,20 +305,27 @@ export async function afterCreate(t, type, id, data, user, sample) {
       reason: `Discount ${data.totals.discountPct}% on ${data.number}` }, user, { sample });
   }
   if ((type === 'quote' || type === 'invoice') && data.dealId) {
-    const deal = await getRec(t, data.dealId);
+    const deal = await getRec(t, data.dealId, 'deal');
     if (deal && type === 'quote') { deal.data.quoteNo = data.number; deal.data.quoteId = id; deal.data.value = data.totals.total; log(deal.data, me, `Quotation ${data.number} made (${data.totals.total})`); await putRec(t, deal, user); }
   }
   if (type === 'receipt') await applyReceipt(t, id, data, user);
   // Starting from a template: the server makes the tasks, so a BDE handing a deal over needs no access to IT's tasks.
   if (type === 'project' && data.templateId) {
     const tpl = (await getSetting(t, 'projectTemplates', DEFAULT_SETTINGS.projectTemplates)).find((x) => x.id === data.templateId);
-    for (const k of tpl?.tasks || []) await insertRec(t, 'task', { title: k.title, projectId: id, due: addDays(today(), k.days), milestone: !!k.milestone, team: 'it', status: 'todo', priority: 'medium' }, user, { sample });
+    // A template's day counts are for a typical project. The steps are spread between the start and the delivery date in the same order
+    // and proportions, so the last one falls on the delivery date and no step ever lands after it (the user's report: Guntur 99 Store was
+    // due on 10 October, and its template steps ran to 21 October). Without a delivery date the day counts are used as they are.
+    const steps = tpl?.tasks || [], start = data.start || today(), end = data.deadline && data.deadline > start ? data.deadline : '';
+    const last = Math.max(1, ...steps.map((k) => +k.days || 0)), span = end ? Math.round((Date.parse(end) - Date.parse(start)) / 864e5) : 0;
+    for (const k of steps) await insertRec(t, 'task', { title: k.title, projectId: id, due: end ? addDays(start, Math.round(span * (+k.days || 0) / last)) : addDays(start, +k.days || 0),
+      milestone: !!k.milestone, team: 'it', status: 'todo', priority: 'medium' }, user, { sample });
   }
   if (type === 'signoff') {
-    const p = await getRec(t, data.projectId);
+    const p = await getRec(t, data.projectId, 'project');
     if (p) { const go = p.data.stage !== 'live'; p.data.signoffId = id; if (go) { p.data.stage = 'live'; p.data.liveAt = today(); }
       log(p.data, me, `Client sign-off by ${data.signerName} (${data.certNo})${go ? ' – moved to Live' : ''}`); await putRec(t, p, user); }
   }
+  if (type === 'agreement') await tellAgreement(t, ['ops', 'salesmgr'], `${user.name} made ${AGREEMENT[data.kind].name.toLowerCase()} ${data.number} for ${data.clientName} (draft).`, id, user, sample);
   if (type === 'comment') for (const to of data.mentions || []) await notify(t, to, `${user?.name || 'Someone'} mentioned you: "${String(data.text).slice(0, 80)}"`, data.relType, data.relId, user, sample);
   if (type === 'lead') await claimForLead(t, id, data, user, sample); // the business now belongs to this lead's BDE
   if (type === 'asset') { // tell the manager they go to; the Sales Manager always (the BDE is in her team); the Operations Manager and Company Secretary always
@@ -268,20 +341,299 @@ export async function afterCreate(t, type, id, data, user, sample) {
     for (const m of mgrs) await notify(t, m.id, `Approval needed: ${data.reason}`, 'approval', id, user, sample); }
 }
 
+// Agreements: SA/2026-27/001 for a client service agreement, PCA/2026-27/001 for a project closure agreement.
+export const AGREEMENT = { service: { prefix: 'SA', name: 'Service agreement' }, closure: { prefix: 'PCA', name: 'Closure agreement' } };
+// Agreement news goes to the people of these access levels who are still working here, never to the person who did it.
+async function tellAgreement(t, titles, text, id, user, sample) {
+  for (const u of (await t.query('select id from users where active and title = any($1) and id <> $2', [titles, user?.id || ''])).rows) await notify(t, u.id, text, 'agreement', id, user, sample);
+}
+
+// ---------- payroll (shared/payroll.js does the arithmetic) ----------
+const NOT_ON_PAYROLL = ['chairman', 'admin']; // the Founder & Chairman, and the setup account
+const money = (v) => Math.max(0, Math.round(+v || 0));
+const txt = (v, n) => String(v ?? '').trim().slice(0, n);
+const day = (v) => { if (!/^\d{4}-\d\d-\d\d$/.test(v || '')) return ''; const d = new Date(v + 'T00:00:00Z'); return !isNaN(d) && d.toISOString().slice(0, 10) === v ? v : ''; }; // a real date only
+const mon = (v) => (/^\d{4}-(0[1-9]|1[0-2])$/.test(v || '') ? v : '');
+function cleanSalary(d) {
+  const gross = money(d.gross); if (!gross) throw new Rule('Enter the monthly gross salary.');
+  const b = d.bank || {}, account = txt(b.account, 30).replace(/\s/g, ''), ifsc = txt(b.ifsc, 11).toUpperCase(), pan = txt(d.pan, 10).toUpperCase();
+  if (account && !/^\d{6,20}$/.test(account)) throw new Rule('The bank account number should be 6 to 20 digits.');
+  if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) throw new Rule('The IFSC looks wrong: 11 characters, like ICIC0001234.');
+  if (pan && !/^[A-Z]{5}\d{4}[A-Z]$/.test(pan)) throw new Rule('The PAN looks wrong: 10 characters, like ABCDE1234F.');
+  const pct = d.basicPct === '' || d.basicPct == null ? null : Math.round(+d.basicPct);
+  if (pct !== null && !(pct >= 10 && pct <= 100)) throw new Rule('Basic must be between 10% and 100% of the gross.');
+  return { gross, from: mon(d.from), basicPct: pct, pf: !!d.pf, pfCap: d.pfCap !== false, esi: !!d.esi, pt: d.pt !== false,
+    fixed: (Array.isArray(d.fixed) ? d.fixed : []).slice(0, 20).map((x) => ({ name: txt(x?.name, 60), amount: money(x?.amount) })).filter((x) => x.name),
+    bank: { holder: txt(b.holder, 80), account, ifsc, name: txt(b.name, 60) }, pan, uan: txt(d.uan, 12), esiNo: txt(d.esiNo, 17),
+    joined: day(d.joined), left: day(d.left), stopped: !!d.stopped, note: txt(d.note, 500) };
+}
+// Payroll rules as HR saves them (Aali's own, or a client's): numbers only, in sensible ranges. dayBasis 26 / 30: one day's pay is the
+// gross ÷ 26 or ÷ 30 instead of ÷ the days in the month (some clients pay that way).
+export function cleanRules(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Rule('Send the payroll rules.');
+  const n = (k, lo, hi) => Math.min(hi, Math.max(lo, +v[k] || 0)), d = DEFAULT_SETTINGS.payroll;
+  return { payDay: n('payDay', 1, 28) || d.payDay, basicPct: n('basicPct', 10, 100) || d.basicPct, hraPct: n('hraPct', 0, 100), pfEe: n('pfEe', 0, 30), pfEr: n('pfEr', 0, 30), pfCeiling: n('pfCeiling', 0, 1e7),
+    esiEe: n('esiEe', 0, 10), esiEr: n('esiEr', 0, 10), esiLimit: n('esiLimit', 0, 1e7), freeLeaves: n('freeLeaves', 0, 31), dayBasis: [26, 30].includes(+v.dayBasis) ? +v.dayBasis : 0,
+    // a payroll client's daily-wage workers, overtime, and extras
+    dailyBasicPct: n('dailyBasicPct', 10, 100) || 100, shiftHours: n('shiftHours', 1, 24) || 8, otMultiplier: n('otMultiplier', 1, 4) || 2,
+    dailyPaid: { leave: v.dailyPaid?.leave !== false, holidays: v.dailyPaid?.holidays !== false, offs: !!v.dailyPaid?.offs }, extras: cleanExtras(v.extras),
+    ptSlabs: (Array.isArray(v.ptSlabs) ? v.ptSlabs : d.ptSlabs).slice(0, 10).map((r) => [Math.max(0, Math.round(+r?.[0] || 0)), Math.max(0, Math.round(+r?.[1] || 0))]) };
+}
+// A client's extras (shared/payroll.js extrasFor): up to 20, each with a short key the attendance Excel's column is read into.
+const HOW = ['fixed', 'perDay', 'perUnit', 'amount', 'tiers', 'overtime'];
+function cleanExtras(list) {
+  const keys = new Set();
+  return (Array.isArray(list) ? list : []).slice(0, 20).map((e) => {
+    const name = txt(e?.name, 40); if (!name) return null;
+    let key = /^[a-z0-9]{1,24}$/.test(e.key || '') ? e.key : name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'extra';
+    for (let i = 2; keys.has(key); i++) key = key.replace(/\d*$/, '') + i; keys.add(key);
+    const how = HOW.includes(e.how) ? e.how : 'fixed', side = how === 'overtime' || how === 'tiers' ? 'earn' : e.side === 'cut' ? 'cut' : 'earn';
+    return { key, name, side, how, amount: Math.max(0, Math.round((+e.amount || 0) * 100) / 100), wages: side === 'earn' && !!e.wages, who: ['all', 'daily', 'monthly'].includes(e.who) ? e.who : 'all',
+      tiers: how === 'tiers' ? (Array.isArray(e.tiers) ? e.tiers : []).slice(0, 6).map((t) => [Math.max(0, Math.min(31, +t?.[0] || 0)), Math.max(0, Math.round((+t?.[1] || 0) * 100) / 100)]).filter((t) => t[0] > 0) : [],
+      tierMode: e.tierMode === 'day' ? 'day' : 'month' };
+  }).filter(Boolean);
+}
+const email = (v, what) => { const e = txt(v, 120).toLowerCase(); if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw new Rule(`The ${what} looks wrong.`); return e; };
+const phone = (v) => txt(v, 15).replace(/[^\d+]/g, '');
+// A payroll client: the company whose employees Aali Conssultancy pays as a service. The client is the employer, so its name,
+// address and PF/ESI numbers go on the payslips; its own pay rules; where its attendance comes from; Aali's fee (for the bill).
+function cleanPclient(d) {
+  const name = txt(d.name, 120); if (name.length < 2) throw new Rule('Enter the client\'s name as it should be on the payslips.');
+  const gstin = txt(d.gstin, 15).toUpperCase(); if (gstin && !/^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$/.test(gstin)) throw new Rule('The GSTIN looks wrong: 15 characters, like 37ABCDE1234F1Z5.');
+  const fee = d.fee && typeof d.fee === 'object' ? d.fee : {}, attendance = d.attendance === 'hrm' ? 'hrm' : 'excel';
+  // Their own HRM: a short link code names the hosting setting with its connection (HRM_DATABASE_URL_<code>, server/hrm.js).
+  const hrmCode = attendance === 'hrm' ? txt(d.hrmCode, 20).toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+  if (attendance === 'hrm' && !/^[A-Z0-9]{2,12}$/.test(hrmCode)) throw new Rule('Give their HRM a short link code: 2 to 12 letters or numbers, like GSM.');
+  return { name, address: txt(d.address, 300), gstin, clientId: txt(d.clientId, 40), contactName: txt(d.contactName, 80), contactPhone: phone(d.contactPhone), contactEmail: email(d.contactEmail, 'contact email'),
+    pfCode: txt(d.pfCode, 30).toUpperCase(), esiCode: txt(d.esiCode, 30), ptState: txt(d.ptState, 40), rules: cleanRules(d.rules && typeof d.rules === 'object' ? d.rules : {}),
+    payModel: ['daily', 'monthly', 'both'].includes(d.payModel) ? d.payModel : 'monthly', attendance, hrmCode, fee: { kind: ['employee', 'month', 'percent'].includes(fee.kind) ? fee.kind : 'employee', amount: Math.max(0, Math.round((+fee.amount || 0) * 100) / 100) },
+    note: txt(d.note, 500), active: d.active !== false };
+}
+// A payroll client's employee (no login): an employee code unique within the client, and the same pay details as a salary sheet.
+// model: the client's pay model – 'daily' or 'monthly' fixes the pay type, 'both' lets each employee be either.
+function cleanPemp(d, model = 'monthly') {
+  const code = txt(d.code, 20).toUpperCase(); if (!code) throw new Rule('Enter the employee code.');
+  const name = txt(d.name, 80); if (name.length < 2) throw new Rule(`Enter the name of employee ${code}.`);
+  const payType = model === 'daily' ? 'daily' : model === 'monthly' ? 'monthly' : d.payType === 'daily' ? 'daily' : 'monthly';
+  const rate = payType === 'daily' ? Math.max(0, Math.round((+d.rate || 0) * 100) / 100) : 0;
+  if (payType === 'daily' && !rate) throw new Rule(`Enter the daily wage of employee ${code}.`);
+  const { from, ...pay } = cleanSalary(payType === 'daily' ? { ...d, gross: 1 } : d);
+  return { ...pay, gross: payType === 'daily' ? 0 : pay.gross, rate, code, name, designation: txt(d.designation, 60), department: txt(d.department, 60), payType,
+    phone: phone(d.phone), personalEmail: email(d.personalEmail, 'personal email'), active: d.active !== false };
+}
+async function hrmCodeFree(t, code, id) { // one link code, one client's HRM
+  if (code && (await t.query("select 1 from records where deleted_at is null and type = 'pclient' and data->>'hrmCode' = $1 and id <> $2", [code, id])).rowCount) throw new Rule(`The link code ${code} is already another client's.`);
+}
+async function pempCodeFree(t, pclientId, code, id) {
+  if ((await t.query("select 1 from records where deleted_at is null and type = 'pemp' and data->>'pclientId' = $1 and upper(data->>'code') = $2 and id <> $3", [pclientId, code, id || ''])).rowCount)
+    throw new Rule(`Employee code ${code} is already used for this client.`);
+}
+// A month's attendance Excel for a client: rows { code, present, half, paidLeave, unpaidLeave, absent, offs, holidays, paidDays } →
+// { employeeId: row }. Every code must be one of the client's employees; numbers are days from 0 to 31 (halves allowed).
+export async function readAttendance(t, pclientId, rows) {
+  if (!Array.isArray(rows) || !rows.length) throw new Rule('The attendance file has no rows.');
+  const emps = new Map((await t.query("select id, data from records where deleted_at is null and type = 'pemp' and data->>'pclientId' = $1", [pclientId])).rows.map((r) => [String(r.data.code).toUpperCase(), r.id]));
+  const cols = ((await getRec(t, pclientId, 'pclient'))?.data.rules?.extras || []).filter(fromSheet), out = {}, unknown = [];
+  for (const r of rows.slice(0, 5000)) {
+    const code = txt(r?.code, 20).toUpperCase(); if (!code) continue;
+    const id = emps.get(code); if (!id) { unknown.push(code); continue; }
+    const num = (k) => { const x = r[k]; if (x === '' || x == null) return ''; const v = Math.round(+x * 2) / 2; if (!(v >= 0 && v <= 31)) throw new Rule(`Employee ${code}: days must be a number from 0 to 31.`); return v; };
+    const ex = r.extra && typeof r.extra === 'object' ? r.extra : {}, extra = {};
+    for (const c of cols) { const x = ex[c.key]; if (x === '' || x == null) continue; const v = Math.round(+x * 100) / 100;
+      if (!(v >= 0 && v <= (c.how === 'amount' ? 1e6 : 1000))) throw new Rule(`Employee ${code}: "${c.name}" must be a number${c.how === 'amount' ? ' of rupees' : ''}.`); extra[c.key] = v; }
+    out[id] = { present: num('present'), half: num('half'), double: num('double'), paidLeave: num('paidLeave'), unpaidLeave: num('unpaidLeave'), absent: num('absent'), offs: num('offs'), holidays: num('holidays'), paidDays: num('paidDays'), extra };
+  }
+  if (unknown.length) throw new Rule(`These employee codes are not in this client's list: ${unknown.slice(0, 10).join(', ')}${unknown.length > 10 ? ' …' : ''}. Add them in Employees first.`);
+  if (!Object.keys(out).length) throw new Rule('No employee code was found in the file.');
+  return out;
+}
+// Staff without a login (a maid, a personal secretary…): on the payroll and given payslips, but never signing in to Aali One.
+// HR keeps their details in a 'payee' record; their salary sheet, loans and payroll lines use its id where others use their login's.
+function cleanPayee(d) {
+  const name = txt(d.name, 80); if (name.length < 2) throw new Rule('Enter the person\'s full name.');
+  const mail = (v, what) => { const e = txt(v, 120).toLowerCase(); if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw new Rule(`The ${what} looks wrong.`); return e; };
+  return { name, designation: txt(d.designation, 60), company: [GROUP, ...COMPANIES].includes(d.company) ? d.company : COMPANIES[0], email: mail(d.email, 'Aali HRM email'),
+    personalEmail: mail(d.personalEmail, 'personal email'), phone: txt(d.phone, 15).replace(/[^\d+]/g, ''), active: d.active !== false };
+}
+// One Aali HRM email, one person: not someone who signs in with it, not another payee, not someone HR matched to it by hand.
+async function payeeEmailFree(t, email, id) {
+  if (!email) return;
+  if ((await t.query('select 1 from users where lower(email) = $1', [email])).rowCount) throw new Rule('Someone in Aali One already signs in with that email – they are matched to Aali HRM already.');
+  if ((await t.query("select 1 from records where deleted_at is null and type = 'payee' and lower(data->>'email') = $1 and id <> $2", [email, id || ''])).rowCount) throw new Rule('Another person without a login already has that Aali HRM email.');
+  if (Object.values(await getSetting(t, 'hrmLinks', {})).includes(email)) throw new Rule('HR has matched someone in Aali One to that Aali HRM email by hand.');
+}
+// Who a salary sheet or a loan can be for: a login on the payroll (not the Founder & Chairman), or a payee still working here.
+async function payPerson(t, id) {
+  const u = (await t.query('select id, name, title from users where id = $1', [String(id || '')])).rows[0]; if (u) return NOT_ON_PAYROLL.includes(u.title) ? null : u;
+  const p = (await t.query("select id, data from records where id = $1 and type = 'payee' and deleted_at is null", [String(id || '')])).rows[0];
+  return p && p.data.active !== false ? { id: p.id, name: p.data.name, title: 'payee' } : null;
+}
+function cleanLoan(d) {
+  const kind = d.kind === 'advance' ? 'advance' : 'loan', amount = money(d.amount); if (!amount) throw new Rule('Enter the amount given.');
+  const from = mon(d.from); if (!from) throw new Rule('Choose the month the cutting starts.');
+  const cut = kind === 'advance' ? amount : money(d.cut); if (!cut) throw new Rule('Enter how much is cut each month.');
+  return { kind, amount, cut: Math.min(cut, amount), from, givenOn: day(d.givenOn), note: txt(d.note, 300) };
+}
+// HR's changes for one month, person by person: paid days typed by hand (with why), TDS, another deduction, extra pay, a different loan cut.
+function cleanAdj(a) {
+  const out = {};
+  for (const [uid, v] of Object.entries(a && typeof a === 'object' ? a : {}).slice(0, 300)) {
+    if (!/^[\w-]{1,40}$/.test(uid) || !v || typeof v !== 'object') continue;
+    const o = {};
+    if (v.days !== undefined && v.days !== null && v.days !== '') { const d = Math.round(+v.days * 2) / 2; if (!(d >= 0 && d <= 31)) throw new Rule('Paid days must be between 0 and 31.'); o.days = d; o.daysWhy = txt(v.daysWhy, 200); }
+    for (const k of ['tds', 'other', 'extra']) if (money(v[k])) o[k] = money(v[k]);
+    if (o.other) { o.otherWhy = txt(v.otherWhy, 120); if (!o.otherWhy) throw new Rule('Say what the other deduction is for.'); }
+    if (o.extra) { o.extraWhy = txt(v.extraWhy, 120); if (!o.extraWhy) throw new Rule('Say what the extra pay is for (bonus, arrears…).'); }
+    if (v.loans && typeof v.loans === 'object') { const l = {}; for (const [id, x] of Object.entries(v.loans).slice(0, 20)) if (/^[\w-]{1,40}$/.test(id) && x !== '' && x != null) l[id] = money(x); if (Object.keys(l).length) o.loans = l; }
+    if (Object.keys(o).length) out[uid] = o;
+  }
+  return out;
+}
+// Works out every person's pay for the month, fresh: salary sheets + Aali HRM attendance + open loans + HR's changes.
+async function buildRun(t, run) {
+  if (run.pclientId) return buildClientRun(t, run);
+  const month = run.month, start = `${month}-01`, end = `${month}-${String(daysIn(month)).padStart(2, '0')}`;
+  const rules = { ...DEFAULT_SETTINGS.payroll, ...(await getSetting(t, 'payroll', {})) }, now = today(), adj = run.adj || {};
+  const sal = (await t.query("select id, data from records where deleted_at is null and type = 'salary'")).rows;
+  const loans = (await t.query("select id, data from records where deleted_at is null and type = 'loan'")).rows;
+  const users = new Map((await t.query('select id, email, name, title, designation, company, team, active, removed_at from users')).rows.map((u) => [u.id, u]));
+  const links = await getSetting(t, 'hrmLinks', {}); // people HR matched by hand in Rules & Aali HRM
+  for (const { id, data: p } of (await t.query("select id, data from records where deleted_at is null and type = 'payee'")).rows) // staff without a login
+    users.set(id, { id, email: p.email || '', name: p.name, title: 'payee', designation: p.designation || '', company: p.company || '', team: '', active: p.active !== false, removed_at: null });
+  let hrm = null, error = '';
+  if (hrmConnected()) try { hrm = await hrmMonth(month); } catch (e) { error = 'Aali HRM could not be reached: ' + String(e?.message || e).slice(0, 160); }
+  // If Aali HRM cannot be reached now, the attendance read last time is kept (a salary change must not wipe it).
+  const before = !hrm && error && run.att?.source !== 'none' ? new Map((run.items || []).filter((i) => i.days?.att).map((i) => [i.userId, i.days.att])) : new Map(), keptAt = run.att?.at;
+  const items = [];
+  for (const { id, data: s } of sal) {
+    const u = users.get(s.userId), then = salaryFor(s, month); // the gross in force in this month (review #4)
+    if (!then || !u || NOT_ON_PAYROLL.includes(u.title) || s.stopped || (s.joined && s.joined > end) || (s.left && s.left < start)) continue;
+    if ((!u.active || u.removed_at) && !s.left) continue; // a person switched off is paid only up to the leaving date HR enters on the sheet
+    const h = hrm?.people.get(hrmEmailOf(u, links));
+    const att = h ? attendanceDays({ month, today: now, joined: s.joined || h.joined, left: s.left || h.left, records: h.records, leaves: h.leaves, holidays: hrm.holidays, freeLeaves: +rules.freeLeaves || 0 }) : before.get(u.id) || null;
+    const mine = loans.filter((l) => l.data.userId === u.id && (!l.data.closed || (l.data.recovered || []).some((x) => x.month === month))).map((l) => ({ id: l.id, ...l.data }));
+    const p = payFor({ month, salary: then, att, rules, loans: mine, adj: adj[u.id] || {} });
+    if (hrm && !h) p.warn.unshift(hrmEmailOf(u, links) ? `Not found in Aali HRM – no one there has the email ${hrmEmailOf(u, links)}. HR can match the person by hand in Rules & Aali HRM.`
+      : 'No Aali HRM email on this person\'s details – add it in Salaries (Details), or type the paid days.');
+    if (!s.bank?.account || !s.bank?.ifsc) p.warn.push('No bank account on the salary sheet.');
+    items.push({ userId: u.id, salaryId: id, name: u.name, designation: u.designation || '', company: u.team === 'management' ? GROUP : u.company || '', bank: s.bank || {}, pan: s.pan || '', uan: s.uan || '', esiNo: s.esiNo || '', ...p });
+  }
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  const add = (f) => items.reduce((a, i) => a + f(i), 0);
+  Object.assign(run, { items, rules, totals: { people: items.length, gross: add((i) => i.earned.gross + i.extra), deductions: add((i) => i.ded.total), net: add((i) => i.net), employerPf: add((i) => i.employer.pf), employerEsi: add((i) => i.employer.esi) },
+    att: { connected: hrmConnected(), source: hrm ? 'hrm' : before.size ? 'kept' : 'none', at: !hrm && before.size ? keptAt : new Date().toISOString(), error, found: items.filter((i) => i.days.att).length },
+    warnMonth: end >= now ? `${monthLabel(month)} is not over yet: the days still to come are not counted.` : '' });
+}
+// A payroll client's month: the client's employees, their attendance, the client's own rules, and the client's name and PF/ESI
+// numbers for the payslips (kept on the month, so a locked month never changes).
+// Attendance: from the client's own HRM when it is linked (pclient.hrmCode; paid days by Aali HRM's rules, as for Aali's own staff),
+// with the attendance Excel (run.sheet) bringing only the numbers for the extras – overtime hours, canteen tokens, a store bill.
+// Someone the HRM does not have gets their days from the Excel if it gives them, or HR types them. Without a link: the Excel, as sent.
+// If the HRM cannot be reached when the month is worked out again, the days read from it last time are kept.
+const hasDays = (row) => ['present', 'half', 'double', 'paidLeave', 'unpaidLeave', 'absent', 'offs', 'holidays', 'paidDays'].some((k) => row?.[k] !== '' && row?.[k] != null);
+async function buildClientRun(t, run) {
+  const month = run.month, start = `${month}-01`, end = `${month}-${String(daysIn(month)).padStart(2, '0')}`, adj = run.adj || {};
+  const pc = (await getRec(t, run.pclientId, 'pclient'))?.data || {}, rules = { ...DEFAULT_SETTINGS.payroll, ...(pc.rules || {}) };
+  const key = pc.attendance === 'hrm' ? pc.hrmCode || '' : '', linked = !!key && hrmConnected(key), theirs = `${pc.name || 'the client'}'s HRM`, now = today();
+  let hrm = null, error = '';
+  if (linked) try { hrm = await hrmMonth(month, key); } catch (e) { error = `${theirs} could not be reached: ` + String(e?.message || e).slice(0, 160); }
+  const kept = !hrm && error ? new Map((run.items || []).filter((i) => i.days?.att?.src === 'hrm').map((i) => [i.userId, i.days.att])) : new Map();
+  const items = [];
+  for (const { id, data: e } of (await t.query("select id, data from records where deleted_at is null and type = 'pemp' and data->>'pclientId' = $1", [run.pclientId])).rows) {
+    if ((e.joined && e.joined > end) || (e.left && e.left < start) || e.stopped || (e.active === false && !e.left)) continue;
+    const row = run.sheet?.[id], sheet = row ? sheetAttendance(row) : null, h = hrmFind(hrm, e);
+    const fromHrm = h ? { ...onBasis(attendanceDays({ month, today: now, joined: e.joined || h.joined, left: e.left || h.left, records: h.records, leaves: h.leaves, holidays: hrm.holidays, freeLeaves: +rules.freeLeaves || 0 }), rules, e), src: 'hrm' } : kept.get(id) || null;
+    const att = fromHrm || (!linked || hasDays(row) ? sheet : null);
+    const p = clientPay({ month, emp: e, att, rules, adj: adj[id] || {}, from: fromHrm || (linked && !att) ? theirs : 'the attendance Excel', extra: sheet?.extra });
+    if (hrm && !h && !att) p.warn = [`Not found in ${theirs} – no one there has the Employee ID ${e.code}${e.personalEmail ? ` or the email ${e.personalEmail}` : ''}. Make the employee code the same as their Employee ID in the HRM, or type the paid days.`, ...p.warn.filter((w) => !w.startsWith('No attendance from'))];
+    if (!linked && run.sheet && !row) p.warn.unshift(`Not in the attendance Excel (employee code ${e.code}).`);
+    if (!e.bank?.account || !e.bank?.ifsc) p.warn.push('No bank account on the employee\'s details.');
+    items.push({ userId: id, salaryId: id, code: e.code, name: e.name, designation: e.designation || '', department: e.department || '', company: pc.name || '', bank: e.bank || {}, pan: e.pan || '', uan: e.uan || '', esiNo: e.esiNo || '', ...p });
+  }
+  items.sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
+  const add = (f) => items.reduce((a, i) => a + f(i), 0);
+  Object.assign(run, { items, rules, employer: { name: pc.name || '', address: pc.address || '', pfCode: pc.pfCode || '', esiCode: pc.esiCode || '', gstin: pc.gstin || '' },
+    totals: { people: items.length, gross: add(grossOf), deductions: add((i) => i.ded.total), net: add((i) => i.net), employerPf: add((i) => i.employer.pf), employerEsi: add((i) => i.employer.esi) },
+    att: { connected: linked, key, source: hrm ? 'hrm' : kept.size ? 'kept' : run.sheet ? 'excel' : 'none', at: hrm ? new Date().toISOString() : kept.size ? run.att?.at : run.sheetAt || '', error,
+      found: items.filter((i) => i.days.att).length, inHrm: items.filter((i) => i.days.att?.src === 'hrm').length },
+    warnMonth: hrm && end >= now ? `${monthLabel(month)} is not over yet: the days still to come are not counted.` : '' });
+}
+// A salary sheet, loan or advance was saved or deleted: every month still in draft is worked out again, so a draft never shows
+// old figures (the user added a bank account to a salary sheet and the draft month still said "No bank account").
+// pclientId: a payroll client's drafts ('' = Aali's own).
+export async function refreshDrafts(t, user, pclientId = '') {
+  for (const r of (await t.query("select * from records where deleted_at is null and type = 'payrun' and data->>'status' = 'draft' and coalesce(data->>'pclientId', '') = $1 for update", [pclientId])).rows) {
+    await buildRun(t, r.data); await putRec(t, r, user);
+  }
+}
+// Locking a month records what it cuts from each loan; reopening it takes those cuts back.
+async function cutLoans(t, run, user, on) {
+  if (run.pclientId) return; // loans and advances are Aali's own staff's; a client's month never touches them
+  const cuts = new Map(); for (const i of run.items) for (const c of i.ded.loans) cuts.set(c.id, (cuts.get(c.id) || 0) + c.amount);
+  for (const l of (await t.query("select * from records where deleted_at is null and type = 'loan' for update")).rows) {
+    const had = (l.data.recovered || []).some((x) => x.month === run.month), amt = cuts.get(l.id) || 0;
+    if (!had && !(on && amt > 0)) continue;
+    l.data.recovered = (l.data.recovered || []).filter((x) => x.month !== run.month);
+    if (on && amt > 0) l.data.recovered.push({ month: run.month, amount: amt });
+    const left = loanLeft(l.data);
+    if (left === 0) { l.data.closed = true; l.data.paidOff = true; } else if (l.data.paidOff) { l.data.closed = false; l.data.paidOff = false; }
+    log(l.data, user.id, on ? `₹${amt} cut in ${monthLabel(run.month)}; ₹${left} left` : `Cut of ${monthLabel(run.month)} taken back (payroll reopened); ₹${left} left`);
+    await putRec(t, l, user);
+  }
+}
+// Payroll news goes to the Operations Manager ('ops') or to HR ('hr') – never to the person who did it.
+// who: 'ops' (the Operations Manager) or 'hr'. When the Founder & Chairman steps in, HR and the Operations Manager are both told.
+async function tellPayroll(t, who, text, id, user, sample, rel = 'payroll') {
+  const ops = "title = 'ops'", hr = "hr and title = 'cs'", where = user?.title === 'chairman' ? `(${ops} or ${hr})` : who === 'ops' ? ops : hr;
+  const rows = (await t.query(`select id from users where active and ${where} and id <> $1`, [user?.id || ''])).rows;
+  for (const u of rows) await notify(t, u.id, text, rel, id, user, sample);
+}
+
+// ---------- deadline reminders ----------
+// Once a day (the first time anyone opens Aali One that day), every deadline (shared/deadlines.js) that is 2 days away or less – and
+// every deadline that was missed – is told to the people who must act: management (Operations Manager, Company Secretary, Chairman),
+// the Sales Manager, and the IT Manager only when it is IT work. Each reminder is sent once ('deadlineSent' remembers it).
+let sweptDay = ''; // this server has already checked today: the many polls in between cost nothing
+export async function deadlineSweep(db, force = false) {
+  const day = today();
+  if (!force && sweptDay === day) return 0;
+  sweptDay = day;
+  if (!force) { // only one request a day does the work, however many arrive at once
+    const claim = await db.query("insert into settings (key, value) values ('deadlineSweep', $1) on conflict (key) do update set value = $1, updated_at = now() where settings.value <> $1::jsonb returning key", [JSON.stringify(day)]);
+    if (!claim.rowCount) return 0;
+  }
+  const rows = (await db.query("select id, type, data, sample from records where deleted_at is null and type in ('project', 'client', 'task', 'ticket', 'payment')")).rows.map((r) => ({ ...r.data, id: r.id, type: r.type, sample: r.sample }));
+  const users = (await db.query("select id, title from users where active and removed_at is null and title in ('ops', 'cs', 'chairman', 'salesmgr', 'itmgr')")).rows;
+  const sent = await getSetting(db, 'deadlineSent', {}), dmy = inDate; let n = 0;
+  for (const it of deadlineItems(rows)) {
+    const left = Math.round((Date.parse(it.due) - Date.parse(day)) / 864e5);
+    const stage = left >= 0 && left <= SOON_DAYS ? 'soon' : left < 0 && left >= -7 ? 'missed' : '';
+    const key = `${it.key}:${it.due}:${stage}`;
+    if (!stage || sent[key]) continue;
+    const text = stage === 'missed' ? `Deadline missed: ${it.title} was due on ${dmy(it.due)}.`
+      : left === 0 ? `Deadline today: ${it.title}.` : `Deadline in ${left} day${left === 1 ? '' : 's'}: ${it.title} – due ${dmy(it.due)}.`;
+    for (const u of users) if (u.title !== 'itmgr' || it.team === 'it') { await notify(db, u.id, text, it.relType, it.relId, null, it.sample); n++; }
+    sent[key] = day;
+  }
+  const keep = Object.fromEntries(Object.entries(sent).filter(([, d]) => d >= addDays(day, -60)));
+  await setSetting(db, 'deadlineSent', keep);
+  return n;
+}
+
 // A receipt settles its payment reminder; an advance unlocks the project.
 async function applyReceipt(t, id, r, user) {
   if (!r.paymentId) return;
-  const p = await getRec(t, r.paymentId); if (!p) return;
+  const p = await getRec(t, r.paymentId, 'payment'); if (!p) return;
   const d = p.data, got = r.totals.received;
   d.receipts = [{ id, number: r.number, at: r.date, amount: got }, ...(d.receipts || [])];
   d.paid = round2(num(d.paid) + got);
   if (d.paid + 0.5 >= num(d.amount) && num(d.amount) > 0) {
-    if (d.repeat && d.repeat !== 'none') { d.due = nextDue(d.due, d.repeat); d.paid = 0; d.amount = num(d.baseAmount) || num(d.amount); log(d, user?.id, `Paid in full (${r.number}); next due ${d.due}`); }
+    if (d.repeat && d.repeat !== 'none') { d.due = nextDue(d.due, d.repeat); d.paid = 0; d.amount = num(d.baseAmount) || num(d.amount); log(d, user?.id, `Paid in full (${r.number}); next due ${inDate(d.due)}`); }
     else { d.status = 'paid'; d.paidAt = r.date; log(d, user?.id, `Paid in full (${r.number})`); }
   } else log(d, user?.id, `Part payment ${got} (${r.number}); balance ${round2(num(d.amount) - d.paid)}`);
   await putRec(t, p, user);
   if (d.kind === 'advance' && d.dealId) {
-    const deal = await getRec(t, d.dealId);
+    const deal = await getRec(t, d.dealId, 'deal');
     if (deal) { deal.data.handoff = { ...(deal.data.handoff || {}), advance: true, advanceAmt: got }; log(deal.data, user?.id, `Advance received (${r.number})`); await putRec(t, deal, user); }
     const pr = (await t.query("select * from records where deleted_at is null and type = 'project' and data->>'dealId' = $1", [d.dealId])).rows[0];
     if (pr) { pr.data.advance = true; if (pr.data.stage === 'awaiting') pr.data.stage = 'planning'; log(pr.data, user?.id, 'Advance received – work can start'); await putRec(t, pr, user);
@@ -311,14 +663,14 @@ export async function beforeUpdate(t, rec, next, user) {
     case 'project': {
       if (prev.advance === undefined) delete next.advance; else next.advance = prev.advance; // set by the server only
       if (next.stage !== prev.stage && WORK.includes(next.stage) && next.dealId && !next.startApproved) {
-        const deal = await getRec(t, next.dealId);
+        const deal = await getRec(t, next.dealId, 'deal');
         if (deal && !deal.data.handoff?.advance) throw new Rule('No advance, no work start. The BDE must record the advance first, or a manager approves an early start.');
       }
       if (next.stage === 'live' && prev.stage !== 'live' && !next.signoffId && !next.liveNoSign) throw new Rule("Get the client's sign-off first. It moves the project to Live by itself.");
       if ((next.deadline || '') !== (prev.deadline || '') && prev.deadline) {
         if (!reason) throw new Rule('Give a reason for changing the deadline.');
-        log(next, me, `Deadline moved ${next.deadline < prev.deadline ? 'earlier' : 'later'}: ${prev.deadline} → ${next.deadline || 'none'} – ${reason}`);
-        for (const to of new Set([next.lead, ...(next.people || [])])) await notify(t, to, `Deadline for ${next.name} moved to ${next.deadline}: ${reason}`, 'project', rec.id, user, rec.sample);
+        log(next, me, `Deadline moved ${next.deadline < prev.deadline ? 'earlier' : 'later'}: ${inDate(prev.deadline)} → ${inDate(next.deadline) || 'none'} – ${reason}`);
+        for (const to of new Set([next.lead, ...(next.people || [])])) await notify(t, to, `Deadline for ${next.name} moved to ${inDate(next.deadline)}: ${reason}`, 'project', rec.id, user, rec.sample);
       }
       if (next.stage !== prev.stage) log(next, me, `Moved to ${next.stage}`);
       if (next.lead && next.lead !== prev.lead) { log(next, me, 'Project lead set'); await notify(t, next.lead, `You lead the project ${next.name}`, 'project', rec.id, user, rec.sample); }
@@ -330,13 +682,127 @@ export async function beforeUpdate(t, rec, next, user) {
       if (prev.number) { next.number = prev.number; next.seq = prev.seq; next.fy = prev.fy; }
       next.totals = docTotals(next); await quoteApproval(t, next, user, prev, rec.sample);
       if (next._askApproval) { delete next._askApproval; await insertRec(t, 'approval', { kind: 'discount', relType: 'quote', relId: rec.id, status: 'pending', requestedBy: me, reason: `Discount ${next.totals.discountPct}% on ${next.number}` }, user, { sample: rec.sample }); }
-      if (next.dealId) { const deal = await getRec(t, next.dealId); if (deal) { deal.data.value = next.totals.total; deal.data.quoteNo = next.number; await putRec(t, deal, user); } }
+      if (next.dealId) { const deal = await getRec(t, next.dealId, 'deal'); if (deal) { deal.data.value = next.totals.total; deal.data.quoteNo = next.number; await putRec(t, deal, user); } }
       break;
     case 'invoice': next.number = prev.number; next.seq = prev.seq; next.totals = docTotals(next); break;
     case 'receipt':
       if (next.date !== prev.date) throw new Rule(`The date is part of receipt number ${prev.number} and can't change. Delete it with a reason and make a new one.`);
       next.number = prev.number; next.seq = prev.seq; next.totals = receiptTotals(next); break;
     case 'signoff': throw new Rule('A signed certificate cannot be changed.');
+    case 'agreement': {
+      // Kept by the server: the kind, the number, the date in the number, who signed – and the history, which only Aali One writes.
+      for (const k of ['kind', 'number', 'seq', 'fy', 'date', 'signedAt', 'signedBy', 'log']) if (k in prev) next[k] = prev[k]; else delete next[k];
+      const word = AGREEMENT[prev.kind].name;
+      // A signed agreement is final: only the scanned signed copy can still be added. A mistake is fixed by deleting it with a reason and making a new one.
+      if (prev.status === 'signed') {
+        const rest = ({ signedCopy, ...x }) => JSON.stringify(x);
+        if (rest(next) !== rest(prev)) throw new Rule(`${word} ${prev.number} is signed and cannot be changed. If something is wrong, delete it with a reason and make a new one.`);
+        if (next.signedCopy?.id !== prev.signedCopy?.id) log(next, me, next.signedCopy ? 'Signed copy attached' : 'Signed copy removed');
+        break;
+      }
+      if (!['draft', 'sent', 'signed'].includes(next.status)) next.status = prev.status;
+      if (!String(next.clientName || '').trim()) throw new Rule('Enter the client name.');
+      if (next.status === 'sent' && prev.status !== 'sent') { next.sentOn ||= today(); log(next, me, 'Sent to the client to sign'); }
+      if (next.status === 'signed') {
+        if (!/^\d{4}-\d\d-\d\d$/.test(next.signedOn || '') || next.signedOn > today()) throw new Rule('Enter the date both sides signed (not a future date).');
+        if (!String(next.contactName || '').trim()) throw new Rule('Enter the name of the person who signed for the client.');
+        next.signedAt = new Date().toISOString(); next.signedBy = me; log(next, me, `Signed on ${inDate(next.signedOn)}`);
+        // The deal's handoff box "Service agreement signed" ticks itself (the deal shows no number or detail of the agreement).
+        const deal = prev.kind === 'service' && next.dealId ? await getRec(t, next.dealId, 'deal') : null;
+        if (deal && !deal.data.handoff?.agreement) { deal.data.handoff = { ...(deal.data.handoff || {}), agreement: true }; log(deal.data, me, 'Service agreement signed'); await putRec(t, deal, user); }
+        await tellAgreement(t, ['ops', 'salesmgr', 'cs', 'chairman'], `${word} ${prev.number} with ${next.clientName} is signed.`, rec.id, user, rec.sample);
+      }
+      break;
+    }
+    case 'pclient': {
+      const clean = cleanPclient({ ...prev, ...next });
+      if ((await t.query("select 1 from records where deleted_at is null and type = 'pclient' and lower(data->>'name') = lower($1) and id <> $2", [clean.name, rec.id])).rowCount) throw new Rule(`${clean.name} is already a payroll client.`);
+      await hrmCodeFree(t, clean.hrmCode, rec.id);
+      for (const k of Object.keys(next)) delete next[k];
+      Object.assign(next, clean, { log: prev.log }); log(next, me, clean.active !== (prev.active !== false) ? (clean.active ? 'Payroll started again' : 'Payroll stopped') : 'Details or rules changed'); break;
+    }
+    case 'pemp': {
+      const clean = cleanPemp({ ...prev, ...next }, (await getRec(t, prev.pclientId, 'pclient'))?.data.payModel); await pempCodeFree(t, prev.pclientId, clean.code, rec.id);
+      for (const k of Object.keys(next)) delete next[k];
+      Object.assign(next, clean, { pclientId: prev.pclientId, log: prev.log });
+      log(next, me, clean.rate !== (prev.rate || 0) ? `Daily wage ₹${prev.rate || 0} → ₹${clean.rate}` : clean.gross !== prev.gross ? `Gross ₹${prev.gross} → ₹${clean.gross}` : clean.active !== (prev.active !== false) ? (clean.active ? 'Working again' : 'Left') : 'Details changed'); break;
+    }
+    case 'payee': {
+      const clean = cleanPayee({ ...prev, ...next }); await payeeEmailFree(t, clean.email, rec.id);
+      for (const k of Object.keys(next)) delete next[k];
+      Object.assign(next, clean, { log: prev.log });
+      log(next, me, clean.active !== (prev.active !== false) ? (clean.active ? 'Working here again' : 'No longer working here') : 'Details changed'); break;
+    }
+    case 'salary': {
+      const clean = { ...cleanSalary(next), userId: prev.userId, name: prev.name, revisions: prev.revisions || [], log: prev.log };
+      for (const k of Object.keys(next)) delete next[k];
+      Object.assign(next, clean);
+      if (clean.gross !== prev.gross || clean.from !== (prev.from || '')) next.revisions = [...next.revisions, { from: clean.from, gross: clean.gross, at: new Date().toISOString(), by: me }].slice(-60);
+      if (clean.gross !== prev.gross) {
+        log(next, me, `Gross changed: ₹${prev.gross} → ₹${clean.gross}${clean.from ? ' from ' + monthLabel(clean.from) : ''}`);
+        await tellPayroll(t, 'ops', `${user.name} changed the salary of ${prev.name}: ₹${prev.gross} → ₹${clean.gross} a month.`, rec.id, user, rec.sample);
+      } else log(next, me, 'Salary sheet changed');
+      break;
+    }
+    case 'loan': {
+      const clean = cleanLoan({ ...prev, ...next }), done = (prev.recovered || []).reduce((a, x) => a + (+x.amount || 0), 0);
+      if (done && (clean.kind !== prev.kind || clean.from !== prev.from)) throw new Rule('Cutting has already started; the kind and the first month cannot change.');
+      if (clean.amount < done) throw new Rule(`₹${done} has already been cut, so the amount cannot be less than that.`);
+      const closed = !!next.closed;
+      for (const k of Object.keys(next)) delete next[k];
+      Object.assign(next, clean, { userId: prev.userId, name: prev.name, recovered: prev.recovered || [], closed, paidOff: !!prev.paidOff && closed, log: prev.log });
+      log(next, me, closed !== !!prev.closed ? (closed ? `Stopped${reason ? ': ' + reason : ''}` : 'Cutting started again') : 'Changed'); break;
+    }
+    case 'payrun': {
+      // Kept by the server: what the month is made of. A client may send HR's changes (adj), a new status, the paid date, or a remark.
+      const label = (prev.pclientId ? (prev.employer?.name || 'Client') + ' – ' : '') + monthLabel(prev.month), rel = prev.pclientId ? 'clientpay' : 'payroll';
+      const want = { status: next.status || prev.status, adj: next.adj, refresh: !!next._refresh, paidOn: next.paidOn, remark: next._remark, sheet: next._attendance, file: txt(next._attendanceFile, 120) };
+      for (const k of Object.keys(next)) delete next[k];
+      for (const k of ['month', 'pclientId', 'title', 'status', 'adj', 'items', 'totals', 'att', 'rules', 'employer', 'sheet', 'sheetAt', 'sheetBy', 'sheetFile', 'warnMonth', 'remarks', 'log', 'lockedAt', 'lockedBy', 'paidOn', 'paidAt', 'paidBy']) if (k in prev) next[k] = prev[k];
+      if (want.sheet !== undefined) { // a client's attendance Excel for the month, while it is a draft
+        if (!prev.pclientId) throw new Rule('Aali\'s own payroll reads its attendance from Aali HRM.');
+        if (prev.status !== 'draft') throw new Rule(`Payroll for ${label} is locked. Reopen it to change the attendance.`);
+        Object.assign(next, { sheet: await readAttendance(t, prev.pclientId, want.sheet), sheetAt: new Date().toISOString(), sheetBy: me, sheetFile: want.file });
+        want.refresh = true; log(next, me, `Attendance taken from ${want.file || 'an Excel file'}: ${Object.keys(next.sheet).length} employees`);
+      }
+      if (want.remark) {
+        const text = txt(typeof want.remark === 'object' ? want.remark.text : want.remark, 1000), about = typeof want.remark === 'object' ? txt(want.remark.userId, 40) : '';
+        if (!text) throw new Rule('Write the remark.');
+        next.remarks = [...(prev.remarks || []), { by: me, at: new Date().toISOString(), text, userId: about }].slice(-300);
+        await tellPayroll(t, canEdit(user, 'payroll') ? 'ops' : 'hr', `${user.name} remarked on payroll ${label}: "${text.slice(0, 90)}"`, rec.id, user, rec.sample, rel);
+      }
+      const adj = want.adj === undefined ? prev.adj || {} : cleanAdj(want.adj), adjChanged = JSON.stringify(adj) !== JSON.stringify(prev.adj || {});
+      if (adjChanged && user.title === 'chairman') { // the Chairman stepped in: written in the month's history, and HR and the Operations Manager are told
+        const who = Object.keys({ ...adj, ...(prev.adj || {}) }).filter((k) => JSON.stringify(adj[k] || null) !== JSON.stringify(prev.adj?.[k] || null)).map((k) => (prev.items || []).find((i) => i.userId === k)?.name || 'someone');
+        log(next, me, `Changed by the Founder & Chairman for ${who.join(', ')}`);
+        await tellPayroll(t, 'hr', `${user.name} changed payroll ${label} for ${who.join(', ')}.`, rec.id, user, rec.sample, rel);
+      }
+      if (prev.status === 'draft') {
+        if (!['draft', 'locked'].includes(want.status)) throw new Rule('Lock the payroll first.');
+        next.adj = adj;
+        if (adjChanged || want.refresh || want.status === 'locked') await buildRun(t, next);
+        if (want.status === 'locked') {
+          if (!next.items.length) throw new Rule('Nobody is on this payroll yet. Enter the salaries first.');
+          const stuck = next.items.filter((i) => i.net < 0 || (!i.days.typed && !i.days.att)).map((i) => i.name);
+          if (stuck.length) throw new Rule(`Before locking, fix: ${stuck.join(', ')} – no paid days, or deductions more than the pay.`);
+          Object.assign(next, { status: 'locked', lockedAt: new Date().toISOString(), lockedBy: me });
+          await cutLoans(t, next, user, true); log(next, me, `Locked: ${next.items.length} people, net ₹${next.totals.net}`);
+          await tellPayroll(t, 'ops', `Payroll for ${label} is ready: ${next.items.length} people, net ₹${next.totals.net}. Please review it.`, rec.id, user, rec.sample, rel);
+        }
+      } else if (prev.status === 'locked') {
+        if (adjChanged) throw new Rule(`Payroll for ${label} is locked. Reopen it to make changes.`);
+        if (want.status === 'draft') {
+          if (String(reason || '').trim().length < 5) throw new Rule('Give a reason (5+ characters) for reopening.');
+          next.status = 'draft'; delete next.lockedAt; delete next.lockedBy; await cutLoans(t, next, user, false);
+          log(next, me, `Reopened: ${reason}`); await tellPayroll(t, 'ops', `${user.name} reopened payroll ${label}: ${reason}`, rec.id, user, rec.sample, rel);
+        } else if (want.status === 'paid') {
+          const on = day(want.paidOn); if (!on || on > today()) throw new Rule('Enter the date the salaries were paid (not a future date).');
+          Object.assign(next, { status: 'paid', paidOn: on, paidAt: new Date().toISOString(), paidBy: me });
+          log(next, me, `Paid on ${on}`); await tellPayroll(t, 'ops', `Salaries for ${label} were paid on ${on}: net ₹${next.totals.net}.`, rec.id, user, rec.sample, rel);
+        } else if (want.status !== 'locked') throw new Rule('A locked payroll is either reopened or marked as paid.');
+      } else if (want.status !== 'paid' || adjChanged) throw new Rule(`Payroll for ${label} is paid and cannot be changed.`);
+      break;
+    }
     case 'task':
       if (next.status === 'done' && prev.status !== 'done') {
         next.doneAt = new Date().toISOString();
@@ -364,10 +830,22 @@ export async function beforeUpdate(t, rec, next, user) {
     case 'prospect': await prospectUpdate(t, rec, next, user); break;
     case 'asset': {
       const boss = user.is_admin || (prev.to === 'it' ? user.title === 'itmgr' : user.title === 'salesmgr'), mineA = prev.owner === me, given = prev.assignee === me;
+      const toIt = !!next._toIt; delete next._toIt;
       for (const k of ['clientId', 'clientName', 'to', 'owner', 'team']) next[k] = prev[k];
+      // The Sales Manager sends IT work on to the IT Manager, who then gives it to the right person in the IT team.
+      if (toIt) {
+        if (!boss || prev.to !== 'sales') throw new Rule('Only the Sales Manager or an admin sends these assets to the IT Manager.', 403);
+        if (prev.status === 'done') throw new Rule('The work on these assets is already done.');
+        Object.assign(next, { to: 'it', assignee: '', status: 'sent' }); log(next, me, 'Sent on to the IT Manager');
+        for (const u of (await t.query("select id from users where active and removed_at is null and title = 'itmgr'")).rows)
+          await notify(t, u.id, `${user.name} sent you client assets: ${prev.clientName}${prev.what ? ' – ' + prev.what : ''}. Please give them to the right person.`, 'asset', rec.id, user, rec.sample);
+        await notify(t, prev.owner, `Your assets for ${prev.clientName} were sent on to the IT Manager.`, 'asset', rec.id, user, rec.sample);
+        break;
+      }
       if ((next.assignee || '') !== (prev.assignee || '')) {
         if (!boss) throw new Rule(`Only ${prev.to === 'it' ? 'the IT Manager' : 'the Sales Manager'} or an admin gives these assets to a person.`, 403);
-        const u = (await t.query('select id, name from users where id = $1 and active', [next.assignee])).rows[0]; if (!u) throw new Rule('Choose a person.');
+        const u = (await t.query('select id, name, team from users where id = $1 and active and removed_at is null', [next.assignee])).rows[0]; if (!u) throw new Rule('Choose a person.');
+        if (!user.is_admin && u.team !== (prev.to === 'it' ? 'it' : 'sales')) throw new Rule(prev.to === 'it' ? 'IT assets are given to someone in the IT team.' : 'Choose someone in the Sales team, or send these on to the IT Manager.');
         next.status = 'allotted'; log(next, me, `Given to ${u.name}`);
         await notify(t, u.id, `${user.name} gave you client assets to work on: ${prev.clientName}${prev.what ? ' – ' + prev.what : ''}.`, 'asset', rec.id, user, rec.sample);
         await notify(t, prev.owner, `Your assets for ${prev.clientName} were given to ${u.name}.`, 'asset', rec.id, user, rec.sample);
@@ -407,7 +885,8 @@ export async function beforeUpdate(t, rec, next, user) {
           if (next.entries.some((e) => e.state === 'running')) throw new Rule('A task is still running. Press Finish on it before you submit.');
           next.submittedAt = now; log(next, me, 'Report submitted');
           next.dayEnd = next.date === today() ? now : next.entries.map((e) => e.end || '').sort().pop() || now; // the day ends at submit
-          for (const to of await reportWatchers(t, next)) await notify(t, to, `${user.name} submitted the daily report for ${next.date}.`, 'report', rec.id, user, rec.sample);
+          for (const to of await reportWatchers(t, next)) await notify(t, to, `${user.name} submitted the daily report for ${inDate(next.date)}.`, 'report', rec.id, user, rec.sample);
+          await queueReport(t, { ...next, id: rec.id, sample: rec.sample }, user); // and to management on WhatsApp, once linked (server/whatsapp.js)
         } else if (next.status === 'open') {
           if (!canRunReport(user, prev)) throw new Rule('Only the department manager, the Operations Manager or the Company Secretary can send a report back.', 403);
           if (!remark) throw new Rule('Say what needs to change.');
@@ -421,14 +900,15 @@ export async function beforeUpdate(t, rec, next, user) {
       }
       if (remark) next.remarks = [...(next.remarks || []), { by: me, at: now, text: remark }];
       if (mine) await setPresence(t, user, next, rec.sample);
-      if (!mine && (remark || reviewed)) await notify(t, prev.owner, remark ? `${user.name} on your ${prev.date} report: "${remark.slice(0, 80)}"` : `${user.name} reviewed your ${prev.date} report.`, 'report', rec.id, user, rec.sample);
+      if (!mine && (remark || reviewed)) await notify(t, prev.owner, remark ? `${user.name} on your ${inDate(prev.date)} report: "${remark.slice(0, 80)}"` : `${user.name} reviewed your ${inDate(prev.date)} report.`, 'report', rec.id, user, rec.sample);
       break;
     }
   }
 }
 export const canDeleteReport = (u, d) => canRunReport(u, d) || (d.owner === u.id && d.status !== 'submitted');
 async function applyApproval(t, a, user) {
-  const target = await getRec(t, a.relId); if (!target) return;
+  // A discount is decided on a quotation; an early start and Live without sign-off on a project. Nothing else can be changed by an approval.
+  const target = await getRec(t, a.relId, { discount: 'quote', earlystart: 'project', livenosign: 'project' }[a.kind] || ''); if (!target) return;
   const ok = a.status === 'approved';
   if (a.kind === 'discount') {
     target.data.status = ok ? 'draft' : 'needs approval'; if (ok) { target.data.discountApprovedAt = new Date().toISOString(); target.data.discountApprovedBy = user.id; }
@@ -441,5 +921,5 @@ async function applyApproval(t, a, user) {
   await notify(t, a.requestedBy, `Your request "${a.reason}" was ${a.status}.`, a.relType, a.relId, user, target.sample);
 }
 
-export const NEEDS_REASON = ['quote', 'receipt', 'invoice', 'signoff'];
+export const NEEDS_REASON = ['quote', 'receipt', 'invoice', 'signoff', 'agreement', 'salary', 'payrun', 'loan', 'payee', 'pclient', 'pemp'];
 export const ADMIN_ONLY_DELETE = ['signoff'];

@@ -7,12 +7,13 @@ import { Ico } from '../icons.jsx';
 import { today, addDays, fmtDate, fmtDT, iso, parse, rel, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings, desig, user, mobile10 } from '../lib.js';
 import { Tabs, Seg, Pill, Av, Empty, Field, In, Area, Sel, Sample, Stat, DeleteButton, Modal, attempt, toast } from '../ui.jsx';
 import { Check } from './Calls.jsx';
+import { readSheets } from '../xlsx.js';
 import { askVisit } from '../visit.jsx';
 
 // Call sheet: the responses a BDE can pick, and what counts as positive.
 const RESP = [['Interested', 'ok'], ['Call back', 'warn'], ['Not interested', ''], ['No answer', ''], ['Busy', ''], ['Not reachable', ''], ['Wrong number', ''], ['Asked not to call', 'bad']];
 const respKind = (x) => RESP.find((r) => r[0] === x)?.[1] ?? '';
-const callStats = (r) => { const c = r?.calls || []; return { n: c.length, pos: c.filter((x) => x.resp === 'Interested').length, back: c.filter((x) => x.resp === 'Call back').length, meet: c.filter((x) => x.meeting).length, met: c.filter((x) => x.met).length }; };
+export const callStats = (r) => { const c = r?.calls || []; return { n: c.length, pos: c.filter((x) => x.resp === 'Interested').length, back: c.filter((x) => x.resp === 'Call back').length, meet: c.filter((x) => x.meeting).length, met: c.filter((x) => x.met).length }; };
 const callLine = (k) => `${k.n} call${k.n === 1 ? '' : 's'} · ${k.pos} interested · ${k.back} to call back · ${k.meet} meeting${k.meet === 1 ? '' : 's'} fixed · ${k.met} met in person`;
 // Turn whatever was typed in Excel ("NOT INTEREST", "follow up tomorrow", "not lifting") into one of our responses.
 function guessResp(t) {
@@ -29,7 +30,7 @@ function guessResp(t) {
   return '';
 }
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const fmtMins = (m) => (!m ? '0 min' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
+export const fmtMins = (m) => (!m ? '0 min' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
 const typesFor = (team) => settings().workTypes?.[team] || [...new Set(Object.values(settings().workTypes || {}).flat())];
 // Minutes per kind of work, biggest first, across one or many reports.
 // "Other – meeting" and "Other – Meeting " are the same kind of work: counted together, shown with a capital letter.
@@ -37,11 +38,13 @@ const kindKey = (k) => String(k || 'Other').replace(/\s+/g, ' ').trim().toLowerC
 const kindLabel = (k) => String(k || 'Other').replace(/\s+/g, ' ').trim().replace(/(– )(\p{Ll})/u, (_, a, b) => a + b.toUpperCase());
 function timeByType(reports) {
   const m = new Map();
-  for (const r of reports) for (const e of r?.entries || []) if (e.mins && !e.brk) { const k = kindKey(e.kind), x = m.get(k) || { label: kindLabel(e.kind), mins: 0, n: 0 }; x.mins += e.mins; x.n++; m.set(k, x); }
+  // a task's time: the minutes typed for it, or else from its Start to its Finish (it was counting typed minutes only, so timed work was missing)
+  for (const r of reports) for (const e of r?.entries || []) { if (e.brk) continue; const [s0, e0] = bounds(e), mins = +e.mins || Math.max(0, Math.round((e0 - s0) / 60000)); if (!mins) continue;
+    const k = kindKey(e.kind), x = m.get(k) || { label: kindLabel(e.kind), mins: 0, n: 0 }; x.mins += mins; x.n++; m.set(k, x); }
   const rows = [...m.values()].sort((a, b) => b.mins - a.mins).map((x) => [x.label, x.mins, x.n]);
   return { rows, total: rows.reduce((t, x) => t + x[1], 0), count: (label) => rows.find((x) => x[0] === label)?.[2] || 0 };
 }
-function TimeBars({ reports, empty }) {
+export function TimeBars({ reports, empty }) {
   const t = timeByType(reports);
   if (!t.total) return empty ? <p className="small muted" style={{ margin: 0 }}>{empty}</p> : null;
   return <div className="stack gap4">{t.rows.map(([k, m]) => <div key={k} className="timerow"><span>{k}</span><div className="bar"><i style={{ width: Math.round(100 * m / t.rows[0][1]) + '%' }} /></div>
@@ -55,7 +58,7 @@ function bounds(e) {
   const s = e.start ? new Date(e.start).getTime() : new Date(e.at).getTime() - (e.mins || 0) * 60000;
   return [s, e.state === 'running' ? Date.now() : e.end ? new Date(e.end).getTime() : s + (e.mins || 0) * 60000];
 }
-function dayLine(r) {
+export function dayLine(r) {
   const es = (r?.entries || []).map((e) => { const [s, en] = bounds(e); return { e, s, en }; }).sort((a, b) => a.s - b.s);
   const open = r?.status !== 'submitted', running = es.some((x) => x.e.state === 'running');
   const ds = r?.dayStart ? new Date(r.dayStart).getTime() : 0, start = ds && es[0] ? Math.min(ds, es[0].s) : ds || es[0]?.s, last = es.reduce((m, x) => Math.max(m, x.en), start || 0);
@@ -174,9 +177,14 @@ function TeamSummary({ team, date }) {
 // ---------- call sheet (sales team) ----------
 function CallTable({ calls, onDrop }) {
   if (!calls.length) return <p className="muted small" style={{ margin: 0 }}>No calls written yet.</p>;
-  return <div className="tbl"><table><thead><tr><th className="n">#</th><th>Organisation</th><th>Contact no.</th><th>Location</th><th>Response</th><th>Meeting fixed</th><th>Met</th><th>Status / remark</th>{onDrop && <th />}</tr></thead>
+  return <><div className="phone-cards">{calls.map((c, i) => <div key={c.id} className="pcard">
+      <div className="row between" style={{ flexWrap: 'nowrap' }}><b style={{ minWidth: 0 }}><span className="faint num">{i + 1}.</span> {c.org}</b>{c.resp ? <Pill k={respKind(c.resp)}>{c.resp}</Pill> : null}</div>
+      <div className="small muted">{[c.phone, c.place, c.ind].filter(Boolean).join(' · ')}</div>
+      {(c.back || c.meeting || c.met || c.note) && <div className="small">{[c.back && `Call back on ${fmtDate(c.back)}`, c.meeting && `Meeting: ${c.meeting}`, c.met && 'Met in person', c.note].filter(Boolean).join(' · ')}</div>}
+      {onDrop && <div><button className="btn ghost sm" type="button" aria-label={`Remove ${c.org}`} onClick={() => onDrop(c.id)}>Remove</button></div>}</div>)}</div>
+    <div className="tbl wide-only"><table><thead><tr><th className="n">#</th><th>Organisation</th><th>Contact no.</th><th>Location</th><th>Response</th><th>Meeting fixed</th><th>Met</th><th>Status / remark</th>{onDrop && <th />}</tr></thead>
     <tbody>{calls.map((c, i) => <tr key={c.id}><td className="n">{i + 1}</td><td><b>{c.org}</b>{c.ind && <div className="small muted">{c.ind}</div>}</td><td className="num">{c.phone || '—'}</td><td>{c.place || '—'}</td><td>{c.resp ? <Pill k={respKind(c.resp)}>{c.resp}</Pill> : '—'}{c.back && <div className="small muted">on {fmtDate(c.back)}</div>}</td>
-      <td>{c.meeting || '—'}</td><td>{c.met ? 'Yes' : '—'}</td><td style={{ maxWidth: 260 }}>{c.note || '—'}</td>{onDrop && <td><button className="btn ghost sm" type="button" aria-label={`Remove ${c.org}`} onClick={() => onDrop(c.id)}>Remove</button></td>}</tr>)}</tbody></table></div>;
+      <td>{c.meeting || '—'}</td><td>{c.met ? 'Yes' : '—'}</td><td style={{ maxWidth: 260 }}>{c.note || '—'}</td>{onDrop && <td><button className="btn ghost sm" type="button" aria-label={`Remove ${c.org}`} onClick={() => onDrop(c.id)}>Remove</button></td>}</tr>)}</tbody></table></div></>;
 }
 function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
   const [busy, setBusy] = useState(false), [paste, setPaste] = useState(null), [skipped, setSkipped] = useState([]), [upl, setUpl] = useState(null), [sure, setSure] = useState(false), [drop, setDrop] = useState('');
@@ -196,6 +204,11 @@ function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
         setSkipped([...no.map(({ x, v }) => `${x.org} (${x.phone}) – ${v.msg}`), ...(none ? [`${none} row${none === 1 ? '' : 's'} without a 10-digit number ${none === 1 ? 'was' : 'were'} left out.`] : [])]); setPaste(null); } }
     setBusy(false); setSure(false);
   }
+  // The call sheet kept in Excel, as a file: read into the same check-and-confirm step as pasted rows (BDEs were uploading their call sheets
+  // as a list of numbers to call, which keeps the numbers but leaves the calls off the day's call sheet).
+  async function pickCalls(e) { const f = e.target.files[0]; e.target.value = ''; if (!f) return; const all = await attempt(() => readSheets(f)); if (!all) return;
+    const sheet = all.find((s) => s.rows.some((x) => x.some((c) => String(c).replace(/\D/g, '').length >= 10))) || all[0];
+    setPaste(sheet.rows.map((x) => x.join('\t')).join('\n')); setSure(false); }
   // Calls added by one paste, so a wrong paste can be taken off the sheet in one go (until the day is submitted).
   const pastes = [...calls.reduce((g, c) => (c.paste ? g.set(c.paste, [...(g.get(c.paste) || []), c]) : g), new Map())];
   const dropPaste = async (id) => { if (await attempt(() => save({ calls: calls.filter((c) => c.paste !== id) }), 'Those pasted calls were removed.')) setDrop(''); };
@@ -212,10 +225,11 @@ function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
     <div className="row between"><h3 style={{ margin: 0 }}>My calls <span className="small muted">one row for every call</span></h3>
       <div className="row small"><Pill k="gold">Calls made: {k.n}</Pill><Pill k="ok">Interested: {k.pos}</Pill><Pill k="warn">Call back: {k.back}</Pill><Pill k="gold">Meetings fixed: {k.meet}</Pill><Pill k="gold">Met in person: {k.met}</Pill></div></div>
     {!locked && <><div className="row"><button className="btn primary" type="button" style={{ padding: '11px 20px', fontSize: 15 }} onClick={() => setDial(true)}><Ico k="calls" size={16} />Open my calling list{todo.length ? ` · ${todo.length} to call` : ''}</button>
-      <button className="btn" type="button" onClick={() => setUpl({ text: '', res: null })}>Upload my list (Excel)</button>
-      <button className="btn ghost sm" type="button" onClick={() => setPaste(paste === null ? '' : null)}>{paste === null ? 'Paste calls I already made' : 'Close paste'}</button></div>
-      <span className="small muted">Upload the businesses you collected. When you choose “Calling” as the kind of work, your list opens: pick the client you are calling and tap what happened.</span></>}
-    {paste !== null && <div className="stack gap4"><span className="small muted">Copy the rows in Excel (organisation, contact no., location, response, meeting, physical meet, status) and paste them here.</span>
+      <button className="btn" type="button" onClick={() => setUpl({ text: '', res: null })}>Upload numbers to call (Excel)</button>
+      <label className="btn" style={{ cursor: 'pointer' }}>Upload calls I already made (Excel)<input type="file" accept=".xlsx,.csv,.txt" hidden onChange={pickCalls} /></label>
+      <button className="btn ghost sm" type="button" onClick={() => setPaste(paste === null ? '' : null)}>{paste === null ? 'Or paste them' : 'Close'}</button></div>
+      <span className="small muted"><b>Numbers to call</b>: businesses you collected and have not called yet – they open in your calling list. <b>Calls I already made</b>: your call sheet with the responses – they go straight onto today's call sheet.</span></>}
+    {paste !== null && <div className="stack gap4"><span className="small muted">Calls already made: organisation, contact no., location, response, meeting, physical meet, status – one call in each row. Copy the rows in Excel and paste them here, or upload the Excel file.</span>
       <textarea className="in" style={{ minHeight: 90, fontFamily: 'var(--num)', fontSize: 12 }} value={paste} onChange={(e) => { setPaste(e.target.value); setSure(false); }} placeholder="Paste rows here" />
       {parsed.length > 0 && <><span className="small" style={{ fontWeight: 600 }}>Check the rows – this is how each one was read</span>
         <div className="tbl readback"><table><thead><tr><th>Organisation</th><th>Contact no.</th><th>Location</th><th>Response</th><th>Meeting</th><th>Met</th><th>Remark</th></tr></thead><tbody>
@@ -233,7 +247,7 @@ function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
       {drop === id ? <><b>Remove these {rows.length} from today's call sheet?</b><button className="btn ghost sm" type="button" onClick={() => setDrop('')}>No</button><button className="btn danger sm" type="button" onClick={() => dropPaste(id)}>Yes, remove</button></>
         : <button className="btn ghost sm" type="button" onClick={() => setDrop(id)}>Remove this paste</button>}</div>)}</div>}
   </m.div>}
-    {upl && <Check chk={upl} setChk={setUpl} />}
+    {upl && <Check chk={upl} setChk={setUpl} onCalls={(text) => { setUpl(null); setPaste(text); setSure(false); }} />}
     {dial && !locked && <Dialer todo={todo} calls={calls} k={k} row={row} save={save} pickId={pickId} onClose={() => setDial(false)} onUpload={() => { setDial(false); setUpl({ text: '', res: null }); }} />}</>;
 }
 // The calling window. It opens when "Calling" is chosen as the kind of work: pick the client from my list, call, tap what happened.
@@ -276,7 +290,7 @@ function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
         <span className="lbl">{resp} – add the details</span>
         {resp === 'Call back' && <div className="row"><span className="small" style={{ fontWeight: 600 }}>Call back on</span>
           {[[1, 'Tomorrow'], [2, 'In 2 days'], [7, 'Next week']].map(([n, lab]) => <button key={n} type="button" className={'chip' + (d.back === addDays(today(), n) ? ' on' : '')} aria-pressed={d.back === addDays(today(), n)} onClick={() => setD({ ...d, back: addDays(today(), n) })}>{lab}</button>)}
-          <input className="in" type="date" style={{ width: 'auto' }} min={today()} value={d.back} onChange={(e) => e.target.value && setD({ ...d, back: e.target.value })} aria-label="Call back on this date" /></div>}
+          <In type="date" style={{ width: 'auto' }} min={today()} value={d.back} onChange={(e) => e.target.value && setD({ ...d, back: e.target.value })} aria-label="Call back on this date" /></div>}
         <input className="in" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder={resp === 'Interested' ? 'What do they want? e.g. quotation for a 5-page website' : 'What did they say? e.g. owner is travelling, call after 4 pm'} maxLength={300} autoFocus />
         <div className="row"><input className="in" style={{ flex: '1 1 200px' }} value={d.meeting} onChange={(e) => setD({ ...d, meeting: e.target.value })} placeholder="Meeting fixed for… (if any)" maxLength={80} />
           <label className="check" style={{ alignItems: 'center' }}><input type="checkbox" style={{ margin: 0 }} checked={d.met} onChange={(e) => setD({ ...d, met: e.target.checked })} /> Met in person</label>
@@ -470,7 +484,7 @@ function Entries({ r, onDrop, onFinish, onFix, onNote }) {
   return <div className="list">
     {r.dayStart && <div className="li tl" style={mark}><span className="num muted tl-t" style={{ width: 132, flex: 'none' }}>{hm(d.start)}</span><b>Day started</b></div>}
     {d.rows.map((x, i) => { const dur = Math.round((x.en - x.s) / 60000);
-      if (x.gap) return <div className="li tl" key={'g' + i} style={{ ...mark, background: 'var(--bad-bg)', color: 'var(--bad)' }}><span className="num tl-t" style={{ width: 132, flex: 'none' }}>{hm(x.s)} – {x.tail ? 'now' : hm(x.en)}</span><span className="grow">Nothing recorded</span><span className="num">{fmtMins(dur)}</span></div>;
+      if (x.gap) return <div className="li tl" key={'g' + i} style={{ ...mark, background: 'var(--bad-bg)', color: 'var(--bad)' }}><span className="num tl-t" style={{ width: 132, flex: 'none' }}>{hm(x.s)} – {x.tail ? 'now' : hm(x.en)}</span><span className="grow tl-b">Nothing recorded</span><span className="num tl-e">{fmtMins(dur)}</span></div>;
       const e = x.e, run = e.state === 'running';
       return <div className="li tl" key={e.id} style={{ padding: '7px 12px', background: run ? 'var(--warn-bg)' : '' }}>
         <span className="num small muted tl-t" style={{ width: 118, flex: 'none' }}>{hm(x.s)} – {run ? 'now' : hm(x.en)}</span>
@@ -493,7 +507,9 @@ const Remarks = ({ r }) => <div className="stack gap4">{r.remarks.map((x, i) => 
 
 // ---------- manager and top-management view ----------
 function Team() {
-  const me = store.me, [date, setDate] = useState(today()), [team, setTeam] = useState('all'), [view, setView] = useState('day'), [open, setOpen] = useState(''), [full, setFull] = useState(true); // full: the detailed team message
+  // ?d=YYYY-MM-DD&p=<person>: opens that person's report of that day (the link in the WhatsApp message to management).
+  const q = new URLSearchParams(useLocation().search), qd = /^\d{4}-\d\d-\d\d$/.test(q.get('d') || '') && q.get('d') <= today() ? q.get('d') : '', qu = user(q.get('p') || '');
+  const me = store.me, [date, setDate] = useState(qd || today()), [team, setTeam] = useState(qu && isTop(me) ? qu.team : 'all'), [view, setView] = useState('day'), [open, setOpen] = useState(qu?.id || ''), [full, setFull] = useState(true); // full: the detailed team message
   const people = watched(me).filter((u) => team === 'all' || u.team === team).sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name));
   const rows = people.map((u) => ({ u, r: reportOf(u.id, date) }));
   const n = (f) => rows.filter(f).length;
@@ -502,7 +518,7 @@ function Team() {
   return <>
     <div className="row between" style={{ marginBottom: 12 }}>
       <div className="row"><button className="btn sm" type="button" onClick={() => setDate(addDays(date, -1))} aria-label="Previous day">←</button>
-        <input className="in" type="date" style={{ width: 'auto' }} value={date} max={today()} onChange={(e) => e.target.value && setDate(e.target.value)} />
+        <In type="date" style={{ width: 'auto' }} value={date} max={today()} onChange={(e) => e.target.value && setDate(e.target.value)} />
         <button className="btn sm" type="button" disabled={date >= today()} onClick={() => setDate(addDays(date, 1))} aria-label="Next day">→</button>
         {date !== today() && <button className="btn sm" type="button" onClick={() => setDate(today())}>Today</button>}<b>{dayName(date)}</b></div>
       <div className="row">{isTop(me) && <Seg value={team} onChange={setTeam} options={[['all', 'All'], ['sales', 'Sales'], ['it', 'IT'], ['management', 'Management']]} />}
@@ -554,7 +570,7 @@ function PersonRow({ u, r, date, open, toggle, first }) {
         : <ReportView r={r} me={me} />}</div>}
   </div>;
 }
-function ReportView({ r, me }) {
+export function ReportView({ r, me }) {
   const [note, setNote] = useState(''), auto = autoStats(r.owner, r.date), sub = r.status === 'submitted';
   const act = (data, ok) => attempt(() => update(r.id, data), ok).then((done) => done && setNote(''));
   return <>

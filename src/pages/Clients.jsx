@@ -20,7 +20,7 @@ function ClientList() {
   return <>
     <div className="topbar"><h1>{own ? 'My clients' : 'Clients'} <small>{rows.length}</small> <ViewOnly when={!edit} /></h1>{edit && <button className="btn primary" type="button" onClick={() => setAdd(true)}>+ New client</button>}</div>
     <In placeholder="Search name, phone, city, GSTIN" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 320, marginBottom: 12 }} />
-    {rows.length ? <div className="tbl"><table><thead><tr><th>Client</th><th>BDE</th><th className="n">Deals</th><th className="n">Projects</th>{money && <th className="n">Received</th>}{money && <th className="n">Due</th>}<th>Rating</th></tr></thead><tbody>
+    {rows.length ? <div className="tbl cards"><table><thead><tr><th>Client</th><th>BDE</th><th className="n">Deals</th><th className="n">Projects</th>{money && <th className="n">Received</th>}{money && <th className="n">Due</th>}<th>Rating</th></tr></thead><tbody>
       {rows.map((c) => { const m = clientMoney(c.id); return <tr key={c.id} className="click" onClick={() => nav('/clients/' + c.id)}>
         <td><b>{c.name}</b><div className="small muted">{c.phone}{c.city ? ' · ' + c.city : ''}</div><Sample on={c.sample} /></td><td>{uname(c.owner)}</td>
         <td className="n">{list('deal').filter((d) => d.clientId === c.id).length}</td><td className="n">{list('project').filter((p) => p.clientId === c.id).length}</td>

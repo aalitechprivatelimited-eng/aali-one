@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Link, Routes, Route, Navigate } from 'react-router-dom';
+import { NavLink, Link, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useStore, store, http, saveSetting, setMe, upsertUser, poll, upload } from '../api.js';
 import { settings, isTop, TEAMS, uname, fmtDT, fmtDate, today, addDays, parse, waLink, myJuniors, canAddPeople, COMPANIES, GROUP, desig } from '../lib.js';
-import { ACCESS as TABLE, SECTIONS, ROLES, ROLE_NAME, ADMIN_TITLES, levelOf, levelText } from '../../shared/access.js';
+import { SECTIONS, ROLES, ROLE_NAME, ADMIN_TITLES, levelOf, levelText, HR_TITLE } from '../../shared/access.js';
 import { Field, In, Sel, Seg, Area, Pill, Empty, Modal, Avatar, attempt, toast } from '../ui.jsx';
 import { TITLE_TEAM } from '../../shared/defaults.js';
 import { ThemeToggle } from '../theme.jsx';
 import { displayOk, displayChoices } from '../../shared/names.js';
 import { openGuide } from '../guide.jsx';
+import { PayslipSheet } from '../doc.jsx';
+import { monthLabel } from '../../shared/payroll.js';
+import { inr } from '../../shared/money.js';
 
 export default function Settings() {
   useStore(); const admin = store.me.isAdmin, top = isTop(), people = canAddPeople() || top;
@@ -22,7 +25,7 @@ export default function Settings() {
     <Routes>
       <Route path="me" element={<Me />} /><Route path="people" element={only(people, <People />)} /><Route path="access" element={only(top, <AccessChart />)} /><Route path="business" element={only(admin, <Business />)} /><Route path="sales" element={only(admin, <Sales />)} />
       <Route path="templates" element={only(admin, <Templates />)} /><Route path="plans" element={only(admin, <Plans />)} /><Route path="projects" element={only(admin, <ProjTemplates />)} /><Route path="connections" element={only(top, <Connections />)} />
-      <Route path="audit" element={only(top, <Audit />)} /><Route path="staff" element={only(top, <Staff />)} /><Route path="trash" element={only(admin, <Trash />)} /><Route path="data" element={only(admin, <Data />)} /><Route path="help" element={<Help />} /><Route path="*" element={<Navigate to="me" replace />} />
+      <Route path="audit" element={only(top, <Audit />)} /><Route path="staff" element={only(top, <Staff />)} /><Route path="trash" element={only(admin, <Trash />)} /><Route path="data" element={only(admin, <Data />)} /><Route path="help" element={<Help />} /><Route path="payslip/:month" element={<MyPayslip />} /><Route path="*" element={<Navigate to="me" replace />} />
     </Routes>
   </>;
 }
@@ -38,7 +41,7 @@ async function squarePhoto(file) {
   } finally { URL.revokeObjectURL(url); }
 }
 function Me() {
-  const me = store.me, full = me.fullName || me.name, [f, setF] = useState({ name: full, display: me.display || '', phone: me.phone, currentPassword: '', password: '' }), [busy, setBusy] = useState(false);
+  const me = store.me, full = me.fullName || me.name, [f, setF] = useState({ name: full, display: me.display || '', phone: me.phone, personalEmail: me.personalEmail || '', currentPassword: '', password: '' }), [busy, setBusy] = useState(false);
   const fits = displayOk(f.display, me.isAdmin ? f.name : full), choices = displayChoices(me.isAdmin ? f.name : full);
   const savePhoto = (photo, ok) => attempt(async () => setMe((await http('PATCH', '/users/' + me.id, { photo })).user), ok);
   async function pick(e) { const file = e.target.files[0]; e.target.value = ''; if (!file) return; setBusy(true);
@@ -56,11 +59,13 @@ function Me() {
         {f.display && <button type="button" className="btn ghost sm" onClick={() => setF({ ...f, display: '' })}>Use my full name</button>}</div>
       {!fits && <span className="small" style={{ color: 'var(--bad)' }}>“{f.display}” is not part of your name ({me.isAdmin ? f.name : full}). Each word must be the start of one of your names, at least 3 letters.</span>}</Field>
     <Field label="Mobile (for WhatsApp lists)"><In value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+    <Field label="Personal email" hint="Your payslips will be sent here."><In type="email" value={f.personalEmail} onChange={(e) => setF({ ...f, personalEmail: e.target.value })} autoComplete="email" /></Field>
     <Field label="Designation"><In value={desig(me)} disabled /></Field>
     <h3>Change password</h3><Field label="Current password"><In type="password" value={f.currentPassword} onChange={(e) => setF({ ...f, currentPassword: e.target.value })} autoComplete="current-password" /></Field>
     <Field label="New password (8+ characters)"><In type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="new-password" /></Field>
-    <button className="btn primary" type="button" disabled={!fits} onClick={async () => { const r = await attempt(() => http('PATCH', '/users/' + me.id, { ...(me.isAdmin ? { name: f.name.trim() } : {}), display: f.display.trim(), phone: f.phone, ...(f.password ? { password: f.password, currentPassword: f.currentPassword } : {}) }), 'Saved.'); if (r) { setMe(r.user); setF({ ...f, password: '', currentPassword: '' }); } }}>Save</button></div>
+    <button className="btn primary" type="button" disabled={!fits} onClick={async () => { const r = await attempt(() => http('PATCH', '/users/' + me.id, { ...(me.isAdmin ? { name: f.name.trim() } : {}), display: f.display.trim(), phone: f.phone, personalEmail: f.personalEmail.trim(), ...(f.password ? { password: f.password, currentPassword: f.currentPassword } : {}) }), 'Saved.'); if (r) { setMe(r.user); setF({ ...f, password: '', currentPassword: '' }); } }}>Save</button></div>
     <div className="stack side-info">
+      <MySlips />
       <div className="card stack"><h2>What your login can open</h2>
         <ul className="access" style={{ fontSize: 14 }}>{SECTIONS.filter(([k]) => levelOf(me, k)).map(([k, l]) => <li key={k}><b>{l}</b> – {levelText(k, levelOf(me, k))}</li>)}</ul>
         <p className="small muted" style={{ margin: 0 }}>Anything not in this list is not part of your role. If you need it for your work, ask the Operations Manager.</p></div>
@@ -77,9 +82,9 @@ function AccessChart() {
     <p className="small muted" style={{ margin: 0 }}>This is the rule the whole system follows. A section marked “No access” does not appear in that person’s sidebar, its data is never sent to their screen, and the server refuses it even with a typed link.</p>
     <div className="row small"><Pill k="ok">Full</Pill><span className="muted">sees and changes everything</span><Pill k="gold">Own team / Own only</Pill><span className="muted">limited to their department or to what is theirs</span><Pill k="info">View only</Pill><span className="muted">can look, cannot change</span></div>
     <div className="tbl"><table className="chart"><thead><tr><th>Section</th>{ROLES.map((r) => <th key={r}>{ROLE_NAME[r]}</th>)}</tr></thead><tbody>
-      {SECTIONS.map(([k, label]) => <tr key={k}><td><b>{label}</b></td>{ROLES.map((r) => { const l = ADMIN_TITLES.includes(r) ? 'all' : TABLE[k][r] || '';
+      {SECTIONS.map(([k, label]) => <tr key={k}><td><b>{label}</b></td>{ROLES.map((r) => { const l = levelOf({ title: r }, k);
         return <td key={r}>{l ? <Pill k={tone(l)}>{levelText(k, l)}</Pill> : <span className="faint">No access</span>}</td>; })}</tr>)}</tbody></table></div>
-    <p className="small muted" style={{ margin: 0 }}>The Operations Manager and the Company Secretary also have the admin features: adding and removing people, settings, the recycle bin. Daily reports: the Operations Manager, Company Secretary and Chairman read them and do not write one.</p>
+    <p className="small muted" style={{ margin: 0 }}>The Operations Manager and the Company Secretary also have the admin features: adding and removing people, settings, the recycle bin. Daily reports: the Operations Manager, Company Secretary and Chairman read them and do not write one. Payroll: the Company Secretary makes it once the Founder & Chairman gives “HR & payroll”; the Operations Manager reviews it; nobody else sees it.</p>
   </div>;
 }
 
@@ -88,13 +93,13 @@ const TEAM_NOTE = { sales: 'Sales Manager and BDEs. They work on leads, deals, q
 // What each role can see and do, in plain words. Shown next to every person and when a role is chosen.
 const ACCESS = {
   bde: ['Works on own leads, deals and clients only', 'Sees the projects and support requests of own clients', 'No quotations, payments, reports page or other people’s leads', 'Writes a daily report; sees only their own'],
-  salesmgr: ['Sees and works on all leads, deals and clients', 'Quotations, receipts and payments', 'Sees projects (view only); raises support requests', 'Reads and reviews Sales daily reports; approves discounts; adds BDEs', 'Writes a daily report'],
+  salesmgr: ['Sees and works on all leads, deals and clients', 'Quotations, receipts and payments', 'Makes client service agreements; reads closure agreements','Sees projects (view only); raises support requests', 'Reads and reviews Sales daily reports; approves discounts; adds BDEs', 'Writes a daily report'],
   dev: ['Works on the projects, tasks and support requests given to them', 'No sales, client details or money', 'Writes a daily report; sees only their own'],
   itlead: ['Works on all projects, tasks and support requests', 'No sales, client details or money', 'Writes a daily report', 'Reads developers’ reports only when the Operations Manager switches that on'],
   itmgr: ['Runs all projects, tasks and support requests', 'No sales, client details or money', 'Reads and reviews IT daily reports; approves early starts; adds Team Leads and developers', 'Writes a daily report'],
-  ops: ['Sees and changes every department', 'Reads all daily reports', 'Controls the Team Lead report switch', 'Does not write a daily report'],
-  cs: ['Sees and changes every department', 'Reads all daily reports', 'Does not write a daily report'],
-  chairman: ['Sees every department, view only', 'Reads all daily reports and can remark', 'Decides approvals', 'Does not write a daily report'],
+  ops: ['Sees and changes every department', 'Makes client service agreements and project closure agreements', 'Reads payroll, reviews and writes remarks', 'Reads all daily reports', 'Controls the Team Lead report switch', 'Does not write a daily report'],
+  cs: ['Sees and changes every department', 'Reads all client agreements (view only)', 'Makes the payroll, once the Founder & Chairman gives “HR & payroll”', 'Reads all daily reports', 'Does not write a daily report'],
+  chairman: ['Sees every department, view only', 'Reads all client agreements', 'Reads all daily reports and can remark', 'Decides approvals', 'Does not write a daily report'],
   admin: ['Sees and changes every department'],
 };
 // Access levels are named by what they allow, because the designation is now typed by hand.
@@ -127,6 +132,7 @@ function People() {
   const patch = (u, data, ok) => attempt(async () => upsertUser((await http('PATCH', '/users/' + u.id, data)).user), ok);
   const rolesFor = (team) => (adm ? TEAM_ROLES[team] : jun);
   const [ask, setAsk] = useState(null); // a confirm window: { kind: 'off' | 'remove', u, work }
+  const [hrAsk, setHrAsk] = useState(null), chair = me.title === 'chairman', mayHr = (u) => chair && u.active && !u.removedAt && (u.title === HR_TITLE || u.hr); // the Chairman gives HR, only to the Company Secretary
   async function act(a, u) {
     if (a === 'edit') setEdit({ u, title: u.title, isAdmin: u.isAdmin, company: u.company, designation: u.designation || '', firstName: u.firstName || u.fullName || u.name, surname: u.surname || '', pw: '' });
     if (a === 'password') { if (await attempt(() => http('PATCH', '/users/' + u.id, { password: edit.pw }), u.id === me.id ? 'Your password is changed.' : `Password set. ${u.name} is signed out everywhere. Share the new password privately.`)) setEdit({ ...edit, pw: '' }); }
@@ -164,10 +170,10 @@ function People() {
             <td><div className="row" style={{ flexWrap: 'nowrap', gap: 11 }}><Avatar u={u} /><div style={{ minWidth: 0 }}><b>{u.fullName || u.name}</b>{u.id === me.id && <span className="small muted"> (you)</span>}{u.display && <span className="small muted"> · shown as “{u.display}”</span>}
               <div className="small muted">{u.email}{u.phone ? <> · <span className="num">{u.phone}</span></> : ' · no mobile saved'}</div></div></div></td>
             <td>{desig(u)}</td>
-            <td><Pill k="gold">{LEVEL[u.title] || u.title}</Pill>{u.isAdmin && <> <Pill k="info">Admin</Pill></>}</td>
+            <td><Pill k="gold">{LEVEL[u.title] || u.title}</Pill>{u.isAdmin && <> <Pill k="info">Admin</Pill></>}{u.hr && <> <Pill k="ok">HR & payroll</Pill></>}</td>
             <td className="small muted">{u.company}</td>
             <td>{u.active ? <Pill k="ok">Active</Pill> : <Pill k="bad">Deactivated</Pill>}</td>
-            <td style={{ textAlign: 'right' }}>{can(u) || u.id === me.id ? <button className="btn sm" type="button" onClick={() => act('edit', u)}>Actions</button> : null}</td></tr>)}</tbody></table></div>
+            <td style={{ textAlign: 'right' }}>{mayHr(u) && <button className="btn sm" type="button" style={{ marginRight: 6 }} onClick={() => setHrAsk(u)}>{u.hr ? 'Remove HR & payroll' : 'Give HR & payroll'}</button>}{can(u) || u.id === me.id ? <button className="btn sm" type="button" onClick={() => act('edit', u)}>Actions</button> : null}</td></tr>)}</tbody></table></div>
           : <Empty>No one in the {label} team yet.</Empty>}
       </section>; })}
     {add && <Modal wide title={`Add ${TEAMS[add.team]} member`} onClose={() => setAdd(null)} footer={<><button className="btn" type="button" onClick={() => setAdd(null)}>Cancel</button>
@@ -177,12 +183,16 @@ function People() {
         <Field label="Surname"><In value={add.surname || ''} maxLength={60} onChange={(e) => setAdd({ ...add, surname: e.target.value })} /></Field>
         <Field label="Mobile (for WhatsApp)"><In value={add.phone || ''} inputMode="tel" onChange={(e) => setAdd({ ...add, phone: e.target.value })} /></Field>
         <Field label="Email (this is their login)" full><In type="email" value={add.email || ''} onChange={(e) => setAdd({ ...add, email: e.target.value })} autoComplete="off" /></Field>
+        <Field label="Personal email" full hint="Their own email, not the work one. Payslips will be sent here."><In type="email" value={add.personalEmail || ''} onChange={(e) => setAdd({ ...add, personalEmail: e.target.value })} autoComplete="off" /></Field>
         <Field label="First password (8+ characters)" full hint="They can change it after signing in."><div className="row"><In className="in grow" value={add.password || ''} onChange={(e) => setAdd({ ...add, password: e.target.value })} autoComplete="new-password" />
           <button className="btn sm" type="button" onClick={() => setAdd({ ...add, password: newPassword() })}>New one</button></div></Field>
         <Field label="Designation" full hint="Type it as it should appear, e.g. BDE - Digital Marketing and Sales."><In value={add.designation || ''} maxLength={80} autoComplete="off" onChange={(e) => setAdd({ ...add, designation: e.target.value })} /></Field>
         <Field label="Company" full>{adm ? <CompanyPicker team={add.team} value={add.company} onChange={(v) => setAdd({ ...add, company: v })} /> : <div className="row"><span className="chip on">{me.company}</span><span className="small muted">Same company as you. Only management can choose another company.</span></div>}</Field>
         <Field label="Access level – what this person should be able to see and do" full><RolePicker roles={rolesFor(add.team)} value={add.title} onChange={(v) => setAdd({ ...add, title: v })} /></Field>
         {adm && add.team === 'management' && !ADMIN_TITLES.includes(add.title) && <label className="check full"><input type="checkbox" checked={!!add.isAdmin} onChange={(e) => setAdd({ ...add, isAdmin: e.target.checked })} /> <span><b>Also make them an admin</b><br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}</div></Modal>}
+    {hrAsk && <Modal title={hrAsk.hr ? `Remove HR & payroll from ${hrAsk.name}?` : `Give HR & payroll to ${hrAsk.name}?`} onClose={() => setHrAsk(null)} footer={<><button className="btn" type="button" onClick={() => setHrAsk(null)}>Cancel</button>
+      <button className="btn primary" type="button" disabled={busy} onClick={async () => { setBusy(true); const ok = await patch(hrAsk, { hr: !hrAsk.hr }, hrAsk.hr ? `${hrAsk.name} no longer has payroll.` : `${hrAsk.name} can now make payroll.`); setBusy(false); if (ok) setHrAsk(null); }}>{hrAsk.hr ? 'Remove' : 'Give HR & payroll'}</button></>}>
+      <p style={{ margin: 0 }}>{hrAsk.hr ? 'They will no longer see salaries or make the payroll.' : 'They will see every salary, enter salaries, loans and advances, and make the monthly payroll. The Operations Manager reviews it. You are the only one who can give this.'}</p></Modal>}
     {edit && <Modal wide title={`Actions for ${edit.u.name}`} onClose={() => setEdit(null)} footer={<><button className="btn" type="button" onClick={() => setEdit(null)}>Close</button>
       {adm && <button className="btn primary" type="button" disabled={busy || (edit.title === edit.u.title && edit.isAdmin === edit.u.isAdmin && edit.company === edit.u.company && edit.designation === (edit.u.designation || '') && edit.firstName === (edit.u.firstName || edit.u.fullName || edit.u.name) && edit.surname === (edit.u.surname || '')) || !edit.firstName.trim() || !edit.surname.trim() || (TITLE_TEAM[edit.title] !== 'management' && !COMPANIES.includes(edit.company))} onClick={saveEdit}>Save details</button>}</>}>
       <div className="stack">{adm ? <><h3 style={{ margin: 0 }}>Details</h3><div className="form"><Field label="Name"><In value={edit.firstName} maxLength={60} onChange={(e) => setEdit({ ...edit, firstName: e.target.value })} /></Field>
@@ -192,6 +202,10 @@ function People() {
         {(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">Access level · {TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
         {TITLE_TEAM[edit.title] !== edit.u.team && <div className="banner">This moves {edit.u.name.split(' ')[0]} from the {TEAMS[edit.u.team]} team to the {TEAMS[TITLE_TEAM[edit.title]]} team.</div>}
         {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin || ADMIN_TITLES.includes(edit.title)} disabled={edit.u.id === me.id || ADMIN_TITLES.includes(edit.title)} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{ADMIN_TITLES.includes(edit.title) ? <span className="small muted"> (the Operations Manager and Company Secretary are always admins)</span> : edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}
+        <PersonalEmail u={edit.u} busy={busy} save={async (v) => { if (await patch(edit.u, { personalEmail: v }, 'Personal email saved.')) setEdit({ ...edit, u: { ...edit.u, personalEmail: v } }); }} />
+        {adm && edit.u.id !== me.id && (edit.u.title === HR_TITLE || edit.u.hr) && <div className="row" style={{ alignItems: 'center' }}><span className="grow"><b>HR & payroll</b> <Pill k={edit.u.hr ? 'ok' : ''}>{edit.u.hr ? 'On' : 'Off'}</Pill><br /><span className="small muted">Enters salaries, loans and advances, and makes the monthly payroll. The Operations Manager reviews payroll; nobody else sees it.</span></span>
+          {edit.u.hr ? <button className="btn sm" type="button" disabled={busy} onClick={async () => { if (await patch(edit.u, { hr: false }, `${edit.u.name} no longer has payroll.`)) setEdit({ ...edit, u: { ...edit.u, hr: false } }); }}>Switch off</button>
+            : <span className="small muted" style={{ maxWidth: 220 }}>Only the Founder & Chairman can switch it on.</span>}</div>}
         </> : <div className="stack gap4"><div className="row"><b>{edit.u.name}</b><Pill>{desig(edit.u)}</Pill><Pill>{edit.u.company}</Pill></div><div className="banner info">Name, designation, company and access can be changed only by management. You can set a password and switch this member off or on.</div></div>}
         <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}><h3 style={{ margin: 0 }}>Password</h3>
           {edit.u.id === me.id ? <span className="small muted">To change your own password, open <Link to="/settings/me">My profile</Link>. It asks for your current password first.</span> : <>
@@ -312,7 +326,7 @@ function ProjTemplates() {
 }
 
 const CONNECT = [
-  ['Automatic WhatsApp', 'Send the daily lists, payment reminders and follow-ups by themselves every morning.', 'A WhatsApp Business API account (e.g. Interakt, WATI, AiSensy, Gupshup) and Meta-approved message templates. Meta charges per conversation.'],
+  ['More automatic WhatsApp', 'Daily lists, payment reminders and follow-ups sent by themselves (daily reports already go – see WhatsApp above).', 'The same WhatsApp Cloud API link, and one more Meta-approved template for each kind of message. Meta charges per message.'],
   ['Phone calls (click to call, recordings)', 'Tap a number to call; the call is logged with its length and recording.', 'A cloud telephony provider (e.g. Exotel, Knowlarity, MyOperator) and their API key.'],
   ['Email enquiries → leads', 'Emails to info@ become leads automatically; send and track email from Aali One.', 'Access to the company mailbox (IMAP / Google Workspace / Zoho Mail) or an email service.'],
   ['Facebook / Instagram lead ads', 'People who fill an ad form become leads with source “Facebook / Instagram”.', 'A Meta Business account with lead ads and a connected page.'],
@@ -327,8 +341,49 @@ const CONNECT = [
   ['Offline use', 'Keep working without internet; sync later.', 'Planned for the VPS version.'],
 ];
 function Connections() {
-  return <div className="stack"><div className="banner info">These features need an outside account before they can work. Nothing here is switched on yet. Everything else in Aali One works today.</div>
+  return <div className="stack"><WhatsApp /><div className="banner info">These features need an outside account before they can work. Nothing here is switched on yet. Everything else in Aali One works today.</div>
     <div className="grid2">{CONNECT.map(([t, what, need]) => <div key={t} className="card stack gap4"><div className="row between"><h3>{t}</h3><Pill k="warn">Connect later</Pill></div><p style={{ margin: 0 }}>{what}</p><p className="small muted" style={{ margin: 0 }}><b>Needs:</b> {need}</p></div>)}</div></div>;
+}
+
+// ---------- WhatsApp: each daily report to management the moment it is submitted (server/whatsapp.js, Meta WhatsApp Cloud API) ----------
+const WA_STATUS = { sent: ['Sent', 'ok'], queued: ['Waiting – tried again soon', 'warn'], sending: ['Sending', 'info'], failed: ['Not sent', 'bad'] };
+function WhatsApp() {
+  const [st, setSt] = useState(null), [tick, setTick] = useState(0), [busy, setBusy] = useState(false), [chk, setChk] = useState(null), me = store.me, mayEdit = me.isAdmin || me.title === 'ops';
+  const check = async () => { setChk({ busy: true }); setChk(await http('GET', '/whatsapp/template').catch((e) => ({ ok: false, problems: [e.message] }))); };
+  useEffect(() => { let on = true; http('GET', '/whatsapp').then((r) => on && setSt(r), (e) => on && setSt({ error: e.message })); return () => { on = false; }; }, [tick]);
+  const s = settings().waReports || { on: true, skip: [] }, skip = s.skip || [];
+  const save = (v, ok) => attempt(() => saveSetting('waReports', v), ok);
+  if (!st) return <div className="card"><p className="small muted" style={{ margin: 0 }}>Checking WhatsApp…</p></div>;
+  if (st.error) return <div className="banner bad">{st.error}</div>;
+  const copy = (t) => navigator.clipboard?.writeText(t).then(() => toast('Copied.'), () => toast('Select the text and copy it.', true));
+  return <div className="card stack">
+    <div className="row between"><h3 style={{ margin: 0 }}>WhatsApp – daily reports to management</h3><Pill k={st.ready ? 'ok' : 'warn'}>{st.ready ? 'Linked' : 'Not linked yet'}</Pill></div>
+    <p style={{ margin: 0 }}>When someone submits their daily report, each person below gets it on WhatsApp at once – one message per report, with a link that opens the full report in Aali One.</p>
+    {!st.ready && <div className="stack gap4"><div className="banner warn">Not linked yet, so nothing is sent. Reports submitted before the link is made are not sent later.</div>
+      <ol className="small" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
+        <li>Meta Business (business.facebook.com) → WhatsApp Manager → Add phone number: a new number kept only for Aali One (not on the ordinary WhatsApp or WhatsApp Business app). Display name <b>Aali One</b>, category Professional services, profile photo the Aali One logo. Meta checks the name against the website – one.aaligroup.co shows "Aali One · Aali Group".</li>
+        <li>Message templates → Create template: category <b>Utility</b>, name <code>{st.template.name}</code>, language <b>English</b> (<code>{st.template.lang}</code>), body as below. Submit it; Meta usually approves within minutes.</li>
+        <li>Business settings → System users: make one (admin), give it the WhatsApp account, and generate a token with <code>whatsapp_business_messaging</code> (expiry: never).</li>
+        <li>Hosting settings (the server): <code>WHATSAPP_TOKEN</code> = the token, <code>WHATSAPP_PHONE_NUMBER_ID</code> = the number's ID from WhatsApp Manager → Phone numbers. Restart Aali One. Never send these in chat.</li></ol></div>}
+    <div className="stack gap4"><div className="row between"><span className="lbl">The template's body (paste it as it is)</span><button className="btn sm" type="button" onClick={() => copy(st.template.text)}>Copy</button></div>
+      <pre className="small" style={{ margin: 0, whiteSpace: 'pre-wrap', background: 'var(--paper-2)', padding: 12, borderRadius: 8 }}>{st.template.text}</pre>
+      <span className="small muted">Sample values Meta asks for: {'{{1}}'} Ravi Kumar, BDE · {'{{2}}'} Wed 8 Oct 2026 · {'{{3}}'} Day 09:30–18:10, worked 7h 45m · 6 tasks · 42 calls: 7 interested · {'{{4}}'} https://one.aaligroup.co/daily</span>
+      <div className="row"><button className="btn sm" type="button" disabled={chk?.busy} onClick={check}>{chk?.busy ? 'Asking Meta…' : 'Check the template with Meta'}</button>
+        {chk && !chk.busy && (chk.ok ? <Pill k="ok">{chk.name} ({chk.lang}): approved · {chk.category.toLowerCase()}{chk.sameText ? ' · same text as here' : ''}</Pill> : <Pill k="bad">Not ready</Pill>)}</div>
+      {chk && !chk.busy && (chk.problems || []).map((p, i) => <div key={i} className="small" style={{ color: 'var(--bad)' }}>• {p}</div>)}
+      {chk?.ok && !chk.sameText && <div className="small" style={{ color: 'var(--warn)' }}>• Approved, but its wording differs from the text above. It still works if it has the same four fields; the messages will read as Meta has it.</div>}</div>
+    <div className="stack gap4"><span className="lbl">Who gets the reports</span>
+      <label className="check"><input type="checkbox" checked={s.on !== false} disabled={!mayEdit} onChange={(e) => save({ ...s, on: e.target.checked }, e.target.checked ? 'Reports go on WhatsApp again.' : 'Reports are no longer sent on WhatsApp.')} /> Send daily reports on WhatsApp</label>
+      <div className="list">{st.people.map((p) => <div key={p.id} className="row" style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+        <label className="check grow"><input type="checkbox" checked={!skip.includes(p.id) && !!p.number} disabled={!mayEdit || s.on === false || !p.number} onChange={(e) => save({ ...s, skip: e.target.checked ? skip.filter((x) => x !== p.id) : [...skip, p.id] }, 'Saved.')} /> <b>{p.name}</b></label>
+        {p.number ? <span className="num small">+{p.number}</span> : <span className="small" style={{ color: 'var(--warn)' }}>No mobile number – add it in People & teams</span>}</div>)}</div>
+      {!mayEdit && <span className="small muted">The Operations Manager or the admin changes who gets them.</span>}</div>
+    {st.ready && <div><button className="btn" type="button" disabled={busy} onClick={async () => { setBusy(true); await attempt(() => http('POST', '/whatsapp/test'), 'A test message is on its way to your WhatsApp.'); setBusy(false); setTimeout(() => setTick((n) => n + 1), 2500); }}>Send me a test message</button></div>}
+    {st.recent.length > 0 && <div className="stack gap4"><div className="row between"><span className="lbl">Latest messages</span><button className="btn ghost sm" type="button" onClick={() => setTick((n) => n + 1)}>Refresh</button></div>
+      <div className="tbl cards"><table><thead><tr><th>When</th><th>To</th><th>What</th><th>Result</th></tr></thead><tbody>
+        {st.recent.map((x) => <tr key={x.id}><td className="small">{fmtDT(x.sent_at || x.created_at)}</td><td>{uname(x.to_user)}</td><td className="small">{x.kind === 'test' ? 'Test message' : `${uname(x.writer)}'s report${x.date ? ' for ' + fmtDate(x.date) : ''}`}</td>
+          <td><Pill k={(WA_STATUS[x.status] || [])[1]}>{(WA_STATUS[x.status] || [x.status])[0]}</Pill>{x.error && <div className="small" style={{ color: 'var(--bad)' }}>{x.error}</div>}</td></tr>)}</tbody></table></div></div>}
+  </div>;
 }
 
 // Audit log: who did what, kept short on purpose. Every save is written down, so read line by line it never ends. Instead:
@@ -363,8 +418,13 @@ function workSum(rows) {
 }
 const LogLine = ({ r, who = true }) => { const [what, more] = say(r);
   return <div className="log-line"><span className="num muted">{r.n > 1 ? `${clock(r.first)} – ${clock(r.at)}` : clock(r.at)}</span>{who && <span>{r.user_id ? uname(r.user_id) : '—'}</span>}<span><b>{what}</b>{more && <span className="muted"> · {more}</span>}</span></div>; };
-function LogDay({ day, rows, open }) {
+// flat: one section is chosen – every line of the day is listed in full, latest first, so each change can be checked.
+function LogDay({ day, rows, open, flat }) {
   const t = today(), name = day === t ? 'Today' : day === addDays(t, -1) ? 'Yesterday' : parse(day).toLocaleDateString('en-IN', { weekday: 'long' });
+  if (flat) return <details className="log-day" open={open}>
+    <summary><b>{name}</b><span className="muted">{fmtDate(day)}</span><span className="grow" /><Pill>{rows.length} {rows.length === 1 ? 'line' : 'lines'}</Pill>
+      <Pill>{new Set(rows.map((r) => r.user_id)).size} {new Set(rows.map((r) => r.user_id)).size === 1 ? 'person' : 'people'}</Pill></summary>
+    {rows.map((r, i) => <LogLine key={i} r={r} />)}</details>;
   const watch = rows.filter((r) => kindOf(r) === 'watch'), work = rows.filter((r) => kindOf(r) === 'work'), sign = rows.filter((r) => kindOf(r) === 'signin'), people = [...new Set(work.map((r) => r.user_id))];
   return <details className="log-day" open={open}>
     <summary><b>{name}</b><span className="muted">{fmtDate(day)}</span><span className="grow" />
@@ -376,19 +436,26 @@ function LogDay({ day, rows, open }) {
       {sign.map((r, i) => <LogLine key={i} r={r} />)}</details></>}
   </details>;
 }
+// The log's sections (server: /audit sectionOf). Each shows how many lines it has for the chosen time and person; a tap shows only that.
+const LOG_SECTIONS = [['signin', 'Sign-ins'], ['payroll', 'Payroll'], ['clientpay', 'Client payroll'], ['reports', 'Daily reports'], ['sales', 'Sales'], ['money', 'Money'],
+  ['projects', 'Projects & IT'], ['agreements', 'Agreements'], ['people', 'People & settings'], ['other', 'Other']];
 function Audit() {
-  const [rows, setRows] = useState(null), [days, setDays] = useState(7), [who, setWho] = useState(''), [q, setQ] = useState('');
-  useEffect(() => { http('GET', '/audit?days=' + days).then((r) => setRows(r.rows), (e) => toast(e.message, true)); }, [days]);
+  const [rows, setRows] = useState(null), [days, setDays] = useState(7), [who, setWho] = useState(''), [q, setQ] = useState(''), [sec, setSec] = useState('');
+  useEffect(() => { setRows(null); http('GET', '/audit?days=' + days).then((r) => setRows(r.rows), (e) => toast(e.message, true)); }, [days]);
   if (!rows) return <Empty>Loading…</Empty>;
   const since = addDays(today(), 1 - days), text = q.trim().toLowerCase(), names = [...new Set(rows.map((r) => r.user_id).filter(Boolean))].map((id) => [id, uname(id)]).sort((x, y) => x[1].localeCompare(y[1]));
-  const shown = rows.filter((r) => r.day >= since && (!who || r.user_id === who) && (!text || `${uname(r.user_id)} ${say(r).join(' ')}`.toLowerCase().includes(text)));
-  const byDay = [...new Set(shown.map((r) => r.day))].sort().reverse();
+  const base = rows.filter((r) => r.day >= since && (!who || r.user_id === who) && (!text || `${uname(r.user_id)} ${say(r).join(' ')}`.toLowerCase().includes(text)));
+  const shown = base.filter((r) => !sec || r.section === sec), count = (k) => base.filter((r) => r.section === k).length;
+  const byDay = [...new Set(shown.map((r) => r.day))].sort().reverse(), secName = LOG_SECTIONS.find((x) => x[0] === sec)?.[1];
   return <div className="stack">
-    <p className="small muted" style={{ margin: 0 }}>Who did what. Each day is one line: open it to read. What is worth a look is listed in full; everyday work is one line for each person, and repeats are folded together.</p>
-    <div className="row"><Seg value={days} onChange={setDays} options={[[1, 'Today'], [7, 'Last 7 days'], [30, 'Last 30 days']]} />
+    <p className="small muted" style={{ margin: 0 }}>Who did what. Each day is one line: open it to read. Choose a section to see every change in it, line by line; choose a person to see only what they did.</p>
+    <div className="row"><Seg value={days} onChange={setDays} options={[[1, 'Today'], [7, 'Last 7 days'], [30, 'Last 30 days'], [90, 'Last 90 days']]} />
       <Sel value={who} onChange={setWho} blank="Everyone" options={names} style={{ maxWidth: 220 }} aria-label="Show one person" />
       <In placeholder="Search the log" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 220 }} /></div>
-    {byDay.length ? byDay.map((d, i) => <LogDay key={d} day={d} rows={shown.filter((r) => r.day === d)} open={i === 0 || !!text} />) : <Empty>{who || text ? 'Nothing matches.' : 'Nothing was done in this time.'}</Empty>}
+    <div className="row" role="group" aria-label="Sections"><button type="button" className={'chip' + (!sec ? ' on' : '')} aria-pressed={!sec} onClick={() => setSec('')}>Everything <span className="num">{base.length}</span></button>
+      {LOG_SECTIONS.filter(([k]) => count(k) || sec === k).map(([k, l]) => <button key={k} type="button" className={'chip' + (sec === k ? ' on' : '')} aria-pressed={sec === k} onClick={() => setSec(sec === k ? '' : k)}>{l} <span className="num">{count(k)}</span></button>)}</div>
+    {byDay.length ? byDay.map((d, i) => <LogDay key={d} day={d} rows={shown.filter((r) => r.day === d)} open={i === 0 || !!text || !!sec} flat={!!sec} />)
+      : <Empty>{sec ? `Nothing in ${secName} ${who ? 'by ' + uname(who) + ' ' : ''}in this time.` : who || text ? 'Nothing matches.' : 'Nothing was done in this time.'}</Empty>}
   </div>;
 }
 // Staff register: everyone ever added – active, deactivated and removed – with their details and history. Only active people can sign in.
@@ -446,4 +513,33 @@ function Help() {
     <li><b>Sign-off</b>: the client signs on screen (photo with consent, rating) → certificate → Live. Share the progress link with the client any time.</li>
     <li><b>After Live</b>: final payment, monthly maintenance fees, renewals, support requests with promised dates.</li>
     <li><b>Everyone</b> starts the day on <b>Today</b>. Managers see their team's late items; top management gets anything 3+ days late and the Monday summary.</li></ol></div>;
+}
+
+// A person's personal email (payslips will be sent there), in People → Actions.
+function PersonalEmail({ u, busy, save }) {
+  const [v, setV] = useState(u.personalEmail || '');
+  return <div className="row" style={{ alignItems: 'flex-end' }}><Field label="Personal email (payslips will be sent here)"><In type="email" value={v} onChange={(e) => setV(e.target.value)} autoComplete="off" style={{ minWidth: 260 }} /></Field>
+    <button className="btn sm" type="button" disabled={busy || v.trim() === (u.personalEmail || '')} onClick={() => save(v.trim())}>Save email</button></div>;
+}
+
+// My payslips: each person's own payslips, once HR has marked that month as paid. Nothing else of payroll is shown.
+function useMySlips() {
+  const [slips, setSlips] = useState(null);
+  useEffect(() => { let on = true; http('GET', '/payroll/mine').then((r) => on && setSlips(r.slips), () => on && setSlips([])); return () => { on = false; }; }, []);
+  return slips;
+}
+function MySlips() {
+  const slips = useMySlips();
+  if (!slips?.length) return null; // nothing to show until a month is paid (and nothing for the Chairman, who is not on the payroll)
+  return <div className="card stack"><h2>My payslips</h2>
+    {slips.slice(0, 12).map((x) => <Link key={x.month} to={'/settings/payslip/' + x.month} className="row between small" style={{ textDecoration: 'none', color: 'inherit' }}>
+      <b>{monthLabel(x.month)}</b><span className="num">{inr(x.item.net)}</span></Link>)}
+    <p className="small muted" style={{ margin: 0 }}>Only you can see your payslips here.</p></div>;
+}
+function MyPayslip() {
+  const { month } = useParams(), slips = useMySlips(), x = slips?.find((s) => s.month === month);
+  if (!slips) return <p className="muted">Loading…</p>;
+  if (!x) return <Empty>No payslip for this month. <Link to="/settings/me">Back</Link></Empty>;
+  return <><div className="row no-print" style={{ marginBottom: 12 }}><Link className="btn" to="/settings/me">My profile</Link><button className="btn primary" type="button" onClick={() => window.print()}>Print / Save PDF</button></div>
+    <div className="paper-wrap"><PayslipSheet run={{ month: x.month, paidOn: x.paidOn }} i={x.item} /></div></>;
 }

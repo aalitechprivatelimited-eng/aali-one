@@ -1,4 +1,5 @@
 // Default settings. Admins can change most of these in Settings; these are the starting values.
+import { PROVIDER, SERVICE_CLAUSES, CLOSURE_CLAUSES, EXCLUDED } from './agreement-text.js';
 export const TITLES = {
   admin: 'Administrator', chairman: 'Founder & Chairman', ops: 'Operations Manager', cs: 'Company Secretary',
   salesmgr: 'Sales Manager', bde: 'BDE', itmgr: 'IT Manager', itlead: 'IT Team Lead', dev: 'Developer / Designer',
@@ -47,12 +48,29 @@ export const DEFAULT_SETTINGS = {
     { id: 'svc-host', name: 'Domain + hosting (yearly)', unit: 'Year', rate: 4500, note: 'Domain renewal and shared hosting.' },
   ],
   discountApprovalPct: 10,
+  // Client agreements: the company that signs them and their standard wording (shared/agreement-text.js, from the company's own template).
+  // Each agreement can still change any of it before it is signed.
+  agreements: {
+    ...PROVIDER, serviceClauses: SERVICE_CLAUSES, closureClauses: CLOSURE_CLAUSES, excluded: EXCLUDED,
+    schedule: [['Advance to commence development', 50], ['Upon successful testing and prior to final go-live deployment', 50]],
+    annex: [['Project Timeline', 'Delivery within 8–10 weeks from receipt of the advance payment and the required business/process data.'],
+      ['Support', 'First 2 months of priority post-launch support complimentary.'],
+      ['Domain & Hosting', 'Not included in this Agreement; to be procured by the Client or billed separately at actuals if managed by AALITECH.']],
+    amc: 'Annual Maintenance Contract (AMC) — from Year 2 (bug fixes, minor workflow changes, priority support)',
+    handover: ['Work delivered and live', 'Source files / code handed over', 'Admin logins and passwords handed over', 'Domain and hosting details shared', 'Training / walkthrough given', 'User guide or documents given'],
+    supportDays: 60,
+  },
+  // Payroll rules (shared/payroll.js). HR changes them in Payroll → Rules; check rates with the company's CA when the law changes.
+  // ptSlabs: Andhra Pradesh Professional Tax per month – [up to ₹, tax], the last row [0, tax] is "above that".
+  payroll: { payDay: 7, basicPct: 50, hraPct: 40, pfEe: 12, pfEr: 12, pfCeiling: 15000, esiEe: 0.75, esiEr: 3.25, esiLimit: 21000,
+    ptSlabs: [[15000, 0], [20000, 150], [0, 200]], freeLeaves: 2 },
   // Kinds of work a person can pick for each line of the daily report (time is added up per kind).
   workTypes: {
     sales: ['Calling', 'Information gathering', 'Client visit / meeting', 'Follow-up messages', 'Video making', 'Poster / design work', 'Client work (photo editing etc.)', 'Quotation / paperwork', 'Payment collection', 'Team management', 'Other'],
     it: ['Development', 'Design', 'Testing', 'Client changes', 'Support', 'Meeting', 'Team management', 'Other'],
   },
   leadSeesReports: false, // when on, the IT Team Lead can read the developers' daily reports
+  waReports: { on: true, skip: [] }, // each submitted daily report to management on WhatsApp (server/whatsapp.js); skip: people who do not want them
   // One business, one caller (server/prospects.js). holdDays: a business stays with its BDE this long after the last call.
   // emptyHoldDays: a number that was reserved but never called is kept this long. maxTries: unanswered calls in a row before everyone must stop.
   calling: { holdDays: 15, emptyHoldDays: 2, maxTries: 3 },

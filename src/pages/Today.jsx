@@ -17,7 +17,7 @@ function Numbers() {
   const reps = list('report').filter((r) => r.date === t);
   if (can('leads')) {
     const calls = reps.filter((r) => r.team === 'sales').flatMap((r) => r.calls || []), yes = calls.filter((c) => c.resp === 'Interested').length, back = calls.filter((c) => c.resp === 'Call back').length;
-    add(mine ? 'My calls today' : 'Calls today', calls.length, `${yes} interested · ${back} to call back`, '/daily', 'calls');
+    add(mine ? 'My calls today' : 'Calls today', calls.length, `${yes} interested · ${back} to call back`, '/calls', 'calls');
     if (mine) { const mineP = list('prospect').filter((p) => p.owner === me.id && p.state === 'open'), back = mineP.filter((p) => p.backOn && p.backOn <= t).length;
       add('Still to call', mineP.filter((p) => !p.tries).length + back, back ? `${back} to call back today` : 'kept for me, not called yet', '/daily', 'clock', back ? 'warm' : ''); }
     const leads = list('lead').filter((l) => !['converted', 'junk'].includes(l.status)), late = leads.filter((l) => l.followUp && l.followUp < t).length;

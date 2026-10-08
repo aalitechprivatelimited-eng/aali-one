@@ -5,6 +5,7 @@ import { settings, uname, fmtDate, today, addDays, diff, pStageLabel, isManager,
 import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, Log, Comments, Attachments, DeleteButton, Person, People, attempt, toast, Seg, Avs, Message, RO, ViewOnly } from '../ui.jsx';
 import { TaskModal, TaskRow, TSTATUS, tLabel } from '../task.jsx';
 import { CertificateSheet } from '../doc.jsx';
+import { canClose } from '../../shared/access.js';
 import { useId } from '../App.jsx';
 
 const WORK = ['planning', 'design', 'development', 'testing', 'live'];
@@ -71,11 +72,16 @@ function ProjectView({ id }) {
   if (!p) return <Empty>This project was not found. <Link to="/projects">Back</Link></Empty>;
   const set = (data, ok) => attempt(() => update(id, data), ok), edit = canEdit('projects');
   const deal = get(p.dealId), tasks = list('task').filter((t) => t.projectId === id), pr = progress(id), so = get(p.signoffId), ok = advanceOk(p);
+  const ca = list('agreement').find((x) => x.kind === 'closure' && x.projectId === id); // only the people who may see agreements get them at all
+  const after = p.deadline && p.stage !== 'live' ? tasks.filter((t) => t.status !== 'done' && t.due && t.due > p.deadline) : [], fitter = edit && (isManager() || p.lead === store.me.id);
   const link = `${location.origin}/p/${p.progressToken}`;
   return <>
     <div className="topbar"><h1>{p.name} <small>{clientName(p.clientId) || p.clientName || 'Internal'} · {pStageLabel(p.stage)} · {pr}% done</small> <ViewOnly when={!edit} /></h1>
       <div className="row"><Link className="btn" to="/projects">All projects</Link>{deal && <Link className="btn" to={'/deals/' + deal.id}>Deal</Link>}
-        {!so && ['testing', 'live'].includes(p.stage) && <Link className="btn primary" to={'/signoff/' + id}>Get client sign-off</Link>}</div></div>
+        {!so && ['testing', 'live'].includes(p.stage) && <Link className="btn primary" to={'/signoff/' + id}>Get client sign-off</Link>}
+        {ca ? <Link className="btn" to={'/agreements/' + ca.id}>Closure agreement</Link> : canClose(store.me) && (so || p.stage === 'live') && <Link className="btn" to={`/agreements/new?kind=closure&project=${id}`}>+ Closure agreement</Link>}</div></div>
+    {after.length > 0 && <div className="banner warn" style={{ marginBottom: 12 }}><b>{after.length} step{after.length === 1 ? ' is' : 's are'} due after the delivery date ({fmtDate(p.deadline)}).</b> The delivery date has not moved.
+      {fitter && <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={() => fitSteps(p, tasks)}>Fit the steps into the delivery date</button>}</div>}
     {!ok && <div className="banner bad" style={{ marginBottom: 12 }}><b>Advance not received.</b> No work at all, not even planning, until the advance receipt is made.
       {isManager() && edit ? <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={() => setAppr({ kind: 'start' })}>Approve early start</button>
         : <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={() => setAppr({ kind: 'start', ask: true })}>Ask a manager for an early start</button>}</div>}
@@ -124,6 +130,17 @@ function ProjectView({ id }) {
     {appr && <Reason title={appr.kind === 'start' ? 'Approve early start without advance' : 'Allow Live without client sign-off'} hint="Recorded in the project history." onClose={() => setAppr(null)}
       onSave={(r) => appr.ask ? attempt(() => create('approval', { kind: appr.kind === 'start' ? 'earlystart' : 'livenosign', relType: 'project', relId: id, reason: `${appr.kind === 'start' ? 'Start without advance' : 'Live without sign-off'} – ${p.name}: ${r}` }), 'Sent to the managers for approval.').then((x) => x && setAppr(null)) : set(appr.kind === 'start' ? { startApproved: { by: store.me.id, at: today(), reason: r }, stage: p.stage === 'awaiting' ? 'planning' : p.stage } : { liveNoSign: { by: store.me.id, at: today(), reason: r } }, 'Approved.').then((x) => x && setAppr(null))} />}
   </>;
+}
+
+// The steps not done yet are spread between today (or the start) and the delivery date, keeping their order and spacing; done steps stay.
+async function fitSteps(p, tasks) {
+  const open = tasks.filter((t) => t.status !== 'done' && t.due).sort((a, b) => a.due.localeCompare(b.due)), from = [today(), p.start || ''].sort().pop();
+  if (!open.length) return;
+  if (from >= p.deadline) return toast('The delivery date is today or past: change the delivery date first (with a reason), or the steps one by one.', true);
+  const lo = parse(open[0].due), hi = parse(open[open.length - 1].due), span = (parse(p.deadline) - parse(from)) / 864e5;
+  const due = (t) => (hi > lo ? addDays(from, Math.round(span * (parse(t.due) - lo) / (hi - lo))) : p.deadline);
+  const moves = open.map((t) => [t, due(t)]).filter(([t, d]) => d !== t.due);
+  await attempt(async () => { for (const [t, d] of moves) await update(t.id, { due: d }); }, `${moves.length} step${moves.length === 1 ? '' : 's'} moved: the last one is due on ${fmtDate(p.deadline)}.`);
 }
 
 export function Reason({ title, hint, onClose, onSave }) {

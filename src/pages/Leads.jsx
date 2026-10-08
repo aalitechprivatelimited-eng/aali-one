@@ -34,7 +34,7 @@ function LeadList() {
         <Sel value={f.score} onChange={up('score')} options={[['hot', 'Hot'], ['warm', 'Warm'], ['cold', 'Cold']]} blank="Any score" style={{ width: 'auto' }} />
         {!own && <TeamFilter value={f} onChange={(v) => setF({ ...f, ...v })} />}
       </div>
-      {rows.length ? <div className="tbl"><table><thead><tr><th>Name</th><th>Service</th><th>Source</th><th>Score</th><th>BDE</th><th>Follow-up</th><th>Status</th></tr></thead><tbody>
+      {rows.length ? <div className="tbl cards"><table><thead><tr><th>Name</th><th>Service</th><th>Source</th><th>Score</th><th>BDE</th><th>Follow-up</th><th>Status</th></tr></thead><tbody>
         {rows.map((l) => <tr key={l.id} className="click" onClick={() => nav('/leads/' + l.id)}>
           <td><Link to={'/leads/' + l.id}><b>{l.name}</b></Link><div className="small muted num">{l.mobile}{l.company ? ' · ' + l.company : ''}</div>
             <div className="row">{l.repeatPending && <Pill k="warn">Asked again</Pill>}{l.existingClient && <Pill k="gold">Existing client</Pill>}<Sample on={l.sample} /></div></td>

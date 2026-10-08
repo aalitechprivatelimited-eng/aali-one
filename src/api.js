@@ -2,15 +2,21 @@
 import { useSyncExternalStore } from 'react';
 import { canSee } from '../shared/access.js';
 
-const S = { ready: false, me: null, users: [], settings: null, recs: new Map(), serverTime: null, version: 0, error: '' };
+const S = { ready: false, me: null, users: [], settings: null, recs: new Map(), serverTime: null, version: 0, error: '', signedOut: '' };
 const subs = new Set();
 const cache = new Map();
 function emit() { S.version++; cache.clear(); subs.forEach((f) => f()); }
 export const useStore = () => useSyncExternalStore((f) => (subs.add(f), () => subs.delete(f)), () => S.version);
 export const store = S;
 
+// When the person last tapped, typed or scrolled. Every request says how long ago that was (x-idle, seconds), so a page left open still
+// ends its sign-in after an hour without use (server/auth.js) – the page's own checks for changes do not count as use.
+let lastUse = Date.now();
+for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart']) addEventListener(ev, () => { lastUse = Date.now(); }, { passive: true, capture: true });
+export const idleFor = () => Date.now() - lastUse;
+
 export async function http(method, path, body) {
-  const r = await fetch('/api' + path, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
+  const r = await fetch('/api' + path, { method, headers: { ...(body ? { 'content-type': 'application/json' } : {}), 'x-idle': String(Math.floor(idleFor() / 1000)) }, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
   const type = r.headers.get('content-type') || '';
   const data = type.includes('json') ? await r.json() : await r.text();
   if (!r.ok) { const e = new Error(data?.error || `Request failed (${r.status})`); e.status = r.status; throw e; }
@@ -32,7 +38,7 @@ export async function boot() {
     S.recs = new Map(b.records.map((r) => [r.id, r]));
     emit(); clearInterval(timer); timer = setInterval(poll, 12000);
     return true;
-  } catch (e) { S.ready = true; S.me = null; S.error = e.status === 401 ? '' : e.message; emit(); return false; }
+  } catch (e) { S.ready = true; S.me = null; S.error = e.status === 401 ? '' : e.message; if (e.status === 401 && !/^Please sign in/.test(e.message)) S.signedOut = e.message; emit(); return false; }
 }
 let polling = false;
 export async function poll() {
@@ -48,12 +54,13 @@ export async function poll() {
     if (c.settings && !!c.settings.leadSeesReports !== !!S.settings.leadSeesReports && S.me.title === 'itlead') { polling = false; return void boot(); } // what I may read changed
     if (c.settings) S.settings = c.settings;
     S.serverTime = c.serverTime; if (c.records.length || c.users.length || c.settings) emit();
-  } catch (e) { if (e.status === 401) { S.me = null; emit(); } } finally { polling = false; }
+  } catch (e) { if (e.status === 401) { S.me = null; S.signedOut = e.message; clearInterval(timer); emit(); } } finally { polling = false; }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 
-export async function login(email, password) { await http('POST', '/auth/login', { email, password }); return boot(); }
-export async function logout() { await http('POST', '/auth/logout'); clearInterval(timer); S.me = null; S.recs = new Map(); emit(); }
+export async function login(email, password) { await http('POST', '/auth/login', { email, password }); S.signedOut = ''; return boot(); }
+// why: shown on the sign-in screen (the page signs itself out after an hour without use)
+export async function logout(why = '') { await http('POST', '/auth/logout').catch(() => {}); clearInterval(timer); S.me = null; S.recs = new Map(); S.signedOut = why; emit(); }
 // hidden: the enquiry joined a lead that belongs to someone else, so there is nothing to show here.
 export async function create(type, data) { const r = await http('POST', '/records', { type, data }); if (!r.hidden) put(r.record); emit(); poll(); return r; }
 export async function update(id, data) { const r = await http('PATCH', '/records/' + id, { data }); put(r.record); emit(); poll(); return r.record; }

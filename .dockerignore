@@ -1,0 +1,15 @@
+# Never in the server image: passwords, local databases, test pictures and working notes.
+node_modules
+dist
+.env
+.env.*
+.vercel
+.devdb*
+.review
+.omc
+.claude
+DEMO-LOGINS.md
+LOCAL-TEST-LOGINS.md
+e2e
+test
+*.log

@@ -37,7 +37,7 @@ export default function Calls() {
     <div className="row" style={{ marginBottom: 12 }}><In placeholder="Search name, number, place, industry" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} style={{ maxWidth: 280 }} />
       <Seg value={f.state} onChange={(v) => setF({ ...f, state: v })} options={[['', 'All'], ['open', 'Open'], ['new', 'Not called yet'], ['stopped', 'Stopped'], ['dnc', 'Do not call']]} />
       {!own && <TeamFilter value={f} onChange={(v) => setF({ ...f, ...v })} />}</div>
-    {rows.length ? <><div className="tbl"><table><thead><tr><th>Business</th><th>Number</th><th>Held by</th><th className="n">Calls</th><th>Last call</th><th>Status</th><th /></tr></thead><tbody>
+    {rows.length ? <><div className="tbl cards"><table><thead><tr><th>Business</th><th>Number</th><th>Held by</th><th className="n">Calls</th><th>Last call</th><th>Status</th><th /></tr></thead><tbody>
       {shown.map((p) => { const [l0, k] = STATE[p.state] || STATE.open, l = p.closed?.why === 'Wrong number' ? 'Stopped – wrong number' : l0, end = holdEnd(p, cfg), over = p.state === 'open' && !p.leadId && end && end < today();
         return <tr key={p.id} className="click" onClick={() => setOpen(p.id)}>
           <td><b>{p.name || 'No name yet'}</b><div className="small muted">{[p.place, p.ind, p.src && 'from ' + p.src].filter(Boolean).join(' · ') || '—'}</div></td><td className="num">{p.phone}</td>
@@ -128,7 +128,8 @@ function MyLists() {
 
 // Upload or paste a list gathered from Google Maps or social media. Every row is shown first, as it was read, so a mistake is seen before
 // anything is kept; the person then confirms. Every number is checked, and the free ones are kept for them as one list that can be deleted again.
-export function Check({ chk, setChk }) {
+// onCalls(text): the file turns out to be calls already made (it has responses) – put them on today's call sheet instead.
+export function Check({ chk, setChk, onCalls }) {
   const [busy, setBusy] = useState(false), [sheets, setSheets] = useState([]), [at, setAt] = useState(0), [src, setSrc] = useState(''); // src: where this list came from, when the sheet does not say
   const [off, setOff] = useState(null), [sure, setSure] = useState(false), [batch, setBatch] = useState(''); // off: rows left out (null = the rows that look wrong)
   const show = (list, i) => { setAt(i); setOff(null); setSure(false); setChk({ text: list[i].rows.map((r) => r.join('\t')).join('\n'), res: null }); };
@@ -142,6 +143,9 @@ export function Check({ chk, setChk }) {
   async function pick(e) { const file = e.target.files[0]; e.target.value = ''; if (!file) return; const all = await attempt(() => readSheets(file)); if (!all) return;
     const list = all.filter((x) => parseList(x.rows).length), use = list.length ? list : all.slice(0, 1); setSheets(use); show(use, 0); }
   const ok = (chk.res || []).filter((v) => v.ok), no = (chk.res || []).filter((v) => !v.ok);
+  // A call sheet (calls already made, with what each business said) uploaded here would only keep the numbers – say so before anything is kept.
+  const lines = chk.text.split(/\r?\n/).slice(0, 400), saidCells = lines.join('\t').match(/\b(not interested|interested|call ?back|no answer|not reachable|switch(ed)? off|busy|wrong number|ringing)\b/gi) || [];
+  const callSheet = !chk.res && (/\b(response|feedback|outcome)\b/i.test(lines.slice(0, 3).join(' ')) || saidCells.length >= 3);
   const footer = chk.res ? <><span className="small muted">Kept for you: {ok.length} · Not allowed: {no.length}</span><button className="btn" type="button" onClick={() => setChk(null)}>Close</button></>
     : sure ? <><span className="small"><b>Keep {items.length} business{items.length === 1 ? '' : 'es'} for you?</b> Nobody else can call them while you hold them.</span>
       <div className="row"><button className="btn" type="button" onClick={() => setSure(false)}>Go back</button><button className="btn primary" type="button" disabled={busy} onClick={run}>{busy ? 'Checking…' : 'Yes, keep them'}</button></div></>
@@ -164,6 +168,9 @@ export function Check({ chk, setChk }) {
             <td>{x.place || <span className="small" style={{ color: 'var(--warn)' }}>no place</span>}</td><td>{x.ind || '—'}</td><td>{x.src || src || '—'}</td></tr>)}</tbody></table></div>
         <span className="small muted">Untick a row to leave it out. If the names or places are in the wrong columns, fix the file (or use the template) and choose it again.</span></div>}
       {items.length > 0 && needSrc && <div className="row"><span className="small" style={{ fontWeight: 600 }}>Where did you get this list?</span>{(settings().listSources || []).map((x) => <button key={x} type="button" className={'chip' + (src === x ? ' on' : '')} aria-pressed={src === x} onClick={() => { setSrc(x); setSure(false); }}>{x}</button>)}</div>}
+      {callSheet && <div className="banner warn"><b>This looks like calls you already made</b> – it has responses (interested, call back…). This upload only keeps numbers <b>to call</b>; the responses would be lost.
+        {onCalls ? <button className="btn sm" type="button" style={{ marginLeft: 10 }} onClick={() => onCalls(chk.text)}>Add them to today's call sheet instead</button>
+          : <> To put them on today's call sheet, open <Link to="/daily" onClick={() => setChk(null)}>Daily reports</Link> → My calls → <b>Upload calls I already made</b>.</>}</div>}
       {!read.length && <MyLists />}
     </div> : <div className="stack">
       {no.length > 0 && <div className="banner bad"><b>Do not call these {no.length}:</b><ul className="access">{no.map((v, i) => <li key={i}><b>{v.item.org || v.item.phone}</b> ({v.item.phone}) – {v.msg}</li>)}</ul></div>}

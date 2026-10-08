@@ -24,9 +24,11 @@ export function lockPage(by) {
   if (!was && locks) { const bar = innerWidth - el.clientWidth; el.style.overflow = 'hidden'; document.body.style.paddingRight = bar ? bar + 'px' : ''; }
   if (was && !locks) { el.style.overflow = ''; document.body.style.paddingRight = ''; }
 }
+const openModals = []; // a pop-up opened over another one: Esc closes only the top one
 export function Modal({ title, onClose, children, footer, wide }) {
-  const [shut, setShut] = useState(false), close = () => setShut(true); // closing plays first; the page is told when it has finished
-  useEffect(() => { const k = (e) => e.key === 'Escape' && close(); addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, []);
+  const [shut, setShut] = useState(false), close = () => setShut(true), me = useRef({}); // closing plays first; the page is told when it has finished
+  useEffect(() => { openModals.push(me.current); const k = (e) => e.key === 'Escape' && openModals[openModals.length - 1] === me.current && close(); addEventListener('keydown', k);
+    return () => { removeEventListener('keydown', k); openModals.splice(openModals.indexOf(me.current), 1); }; }, []);
   useEffect(() => { lockPage(1); return () => lockPage(-1); }, []);
   return createPortal(
     <m.div className="modal-bg" initial={{ opacity: 0 }} animate={{ opacity: shut ? 0 : 1 }} transition={{ duration: shut ? 0.15 : 0.22 }} onAnimationComplete={() => shut && onClose()} onMouseDown={(e) => e.target === e.currentTarget && close()}>
@@ -43,7 +45,33 @@ export function Field({ label, children, full, hint }) {
   if (at >= 0) kids[at] = cloneElement(kids[at], { id }); // the first box inside the field is the one the label names
   return <div className={'field' + (full ? ' full' : '')}><label htmlFor={at >= 0 ? id : undefined}>{label}</label>{kids}{hint && <span className="small muted">{hint}</span>}</div>;
 }
-export const In = (p) => <input className="in" {...p} />;
+export const In = (p) => (p.type === 'date' ? <DateIn {...p} /> : <input className="in" {...p} />);
+
+// A date box the Indian way – shown and typed as DD-MM-YYYY whatever language the browser is set to (a plain date box follows the
+// browser, so a US-English one shows mm/dd/yyyy). The value stays YYYY-MM-DD as before. Typed as 08-10-2026, 8/10/2026, 08102026
+// or 2026-10-08; the calendar button opens the browser's own date picker. A date outside min/max is marked and not taken.
+const isoDate = (y, mo, d) => { const s = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, t = Date.parse(s + 'T00:00:00Z'); return +y > 1900 && !isNaN(t) && new Date(t).toISOString().slice(0, 10) === s ? s : ''; };
+const readDate = (t) => { const s = String(t || '').trim(); let m;
+  if ((m = s.match(/^(\d{4})-(\d\d)-(\d\d)$/))) return isoDate(m[1], m[2], m[3]);
+  if ((m = s.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{4})$/)) || (m = s.match(/^(\d\d)(\d\d)(\d{4})$/))) return isoDate(m[3], m[2], m[1]);
+  return ''; };
+export const dmy = (iso) => (/^\d{4}-\d\d-\d\d$/.test(iso || '') ? iso.split('-').reverse().join('-') : '');
+function DateIn({ value, onChange, min, max, disabled, style, className, type, ...p }) {
+  const [text, setText] = useState(() => dmy(value)), pick = useRef(null);
+  useEffect(() => { if (readDate(text) !== (value || '')) setText(dmy(value)); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps -- only a change from outside
+  const iso = readDate(text), bad = !!text && (!iso || (min && iso < min) || (max && iso > max));
+  const send = (v) => onChange?.({ target: { value: v, type: 'date', name: p.name } });
+  const typed = (e) => { const t = e.target.value.slice(0, 10), d = readDate(t); setText(t);
+    if (!t.trim()) send(''); else if (d && (!min || d >= min) && (!max || d <= max)) send(d); };
+  return <span className={'datein' + (bad ? ' bad' : '')} style={style}>
+    <input className={className || 'in'} {...p} type="text" inputMode="numeric" autoComplete="off" placeholder="DD-MM-YYYY" value={text} onChange={typed} disabled={disabled}
+      aria-invalid={bad || undefined} onBlur={(e) => { if (!bad) setText(dmy(value)); p.onBlur?.(e); }} />
+    <button type="button" className="datein-pick" aria-label="Choose the date from a calendar" title="Calendar" disabled={disabled} tabIndex={-1}
+      onClick={() => { try { pick.current.showPicker(); } catch { pick.current.focus(); } }}><Ico k="calendar" size={16} /></button>
+    <input ref={pick} type="date" className="datein-native" tabIndex={-1} aria-hidden="true" value={value || ''} min={min} max={max} disabled={disabled}
+      onChange={(e) => { setText(dmy(e.target.value)); send(e.target.value); }} />
+  </span>;
+}
 export const Area = (p) => <textarea className="in" {...p} />;
 export function Sel({ options, value, onChange, blank, ...p }) {
   const opts = Array.isArray(options) ? options.map((o) => (typeof o === 'string' ? [o, o] : o)) : Object.entries(options);

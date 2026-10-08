@@ -1,8 +1,8 @@
 import { useEffect, useState, lazy, Suspense, Fragment } from 'react';
 import { Routes, Route, Navigate, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { boot, useStore, store, login, logout, http, list } from './api.js';
-import { Toaster, In, Field, Empty, Avatar, attempt, toast, lockPage } from './ui.jsx';
-import { feedItems, forScope, diff, isTop, can, desig } from './lib.js';
+import { boot, useStore, store, login, logout, http, list, idleFor } from './api.js';
+import { Toaster, In, Field, Empty, Avatar, Modal, attempt, toast, lockPage } from './ui.jsx';
+import { feedItems, forScope, diff, isTop, can, desig, urgentDeadlines } from './lib.js';
 import { SECTIONS } from '../shared/access.js';
 import { ThemeToggle } from './theme.jsx';
 import { Motion, Page, ScrollLine, ToTop, m, AnimatePresence, SPRING, EASE } from './motion.jsx';
@@ -19,6 +19,9 @@ const Assets = lazy(() => import('./pages/Assets.jsx'));
 const Deals = lazy(() => import('./pages/Deals.jsx'));
 const Clients = lazy(() => import('./pages/Clients.jsx'));
 const Quotes = lazy(() => import('./pages/Quotes.jsx'));
+const Agreements = lazy(() => import('./pages/Agreements.jsx'));
+const Payroll = lazy(() => import('./pages/Payroll.jsx'));
+const ClientPayrollPage = lazy(() => import('./pages/Payroll.jsx').then((m) => ({ default: m.ClientPayrollPage })));
 const Projects = lazy(() => import('./pages/Projects.jsx'));
 const Tasks = lazy(() => import('./pages/Tasks.jsx'));
 const Payments = lazy(() => import('./pages/Payments.jsx'));
@@ -67,6 +70,19 @@ function Private() {
   return <><Shell /><Toaster /></>;
 }
 
+// A sign-in ends after an hour without a tap or keypress (server/auth.js IDLE_MIN). A minute before, a warning counts down; any tap keeps
+// the person signed in. The server checks the same thing, so a sleeping phone or a closed laptop is signed out too.
+const IDLE_MS = 60 * 60000, WARN_MS = 60000;
+function SessionTimeout() {
+  const [left, setLeft] = useState(0);
+  useEffect(() => { const h = setInterval(() => { const idle = idleFor();
+    if (idle >= IDLE_MS) logout('You were signed out after 60 minutes without use. Please sign in again.');
+    else setLeft(idle >= IDLE_MS - WARN_MS ? Math.ceil((IDLE_MS - idle) / 1000) : 0); }, 1000); return () => clearInterval(h); }, []);
+  if (!left) return null;
+  return <Modal title="Still there?" onClose={() => setLeft(0)} footer={<button className="btn primary" type="button" onClick={() => setLeft(0)}>Stay signed in</button>}>
+    <p style={{ margin: 0 }}>Nothing has been tapped or typed for an hour. For safety you will be signed out in <b>{left} second{left === 1 ? '' : 's'}</b>.</p></Modal>;
+}
+
 function Login({ setup }) {
   const [f, setF] = useState({ name: '', email: '', password: '' }), [busy, setBusy] = useState(false), [show, setShow] = useState(false);
   const up = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -82,6 +98,7 @@ function Login({ setup }) {
         <div style={{ position: 'absolute', top: 26, right: 18 }}><ThemeToggle /></div>
         <div className="row" style={{ gap: 14, marginBottom: 4 }}><img className="logo-lg" src="/icon.svg" alt="" /><div><h1>Aali One</h1><div className="small muted">Aali Group · sales, delivery and payments in one place</div></div></div>
         {setup && <div className="banner info">First time here. Create the administrator account.</div>}
+        {!setup && store.signedOut && <div className="banner info">{store.signedOut}</div>}
         {setup && <Field label="Your name"><In value={f.name} onChange={up('name')} required autoComplete="name" /></Field>}
         <Field label="Email"><In type="email" value={f.email} onChange={up('email')} required autoComplete="username" /></Field>
         <Field label="Password" hint={setup ? 'At least 8 characters.' : ''}><div className="pwbox"><In type={show ? 'text' : 'password'} value={f.password} onChange={up('password')} required autoComplete={setup ? 'new-password' : 'current-password'} />
@@ -136,7 +153,7 @@ function Shell() {
   const unread = list('notice').filter((n) => n.to === me.id && !n.read).length;
   const pending = can('approvals') ? list('approval').filter((a) => a.status === 'pending').length : 0;
   const toReview = can('approvals') ? list('report').filter((r) => r.owner !== me.id && r.status === 'submitted' && !r.reviewed).length : 0;
-  const cnt = { today: late, daily: toReview, inbox: unread, approvals: pending };
+  const cnt = { today: late, daily: toReview, inbox: unread, approvals: pending, calendar: urgentDeadlines() };
   // Which section is open: the gold mark in the sidebar slides to it, and the page changes with a short movement.
   const path = loc.pathname, seg = path.split('/')[1] || 'home';
   const on = (k, to) => (to === '/' ? path === '/' : k === 'settings' ? path.startsWith('/settings') && !path.startsWith('/settings/people') : path === to || path.startsWith(to + '/'));
@@ -171,8 +188,8 @@ function Shell() {
             <Routes location={loc}>
               <Route path="/" element={<Today />} /><Route path="/inbox" element={<Inbox />} /><Route path="/approvals" element={<Gate s="approvals"><Approvals /></Gate>} />
               <Route path="/leads/*" element={<Gate s="leads"><Leads /></Gate>} /><Route path="/calls" element={<Gate s="calls"><Calls /></Gate>} /><Route path="/deals/*" element={<Gate s="deals"><Deals /></Gate>} /><Route path="/clients/*" element={<Gate s="clients"><Clients /></Gate>} />
-              <Route path="/quotes/*" element={<Gate s="quotes"><Quotes /></Gate>} /><Route path="/projects/*" element={<Gate s="projects"><Projects /></Gate>} /><Route path="/tasks" element={<Tasks />} />
-              <Route path="/support" element={<Gate s="support"><Support /></Gate>} /><Route path="/assets" element={<Gate s="assets"><Assets /></Gate>} /><Route path="/payments/*" element={<Gate s="money"><Payments /></Gate>} /><Route path="/calendar" element={<Calendar />} /><Route path="/daily" element={<Daily />} /><Route path="/collab" element={<Gate s="collab"><Collab /></Gate>} />
+              <Route path="/quotes/*" element={<Gate s="quotes"><Quotes /></Gate>} /><Route path="/agreements/*" element={<Gate s="agreements"><Agreements /></Gate>} /><Route path="/projects/*" element={<Gate s="projects"><Projects /></Gate>} /><Route path="/tasks" element={<Tasks />} />
+              <Route path="/support" element={<Gate s="support"><Support /></Gate>} /><Route path="/assets" element={<Gate s="assets"><Assets /></Gate>} /><Route path="/payments/*" element={<Gate s="money"><Payments /></Gate>} /><Route path="/payroll/*" element={<Gate s="payroll"><Payroll /></Gate>} /><Route path="/client-payroll/*" element={<Gate s="clientpay"><ClientPayrollPage /></Gate>} /><Route path="/calendar/*" element={<Calendar />} /><Route path="/daily" element={<Daily />} /><Route path="/collab" element={<Gate s="collab"><Collab /></Gate>} />
               <Route path="/reports" element={<Gate s="reports"><Reports /></Gate>} /><Route path="/messages" element={<Gate s="messages"><Messages /></Gate>} /><Route path="/settings/*" element={<Settings />} />
               <Route path="/signoff/:projectId" element={<Gate s="projects"><Signoff /></Gate>} /><Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
@@ -180,7 +197,7 @@ function Shell() {
           </AnimatePresence>
         </main>
         <ToTop />
-        <Search /><Guide /><Popups /><VisitPrompt />
+        <Search /><Guide /><Popups /><VisitPrompt /><SessionTimeout />
       </div>
     </div>
   );

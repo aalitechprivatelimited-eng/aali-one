@@ -4,6 +4,7 @@
 // It never touches the live database: the server is started with no database address and stops if the database is not empty.
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
 import { chromium } from 'playwright-core';
 
 const PORT = 3190 + Math.floor(Math.random() * 200), BASE = `http://127.0.0.1:${PORT}`, PW = 'T-' + randomBytes(9).toString('base64url');
@@ -66,21 +67,21 @@ try {
   await step('the running task shows a clock; Finish closes it', async () => { must(/\d\d:\d\d:\d\d/.test(await bde.locator('.nowcard .clock').textContent()), 'no clock');
     await bde.locator('.nowcard').getByRole('button', { name: /Finish/ }).click(); await toast(bde, 'Task finished'); await bde.locator('.nowcard').waitFor({ state: 'detached' });
     await bde.locator('.list .li', { hasText: 'Sent the brochure to 5 schools' }).scrollIntoViewIfNeeded(); });
-  await step('upload a calling list: every row is shown first, a wrong row is left out, the person confirms', async () => { await bde.locator('.steps button', { hasText: 'My calls' }).click(); await bde.getByRole('button', { name: 'Upload my list (Excel)' }).click();
+  await step('upload a calling list: every row is shown first, a wrong row is left out, the person confirms', async () => { await bde.locator('.steps button', { hasText: 'My calls' }).click(); await bde.getByRole('button', { name: 'Upload numbers to call (Excel)' }).click();
     await bde.locator('.modal textarea').fill('Test Medicals, 9876501234, Guntur, Pharmacy\nLotus Clinic, 9876501235, Brodipet\n· Closes 9 pm, 9876501299, https://maps.example/x'); await bde.locator('.modal .chip', { hasText: 'Google Maps' }).click();
     must(await bde.locator('.modal .readback tbody tr').count() === 3, 'the rows are not shown before keeping'); must(!(await bde.locator('.modal .readback tbody tr').nth(2).locator('input[type=checkbox]').isChecked()), 'a row that looks wrong is ticked');
     await bde.getByRole('button', { name: 'Keep the 2 ticked' }).click(); await bde.locator('.modal-f', { hasText: 'Keep 2 businesses for you?' }).waitFor();
     await bde.getByRole('button', { name: 'Yes, keep them' }).click(); await bde.locator('.modal', { hasText: 'You can call these 2' }).waitFor();
     must(!(await bde.locator('.modal').textContent()).includes('9876501299'), 'the wrong row was kept');
     await bde.locator('.modal-h').getByRole('button', { name: 'Close' }).click(); await bde.locator('.modal').waitFor({ state: 'detached' }); });
-  await step('a list kept by mistake is deleted from "Your lists"; only that list goes', async () => { await bde.getByRole('button', { name: 'Upload my list (Excel)' }).click();
+  await step('a list kept by mistake is deleted from "Your lists"; only that list goes', async () => { await bde.getByRole('button', { name: 'Upload numbers to call (Excel)' }).click();
     await bde.locator('.modal textarea').fill('Wrong Shop A, 9876501401, Tenali\nWrong Shop B, 9876501402, Tenali'); await bde.locator('.modal .chip', { hasText: 'Instagram' }).click();
     await bde.getByRole('button', { name: 'Keep the 2 ticked' }).click(); await bde.getByRole('button', { name: 'Yes, keep them' }).click(); await bde.locator('.modal', { hasText: 'You can call these 2' }).waitFor();
     const lists = bde.locator('.modal .li', { hasText: 'not called yet' }); await lists.first().waitFor(); must(await lists.count() === 2, 'both lists should be listed');
     await lists.filter({ hasText: 'Instagram' }).getByRole('button', { name: 'Delete this list' }).click(); await bde.getByRole('button', { name: 'Yes, delete' }).click(); await toast(bde, 'List deleted: 2 businesses removed');
     await bde.locator('.modal .li', { hasText: 'Instagram' }).waitFor({ state: 'detached' }); must(await bde.locator('.modal .li', { hasText: 'Google Maps' }).count() === 1, 'the right list stays');
     await bde.locator('.modal-f').getByRole('button', { name: 'Close' }).click(); await bde.locator('.modal').waitFor({ state: 'detached' }); });
-  await step('the Excel template downloads, and Aali One reads it back (its example rows are not uploaded)', async () => { await bde.locator('.steps button', { hasText: 'My calls' }).click(); await bde.getByRole('button', { name: 'Upload my list (Excel)' }).click();
+  await step('the Excel template downloads, and Aali One reads it back (its example rows are not uploaded)', async () => { await bde.locator('.steps button', { hasText: 'My calls' }).click(); await bde.getByRole('button', { name: 'Upload numbers to call (Excel)' }).click();
     for (const h of ['Business name', 'Contact number', 'Place', 'Industry', 'Source']) await bde.locator('.modal .fmt th', { hasText: h }).waitFor();
     const [file] = await Promise.all([bde.waitForEvent('download'), bde.getByRole('button', { name: 'Download the Excel template' }).click()]); must(/\.xlsx$/.test(file.suggestedFilename()), 'the template is not an Excel file');
     await file.saveAs('.review/calling-list-template.xlsx'); await bde.locator('.modal input[type=file]').setInputFiles('.review/calling-list-template.xlsx');
@@ -102,11 +103,22 @@ try {
     await bde.locator('.modal-f').getByRole('button', { name: 'Close' }).click(); await bde.locator('.modal').waitFor({ state: 'detached' });
     await bde.locator('table tr', { hasText: 'Test Medicals' }).locator('.pill', { hasText: 'Interested' }).waitFor();
     must((await bde.locator('table tr', { hasText: 'Padma Fancy Store' }).textContent()).includes('Tenali'), 'the place typed last was not kept on the call sheet'); });
-  await step('pasted calls are shown first, added after a confirmation, and a whole paste can be removed', async () => { await bde.getByRole('button', { name: 'Paste calls I already made' }).click();
+  await step('a call sheet kept in Excel goes straight onto today\'s call sheet; the numbers-to-call upload says where it belongs', async () => {
+    const { xlsxBlob } = await import('../src/xlsx.js'), sheet = async (file, rows) => fs.writeFileSync(file, Buffer.from(await xlsxBlob([{ name: 'Calls', widths: [24, 14, 16, 16], rows: [['Organisation', 'Contact no.', 'Location', 'Response'], ...rows] }]).arrayBuffer()));
+    await sheet('.review/call-sheet-1.xlsx', [['Lakshmi Opticals', '9876501401', 'Tenali', 'Interested'], ['Vijaya Bakery', '9876501402', 'Tenali', 'Call back'], ['Ravi Mobiles', '9876501403', 'Tenali', 'No answer']]);
+    await bde.getByRole('button', { name: 'Upload numbers to call (Excel)' }).click(); await bde.locator('.modal input[type=file]').setInputFiles('.review/call-sheet-1.xlsx');
+    await bde.locator('.modal .banner', { hasText: 'This looks like calls you already made' }).waitFor(); await bde.getByRole('button', { name: "Add them to today's call sheet instead" }).click();
+    await bde.locator('.readback tbody tr', { hasText: 'Lakshmi Opticals' }).waitFor(); await bde.getByRole('button', { name: 'Add 3 calls' }).click(); await bde.getByRole('button', { name: 'Yes, add them' }).click();
+    await toast(bde, '3 calls added'); await bde.locator('table tr', { hasText: 'Vijaya Bakery' }).waitFor();
+    await sheet('.review/call-sheet-2.xlsx', [['Sai Ram Jewellers', '9876501404', 'Bapatla', 'Interested']]);
+    await bde.locator('label', { hasText: 'Upload calls I already made' }).locator('input').setInputFiles('.review/call-sheet-2.xlsx');
+    await bde.getByRole('button', { name: 'Add 1 call' }).click(); await bde.getByRole('button', { name: 'Yes, add them' }).click(); await toast(bde, '1 call added');
+    await bde.locator('table tr', { hasText: 'Sai Ram Jewellers' }).waitFor(); });
+  await step('pasted calls are shown first, added after a confirmation, and a whole paste can be removed', async () => { await bde.getByRole('button', { name: 'Or paste them' }).click();
     await bde.getByPlaceholder('Paste rows here').fill('Sri Ram Traders\t9876501301\tNarasaraopet\tNo answer\nKrishna Stores\t9876501302\tChilakaluripet\tBusy');
     must(await bde.locator('.readback tbody tr').count() === 2, 'the pasted rows are not shown first'); await bde.getByRole('button', { name: 'Add 2 calls' }).click();
     await bde.getByRole('button', { name: 'Yes, add them' }).click(); await toast(bde, '2 calls added'); await bde.locator('table tr', { hasText: 'Sri Ram Traders' }).waitFor();
-    await bde.getByRole('button', { name: 'Remove this paste' }).click(); await bde.getByRole('button', { name: 'Yes, remove' }).click(); await toast(bde, 'pasted calls were removed');
+    await bde.locator('.row', { hasText: ': 2 calls' }).getByRole('button', { name: 'Remove this paste' }).click(); await bde.getByRole('button', { name: 'Yes, remove' }).click(); await toast(bde, 'pasted calls were removed');
     await bde.locator('table tr', { hasText: 'Sri Ram Traders' }).waitFor({ state: 'detached' }); must(await bde.locator('table tr', { hasText: 'Test Medicals' }).count() === 1, 'other calls were removed too'); });
   await step('finish the calling time, write the plan, submit the day', async () => { await bde.locator('.steps button').first().click(); await bde.locator('.nowcard').getByRole('button', { name: /Finish/ }).click(); await bde.locator('.nowcard').waitFor({ state: 'detached' });
     await bde.getByRole('button', { name: /Finish my day/ }).last().click(); await bde.getByPlaceholder('What you will do next').fill('Call the remaining clinics'); await bde.getByPlaceholder('What you will do next').blur();
@@ -233,6 +245,89 @@ try {
     must(await m.getByRole('button', { name: 'Start the visit' }).isDisabled(), 'a visit can start without a name and place'); await m.getByLabel('Client or business name').fill('Hotel Palm Grove'); await m.getByLabel('Place or address').fill('Tenali');
     await m.getByRole('button', { name: 'Start the visit' }).click(); await toast(vis, 'Visit to Hotel Palm Grove started');
     await vis.getByRole('button', { name: 'Client visit now' }).click(); await vis.locator('.modal', { hasText: 'You are on a visit to Hotel Palm Grove' }).waitFor(); await vis.keyboard.press('Escape'); await vis.locator('.modal').waitFor({ state: 'detached' }); });
+
+  // ---------- agreements: made by the Operations Manager and the Sales Manager, a closure by the Operations Manager only ----------
+  console.log('Agreements (Operations Manager on a laptop, Company Secretary, Sales Manager, BDE, phone)');
+  must((await person('Nikhil', 'Tummala', 'ops@e2e.test', 'ops', 'Operations Manager')).status === 200, 'could not add the Operations Manager');
+  must((await person('Harika', 'Amirineni', 'cs@e2e.test', 'cs', 'Company Secretary')).status === 200, 'could not add the Company Secretary');
+  const agDeal = (await api('POST', '/records', { type: 'deal', data: { title: 'Lotus School website', contactName: 'Mr. Prasad', phone: '9876512345', value: 53100 } }, admin)).body.record;
+  const ops = await open({ width: 1366, height: 768 }); let saUrl = '';
+  await step('the Operations Manager starts a service agreement from the deal; it is filled in, saved with its number and shown as an A4 agreement', async () => {
+    await signIn(ops, 'ops@e2e.test'); await skipGuide(ops); await ops.goto(BASE + '/deals/' + agDeal.id); await ops.getByRole('link', { name: '+ Agreement' }).click();
+    await ops.locator('.ag-form').waitFor(); must(await ops.getByLabel('Service (short name) *').inputValue() === 'Lotus School website', 'the deal did not fill the agreement');
+    await ops.getByLabel('Client name *').fill('Lotus School'); await ops.getByRole('button', { name: 'Save & get number' }).click(); await toast(ops, 'Saved as SA/');
+    await ops.locator('.paper.agree', { hasText: 'Agreement No. SA/' }).waitFor(); must((await ops.locator('.paper.agree').textContent()).includes('Lotus School'), 'the agreement does not name the client'); saUrl = ops.url(); });
+  await step('marked as signed, it cannot be changed any more', async () => { await ops.getByRole('button', { name: 'Mark as signed…' }).click();
+    await ops.locator('.modal').getByLabel('Signed for the client by').fill('Mr. Prasad'); await ops.locator('.modal-f').getByRole('button', { name: 'Mark as signed' }).click(); await toast(ops, 'Marked as signed');
+    await ops.locator('.banner', { hasText: 'A signed agreement cannot be changed' }).waitFor(); must(await ops.getByRole('button', { name: 'Save changes' }).count() === 0, 'a signed agreement can still be saved'); });
+  await step('the closure agreement is made from the finished project, with the service agreement already named', async () => {
+    const p = (await api('POST', '/records', { type: 'project', data: { name: 'Lotus School website', dealId: agDeal.id, stage: 'live', scope: 'Five-page school website' } }, admin)).body.record;
+    await ops.goto(BASE + '/projects/' + p.id); await ops.getByRole('link', { name: '+ Closure agreement' }).click(); await ops.locator('.ag-form').waitFor();
+    must((await ops.locator('.paper.agree').textContent()).includes('Service Agreement No. SA/'), 'the closure does not name the service agreement');
+    await ops.getByRole('button', { name: 'Save & get number' }).click(); await toast(ops, 'Saved as PCA/'); });
+  await step('the Sales Manager reads the closure agreement but cannot change it', async () => { await mgr.goto(BASE + '/agreements'); await mgr.locator('tr', { hasText: 'PCA/' }).click();
+    await mgr.locator('.paper.agree').waitFor(); must(await mgr.locator('.topbar .pill', { hasText: 'View only' }).count() === 1 && await mgr.getByRole('button', { name: 'Save changes' }).count() === 0, 'the Sales Manager can change a closure agreement'); });
+  await step('the Company Secretary reads every agreement and cannot make one', async () => { const cs = await open({ width: 1366, height: 768 }); await signIn(cs, 'cs@e2e.test'); await skipGuide(cs);
+    await cs.goto(BASE + '/agreements'); await cs.locator('tr', { hasText: 'SA/' }).waitFor(); await cs.locator('tr', { hasText: 'PCA/' }).waitFor();
+    must(await cs.getByRole('link', { name: '+ Service agreement' }).count() === 0, 'the Company Secretary can make one'); await cs.context().close(); });
+  await step('a BDE has no Agreements in the menu and cannot open the page', async () => { await bde.goto(BASE); await bde.locator('.hero').waitFor(); must(await bde.locator('.nav a', { hasText: 'Agreements' }).count() === 0, 'a BDE sees Agreements');
+    await bde.goto(BASE + '/agreements'); await bde.getByText('This section is not part of your access').waitFor(); });
+  await step('on a phone the agreement switches between the details and the A4 page, and nothing scrolls sideways', async () => { const ph = await open({ width: 390, height: 844 }, true); await signIn(ph, 'ops@e2e.test'); await skipGuide(ph);
+    await ph.goto(saUrl); await ph.locator('.ag-form').waitFor(); await noSideScroll(ph); await ph.locator('.seg-phone button', { hasText: 'The agreement' }).click(); await ph.locator('.paper.agree').waitFor();
+    must(await ph.locator('.ag-form').isHidden(), 'the details stay on the phone screen'); await noSideScroll(ph); await ph.context().close(); });
+
+  // ---------- payroll: HR (a switch on the Company Secretary) makes it; the Operations Manager reviews; nobody else sees it ----------
+  console.log('Payroll (Aali HRM not linked here, so HR types the paid days)');
+  must((await person('Azagar Ali', 'Shaik', 'chair@e2e.test', 'chairman', 'Founder & Chairman')).status === 200, 'could not add the Chairman');
+  await step('an admin cannot switch "HR & payroll" on; the Founder & Chairman gives it to the Company Secretary', async () => { await top.goto(BASE + '/settings/people');
+    await top.locator('tr', { hasText: 'Harika' }).getByRole('button', { name: 'Actions' }).click(); await top.locator('.modal', { hasText: 'Only the Founder & Chairman can switch it on' }).waitFor();
+    await top.keyboard.press('Escape'); await top.locator('.modal').waitFor({ state: 'detached' });
+    const chair = await open({ width: 1366, height: 768 }); await signIn(chair, 'chair@e2e.test'); await skipGuide(chair); await chair.goto(BASE + '/settings/people');
+    await chair.locator('tr', { hasText: 'Harika' }).getByRole('button', { name: 'Give HR & payroll' }).waitFor();
+    must(await chair.getByRole('button', { name: 'Give HR & payroll' }).count() === 1, 'the button shows on rows other than the Company Secretary');
+    await chair.locator('tr', { hasText: 'Harika' }).getByRole('button', { name: 'Give HR & payroll' }).click(); await chair.locator('.modal-f').getByRole('button', { name: 'Give HR & payroll' }).click();
+    await toast(chair, 'can now make payroll'); await chair.locator('tr', { hasText: 'Harika' }).locator('.pill', { hasText: 'HR & payroll' }).waitFor();
+    must(await chair.locator('.nav a', { hasText: 'Payroll' }).count() > 0, 'the Chairman does not see Payroll (the Chairman may step in on it)'); await chair.context().close(); });
+  const hrPage = await open({ width: 1366, height: 768 }), lastMonth = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 15).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  await step('HR enters a salary, makes last month\'s payroll, types the paid days and locks it', async () => { await signIn(hrPage, 'cs@e2e.test'); await skipGuide(hrPage);
+    await hrPage.goto(BASE + '/payroll/salaries'); await hrPage.locator('tr', { hasText: 'Vani Reddy' }).click(); await hrPage.locator('.modal').getByLabel(/Monthly gross salary/).fill('18000');
+    await hrPage.locator('.modal').getByRole('button', { name: 'Make salary sheet' }).click(); await toast(hrPage, 'Salary sheet made');
+    await hrPage.goto(BASE + '/payroll'); await hrPage.getByRole('button', { name: `Make payroll for ${lastMonth}` }).click(); await toast(hrPage, 'is made');
+    await hrPage.locator('.banner', { hasText: 'Aali HRM is not linked yet' }).waitFor(); must(await hrPage.getByRole('button', { name: 'Lock payroll' }).isDisabled(), 'it can be locked without paid days');
+    await hrPage.locator('tr', { hasText: 'Vani Reddy' }).click(); await hrPage.locator('.modal').getByLabel(/^Paid days/).fill('29'); await hrPage.locator('.modal').getByRole('button', { name: 'Save changes' }).click(); await toast(hrPage, 'worked out again');
+    await hrPage.getByRole('button', { name: 'Lock payroll' }).click(); await hrPage.locator('.modal-f').getByRole('button', { name: 'Lock' }).click(); await toast(hrPage, 'Locked');
+    await hrPage.getByRole('link', { name: 'Payslips' }).click(); await hrPage.locator('.paper.slip', { hasText: 'Vani Reddy' }).waitFor(); });
+  await step('client payroll: HR adds a payroll client with its own rules and an employee; the month waits for the attendance Excel', async () => {
+    await hrPage.goto(BASE + '/client-payroll'); await hrPage.getByRole('button', { name: '+ New payroll client' }).click(); await hrPage.getByRole('button', { name: /Fixed monthly salary/ }).click(); const f = hrPage.locator('.modal');
+    await f.getByLabel('Name on the payslips *').fill('Test Mills Pvt Ltd'); await f.getByLabel("One day's pay = monthly gross ÷").selectOption('26');
+    await f.getByRole('button', { name: 'Add the client' }).click(); await toast(hrPage, 'Test Mills Pvt Ltd added');
+    await hrPage.getByRole('button', { name: '+ Add employee' }).click(); const m = hrPage.locator('.modal');
+    await m.getByLabel('Employee code *').fill('TM-1'); await m.getByLabel('Full name *').fill('Ravi Kumar'); await m.getByLabel(/Monthly gross salary/).fill('13000');
+    await m.getByRole('button', { name: 'Add employee' }).click(); await toast(hrPage, 'Ravi Kumar added');
+    await hrPage.getByRole('tab', { name: 'Months' }).click(); await hrPage.getByRole('button', { name: `Make payroll for ${lastMonth}` }).click(); await toast(hrPage, 'is made');
+    await hrPage.locator('.banner', { hasText: 'Upload the attendance Excel' }).waitFor(); await hrPage.locator('tr', { hasText: 'Ravi Kumar' }).waitFor();
+    must(await hrPage.locator('tr', { hasText: 'Vani Reddy' }).count() === 0, 'Aali staff are on a client month'); });
+  await step('the Operations Manager reads it as view only and writes a remark; a BDE has no Payroll', async () => { await ops.goto(BASE + '/payroll'); await ops.locator('tr', { hasText: 'Vani Reddy' }).waitFor();
+    must(await ops.locator('.topbar .pill', { hasText: 'View only' }).count() === 1 && await ops.getByRole('button', { name: 'Reopen…' }).count() === 0, 'the Operations Manager can change payroll');
+    await ops.getByLabel('Remark').fill('Checked, fine.'); await ops.getByRole('button', { name: 'Add remark' }).click(); await toast(ops, 'Remark added');
+    await bde.goto(BASE); await bde.locator('.hero').waitFor(); must(await bde.locator('.nav a', { hasText: 'Payroll' }).count() === 0, 'a BDE sees Payroll or Client payroll'); await hrPage.context().close(); });
+  await step('the Operations Manager sees client payroll as view only', async () => { await ops.goto(BASE + '/client-payroll'); await ops.locator('tr', { hasText: 'Test Mills' }).click();
+    await ops.getByRole('tab', { name: 'Months' }).waitFor(); await ops.locator('tr', { hasText: 'Ravi Kumar' }).waitFor();
+    must(await ops.getByRole('button', { name: '+ New payroll client' }).count() === 0 && await ops.getByRole('button', { name: 'Attendance Excel' }).count() === 0, 'the Operations Manager can change client payroll'); });
+
+  // ---------- calendars: Sales team, IT team, Deadlines ----------
+  console.log('Calendars');
+  const dayAt = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toLocaleDateString('en-CA'); };
+  must((await api('POST', '/records', { type: 'project', data: { name: 'Sunrise Dental app', stage: 'development', deadline: dayAt(2) } }, admin)).status === 200, 'could not add the project');
+  must((await api('POST', '/records', { type: 'payment', data: { title: 'Second instalment', amount: 9000, due: dayAt(-1) } }, admin)).status === 200, 'could not add the payment');
+  await step('management has three calendars; Deadlines lists the missed payment and the project due in 2 days', async () => { await top.goto(BASE + '/calendar/deadlines'); await top.getByRole('tab', { name: 'Deadlines' }).waitFor();
+    for (const t of ['Sales team', 'IT team', 'Deadlines']) must(await top.getByRole('tab', { name: t }).count() === 1, 'no tab ' + t);
+    await top.locator('.card', { hasText: 'Missed' }).locator('.li', { hasText: 'Payment due – Second instalment' }).waitFor();
+    await top.locator('.card', { hasText: 'Next 14 days' }).locator('.li', { hasText: 'Project delivery – Sunrise Dental app' }).waitFor();
+    must(+(await top.locator('.nav a', { hasText: 'Calendar' }).locator('.cnt').textContent()) >= 2, 'the sidebar does not count the urgent deadlines');
+    await top.getByRole('tab', { name: 'IT team' }).click(); await top.locator('.pill', { hasText: 'Delivery: Sunrise Dental app' }).first().waitFor(); });
+  await step('a BDE has the Sales team calendar and Deadlines, not the IT one', async () => { await bde.goto(BASE + '/calendar'); await bde.getByRole('tab', { name: 'Sales team' }).waitFor();
+    must(await bde.getByRole('tab', { name: 'IT team' }).count() === 0 && await bde.getByRole('tab', { name: 'Deadlines' }).count() === 1, 'wrong calendars for a BDE'); });
 
   await step('no errors were written to the browser console', async () => must(!errors.length, errors.slice(0, 3).join(' | ')));
   console.log(failed ? `\n${failed} step(s) failed.` : '\nAll steps passed.');
