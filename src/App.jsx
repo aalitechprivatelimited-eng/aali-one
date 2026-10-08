@@ -37,6 +37,7 @@ const Settings = lazy(() => import('./pages/Settings.jsx'));
 const Signoff = lazy(() => import('./pages/Signoff.jsx'));
 const Enquire = lazy(() => import('./pages/Public.jsx').then((m) => ({ default: m.Enquire })));
 const Progress = lazy(() => import('./pages/Public.jsx').then((m) => ({ default: m.Progress })));
+const SharedReport = lazy(() => import('./pages/Daily.jsx').then((m) => ({ default: m.SharedReport })));
 
 // The opening screen (index.html) slides up and away once the first screen is ready.
 // It stays for at least a short moment so it never just flashes past.
@@ -51,9 +52,11 @@ function TestSite() {
   return on ? <><div className="testbar" role="note">TEST SITE – for practice only. Nothing done here reaches the real Aali One.</div><span className="testbadge" aria-hidden="true">TEST SITE</span></> : null;
 }
 export default function App() {
-  const loc = useLocation(), open = loc.pathname === '/enquire' || loc.pathname.startsWith('/p/');
+  // /daily/<key>: one daily report by its own link, with no sign-in (the WhatsApp message's button). /daily/<date>/<person> stays in the app.
+  const loc = useLocation(), report = /^\/daily\/[\w-]{20,40}$/.test(loc.pathname) && loc.pathname.split('/')[2], open = loc.pathname === '/enquire' || loc.pathname.startsWith('/p/') || !!report;
   useEffect(() => { if (open) liftSplash(); }, []); // the public pages need no sign-in check
   if (loc.pathname === '/enquire') return <Motion><Suspense fallback={null}><Enquire /><Toaster /></Suspense></Motion>;
+  if (report) return <Motion><Suspense fallback={null}><SharedReport token={report} /><Toaster /></Suspense></Motion>;
   if (loc.pathname.startsWith('/p/')) return <Motion><Suspense fallback={null}><Routes><Route path="/p/:token" element={<Progress />} /></Routes></Suspense></Motion>;
   return <Motion><TestSite /><Private /></Motion>;
 }

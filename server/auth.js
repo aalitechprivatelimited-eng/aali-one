@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { isAdminUser } from '../shared/access.js';
 
 export const newId = (p = '') => p + randomBytes(9).toString('base64url');
+export const newKey = () => randomBytes(18).toString('base64url'); // 24 letters that cannot be guessed: a public link's key
 
 // ---------- passwords: bcrypt ----------
 // New and changed passwords are kept as bcrypt hashes (cost 12; BCRYPT_ROUNDS can lower it for the tests). Passwords kept earlier as

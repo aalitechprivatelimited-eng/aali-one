@@ -1112,8 +1112,10 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
     assert.equal(p[3], '2 calls · 1 interested · 1 to call back · 1 meeting fixed · 0 met in person');
     assert.equal(p[4], 'Calling 2 h'); assert.equal(p[5], 'Need the price list · from the office   today · please');
     assert.ok(p.every((x) => !/[\n\t]| {4}/.test(x)), 'no line breaks, tabs or 4 spaces in a field (Meta refuses them)');
-    // The "Open full report" button: its address ends in <date>/<person>, which opens that report in Daily reports.
-    assert.deepEqual(sent[0].template.components[1], { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: `${r.date}/u_wb` }] });
+    // The "Open full report" button: its address ends in the report's own key – /daily/<key> opens that report alone, with no sign-in.
+    const key = (await db.query("select data->>'shareToken' k from records where id = $1", [r.id])).rows[0].k;
+    assert.match(key, /^[\w-]{24}$/);
+    assert.deepEqual(sent[0].template.components[1], { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: key }] });
     assert.deepEqual((await db.query("select status, wa_id from outbox where ref = $1 order by id", [r.id])).rows.map((x) => x.status), ['sent', 'sent']);
     // Someone in management can switch the messages off for themselves.
     assert.equal((await call('PUT', '/settings/waReports', { value: { on: true, skip: ['u_wcs'] } }, B)).status, 403);
@@ -1143,6 +1145,43 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
     assert.ok((await db.query("select status from outbox where ref = $1", [r2.id])).rows.every((x) => x.status === 'sent'));
     assert.deepEqual(reportLines({ entries: [], calls: [] }), ['No time recorded', 'No calls', 'No timed work', 'None']);
   } finally { setWaSender(null); }
+});
+
+test("A submitted daily report has its own link that opens it with no sign-in, contact numbers hidden (the WhatsApp message's button)", async () => {
+  const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  for (const [id, email, name, title] of [['u_sh', 'sh@test.in', 'Rasheed', 'bde'], ['u_shm', 'shm@test.in', 'Sales Head', 'salesmgr']])
+    await db.query('insert into users (id,email,name,title,team,phone,designation,pass_hash) values ($1,$2,$3,$4,$5,$6,$7,$8)', [id, email, name, title, 'sales', '9123400001', title === 'bde' ? 'BDE' : '', hashPassword('password123')]);
+  const B = await login('sh@test.in'), M = await login('shm@test.in'), keyOf = async (id) => (await db.query("select data->>'shareToken' k from records where id = $1", [id])).rows[0].k;
+  const t0 = new Date(Date.now() - 2 * 3600e3).toISOString(), t1 = new Date(Date.now() - 3600e3).toISOString();
+  const r = (await add(B, 'report', { shareToken: 'my-own-key-chosen-by-me', entries: [{ text: 'Called the Guntur list', kind: 'Calling', start: t0, end: t1, state: 'done' }] })).record;
+  // Only a submitted report has a link, and the writer cannot choose or change it.
+  assert.equal(await keyOf(r.id), null);
+  assert.equal((await patch(B, r.id, { shareToken: 'another-key-chosen-by-me', calls: [{ org: 'Lakshmi Textiles', phone: '97012 43355', place: 'Guntur', resp: 'Interested', meeting: 'Fri 11 am' }], plan: 'Visit Lakshmi Textiles', blockers: 'Need the price list' })).status, 200);
+  assert.equal(await keyOf(r.id), null);
+  assert.equal((await patch(B, r.id, { status: 'submitted' })).status, 200);
+  const key = await keyOf(r.id); assert.match(key, /^[\w-]{24}$/);
+  // Anyone with the link reads it, signed in or not: the person, the day, the work, the calls – numbers only as their last 4 digits.
+  const p = await call('GET', '/public/report/' + key);
+  assert.equal(p.status, 200);
+  assert.deepEqual(p.body.person, { name: 'Rasheed', role: 'BDE', team: 'sales' });
+  assert.equal(p.body.report.status, 'submitted'); assert.equal(p.body.report.entries[0].text, 'Called the Guntur list');
+  assert.deepEqual(p.body.report.calls.map((c) => [c.org, c.phone, c.resp]), [['Lakshmi Textiles', '•••••• 3355', 'Interested']]);
+  assert.equal(p.body.report.plan, 'Visit Lakshmi Textiles'); assert.equal(p.body.report.blockers, 'Need the price list');
+  const all = JSON.stringify(p.body);
+  assert.ok(!/9701243355|97012 43355|9123400001|shareToken|remarks|"log"/.test(all), 'no full numbers, key, remarks or log: ' + all);
+  // A wrong link opens nothing.
+  assert.equal((await call('GET', '/public/report/' + 'x'.repeat(24))).status, 404);
+  // Sent back and submitted again: the same link, still working (the WhatsApp message already sent keeps opening it).
+  assert.equal((await patch(M, r.id, { status: 'open', _remark: 'Add the call notes' })).status, 200);
+  assert.equal((await call('GET', '/public/report/' + key)).body.report.status, 'open');
+  assert.equal((await patch(B, r.id, { status: 'submitted' })).status, 200);
+  assert.equal(await keyOf(r.id), key);
+  // Reviewed: the page says by whom.
+  assert.equal((await patch(M, r.id, { _reviewed: true })).status, 200);
+  assert.equal((await call('GET', '/public/report/' + key)).body.reviewedBy, 'Sales Head');
+  // A deleted report's link stops working.
+  await db.query('update records set deleted_at = now() where id = $1', [r.id]);
+  assert.equal((await call('GET', '/public/report/' + key)).status, 404);
 });
 
 test('WhatsApp: "Check the template with Meta" says whether the template is approved, a utility one, in English and with its four fields', async () => {

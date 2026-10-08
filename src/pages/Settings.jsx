@@ -358,7 +358,7 @@ function WhatsApp() {
   const copy = (t) => navigator.clipboard?.writeText(t).then(() => toast('Copied.'), () => toast('Select the text and copy it.', true));
   return <div className="card stack">
     <div className="row between"><h3 style={{ margin: 0 }}>WhatsApp – daily reports to management</h3><Pill k={st.ready ? 'ok' : 'warn'}>{st.ready ? 'Linked' : 'Not linked yet'}</Pill></div>
-    <p style={{ margin: 0 }}>When someone submits their daily report, each person below gets it on WhatsApp at once – one message per report, with a link that opens the full report in Aali One.</p>
+    <p style={{ margin: 0 }}>When someone submits their daily report, each person below gets it on WhatsApp at once – one message per report, with an <b>Open full report</b> button that opens that one report – no sign-in needed, like a client's progress link.</p>
     {!st.ready && <div className="stack gap4"><div className="banner warn">Not linked yet, so nothing is sent. Reports submitted before the link is made are not sent later.</div>
       <ol className="small" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
         <li>Meta Business (business.facebook.com) → WhatsApp Manager → Add phone number: a new number kept only for Aali One (not on the ordinary WhatsApp or WhatsApp Business app). Display name <b>Aali One</b>, category Professional services, profile photo the Aali One logo. Meta checks the name against the website – one.aaliconssultancy.com shows "Aali One · Aali Group".</li>

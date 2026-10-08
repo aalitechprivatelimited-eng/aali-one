@@ -2,7 +2,7 @@
 import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, isOldHash, passwordProblem, fakeCheck, sessionKey, createSession, sessionUser, dropSession, sessionCookie, readCookie, publicUser, IDLE_MIN } from './auth.js';
 import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
-import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
+import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP, TITLES } from '../shared/defaults.js';
 import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE } from '../shared/access.js';
 import { hrmConnected, hrmMonth, hrmPeople, hrmEmailOf, hrmEnv, hrmFind } from './hrm.js';
 import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE, REPORT_BUTTON } from './whatsapp.js';
@@ -29,6 +29,13 @@ async function readBody(req) {
   for await (const c of req) { size += c.length; if (size > MAX_BODY) throw new Rule('That file is too large (max 3 MB).', 413); chunks.push(c); }
   const raw = Buffer.concat(chunks).toString('utf8'); return raw ? JSON.parse(raw) : {};
 }
+// A daily report as its public link shows it (/daily/<key>, the WhatsApp "Open full report" button): the day, the work and the calls.
+// Contact numbers show only their last 4 digits, and links into the app, remarks and the log are left out – the link can be forwarded.
+const last4 = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length >= 4 ? '•••••• ' + d.slice(-4) : ''; };
+const sharedReport = (d) => ({ date: d.date, status: d.status, dayStart: d.dayStart, dayEnd: d.dayEnd, submittedAt: d.submittedAt, reviewedAt: d.reviewed?.at || '',
+  plan: d.plan || '', blockers: d.blockers || '', owner: d.owner,
+  entries: (d.entries || []).map(({ refId, refLabel, refLink, visit, ...e }) => ({ ...e, ...(visit ? { visit: { ...visit, phone: last4(visit.phone) } } : {}) })),
+  calls: (d.calls || []).map((c) => ({ id: c.id, org: c.org, phone: last4(c.phone), place: c.place, ind: c.ind, resp: c.resp, back: c.back, meeting: c.meeting, met: c.met, note: c.note })) });
 const toClient = (r) => ({ ...r.data, id: r.id, type: r.type, sample: r.sample, createdBy: r.created_by, updatedBy: r.updated_by,
   createdAt: r.created_at, updatedAt: r.updated_at, ...(r.deleted_at ? { deletedAt: r.deleted_at, deleteReason: r.delete_reason } : {}) });
 // The Founder & Chairman and the Operations Manager are told whenever someone gains or loses HR & payroll (never the person who did it).
@@ -130,6 +137,15 @@ export async function handle(req, res) {
       const b = await getSetting(db, 'business', DEFAULT_SETTINGS.business);
       return send(res, 200, { name: p.data.name, client: p.data.clientName || '', stage: p.data.stage, deadline: p.data.deadline || '', progress: tasks.length ? Math.round(100 * done / tasks.length) : 0,
         milestones: ms.sort((a, c) => (a.due || '').localeCompare(c.due || '')), business: { name: b.name, phone: b.phone, email: b.email } });
+    }
+    // One daily report by its link (/daily/<key>), with no sign-in – what management opens from the WhatsApp message.
+    m = path.match(/^\/public\/report\/([\w-]{20,40})$/);
+    if (m && method === 'GET') {
+      const r = (await db.query("select data from records where type = 'report' and deleted_at is null and data->>'shareToken' = $1", [m[1]])).rows[0];
+      if (!r) throw new Rule('This report link does not work any more. Open Daily reports in Aali One instead.', 404);
+      const ids = [r.data.owner, r.data.reviewed?.by].filter(Boolean), us = (await db.query('select id, name, title, team, designation from users where id = any($1)', [ids])).rows;
+      const o = us.find((u) => u.id === r.data.owner) || {}, rv = us.find((u) => u.id === r.data.reviewed?.by);
+      return send(res, 200, { report: sharedReport(r.data), person: { name: o.name || '', role: (o.designation || '').trim() || TITLES[o.title] || '', team: o.team || '' }, reviewedBy: rv?.name || '' });
     }
 
     // ---------- signed in ----------

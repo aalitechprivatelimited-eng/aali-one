@@ -7,9 +7,9 @@
 //   WHATSAPP_REPORT_TEMPLATE  the approved template's name (default daily_report), WHATSAPP_TEMPLATE_LANG (default en)
 //   WHATSAPP_API_VERSION      Graph API version (default v25.0) · APP_URL  the address in links (default https://one.aaliconssultancy.com)
 //   WHATSAPP_BUSINESS_ACCOUNT_ID  the WhatsApp Business Account's ID – only for "Check the template with Meta" in Settings
-// A business may write first only with a template Meta has approved, so the report goes as the template's four fields (see
-// REPORT_TEMPLATE below, which is what is pasted into WhatsApp Manager). Template fields may not hold line breaks, so the report is
-// one line of summary plus a link straight to it in Aali One.
+// A business may write first only with a template Meta has approved, so the report goes as the template's six fields (see
+// REPORT_TEMPLATE below, which is what is pasted into WhatsApp Manager), one line each, and an "Open full report" button whose
+// link opens that one report without sign-in (/daily/<key>), like a project's client progress link.
 //
 // Messages wait in the outbox table: queued in the same transaction as the report, sent right after, tried again with a growing
 // pause if WhatsApp refuses or cannot be reached (5 tries), and listed in Settings → WhatsApp with what happened to each.
@@ -28,7 +28,7 @@ Problem: {{6}}
 
 This report was just submitted in Aali One. Tap the button below to open it in full.`;
 export const TEMPLATE_FIELDS = 6;
-export const REPORT_BUTTON = { text: 'Open full report', url: () => `${appUrl()}/daily/{{1}}` }; // the blank: <date>/<person>
+export const REPORT_BUTTON = { text: 'Open full report', url: () => `${appUrl()}/daily/{{1}}` }; // the blank: the report's key
 const env = (k, d = '') => process.env[k] || d;
 let testSender = null;
 export const setWaSender = (fn) => { testSender = fn; }; // tests: (to, template) => message id, or throw
@@ -92,7 +92,8 @@ export async function queueReport(t, report, writer) {
   const to = await reportRecipients(t, writer.id); if (!to.length) return 0;
   const [day, calls, work, problem] = reportLines(report), role = (writer.designation || '').trim() || ROLE_NAME[writer.title] || '';
   const params = [field(dayOf(report.date), 40), field(`*${writer.name}*${role ? ` (${role})` : ''}`, 140), field(day, 200), field(calls, 200), field(work, 400), field(problem, 250)];
-  const button = `${report.date}/${encodeURIComponent(report.owner)}`; // the button opens /daily/<date>/<person>: that report, in Daily reports
+  // The button opens /daily/<key>: that report alone, with no sign-in (the user, 8 Oct 2026). Every submitted report has its key.
+  const button = report.shareToken || `${report.date}/${encodeURIComponent(report.owner)}`;
   for (const u of to) await t.query("insert into outbox (kind, to_user, to_phone, payload, ref) values ('report', $1, $2, $3, $4)", [u.id, waNumber(u.phone), JSON.stringify({ params, button }), report.id]);
   return to.length;
 }
@@ -101,8 +102,10 @@ export async function queueTest(t, u) {
   if (!waNumber(u.phone)) throw new Error('Add your mobile number in Settings → My profile first.');
   const params = [field(dayOf(new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)), 40), field(`*${u.name}* (a test message)`, 140), '9:30 am – 6:10 pm · Worked 7 h 45 min · Nothing recorded 25 min',
     '42 calls · 7 interested · 5 to call back · 2 meetings fixed · 0 met in person', 'Calling 4 h 10 min · Client visit 2 h 5 min · Information gathering 1 h 30 min', 'None – daily reports will arrive like this'];
+  // The test's button opens the latest submitted report's link, to see the page a real message opens.
+  const last = (await t.query("select data->>'shareToken' k from records where type = 'report' and deleted_at is null and data->>'shareToken' is not null order by updated_at desc limit 1")).rows[0];
   const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
-  await t.query("insert into outbox (kind, to_user, to_phone, payload) values ('test', $1, $2, $3)", [u.id, waNumber(u.phone), JSON.stringify({ params, button: `${today}/${encodeURIComponent(u.id)}` })]);
+  await t.query("insert into outbox (kind, to_user, to_phone, payload) values ('test', $1, $2, $3)", [u.id, waNumber(u.phone), JSON.stringify({ params, button: last?.k || `${today}/${encodeURIComponent(u.id)}` })]);
 }
 
 async function send(to, { params, button }) {

@@ -68,7 +68,8 @@ blanks with the report, and the button opens that one report.
    - {{6}} `None`
 7. **Buttons → Add button → Visit website:** text `Open full report`, URL type **Dynamic**, URL
    `https://one.aaliconssultancy.com/daily/{{1}}`, sample `https://one.aaliconssultancy.com/daily/2026-10-08/u_sample`.
-   The button opens only that person's report of that day. No header, no footer. Press **Submit**.
+   The button opens only that person's report of that day, with no sign-in (each submitted report gets its own link, like a
+   client's progress link). No header, no footer. Press **Submit**.
 
 ### Checking the template
 

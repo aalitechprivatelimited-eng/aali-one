@@ -1,6 +1,6 @@
 // Business rules that must hold whoever calls the API: numbering, duplicate checks, auto-assign,
 // the advance gate, sign-off before Live, payments updating reminders, approvals, recurring tasks.
-import { newId } from './auth.js';
+import { newId, newKey } from './auth.js';
 import { docTotals, receiptTotals, fyLabel, dayLabel, mobile10, num, round2 } from '../shared/money.js';
 import { MANAGER_TITLES, TOP_TITLES, DEFAULT_SETTINGS, GROUP, COMPANIES } from '../shared/defaults.js';
 import { canSee, canEdit, scopeOf } from '../shared/access.js';
@@ -237,7 +237,7 @@ export async function beforeCreate(t, type, data, user, sample) {
       await applyCalls(t, user, [], data.calls, sample); await setPresence(t, user, data, sample);
       if (data.date === today()) data.dayStart = new Date().toISOString(); else delete data.dayStart; // the day starts when the report is opened
       delete data.dayEnd;
-      for (const k of ['remarks', 'reviewed', 'submittedAt', 'log']) delete data[k];
+      for (const k of ['remarks', 'reviewed', 'submittedAt', 'log', 'shareToken']) delete data[k];
       break;
     }
   }
@@ -869,7 +869,7 @@ export async function beforeUpdate(t, rec, next, user) {
       const mine = prev.owner === me, now = new Date().toISOString();
       if (!canSeeReport(user, prev, !!(await getSetting(t, 'leadSeesReports', false)))) throw new Rule('You cannot open this report.', 403);
       const remark = String(next._remark || '').trim().slice(0, 500), reviewed = !!next._reviewed; delete next._remark; delete next._reviewed;
-      for (const k of ['owner', 'team', 'ownerTitle', 'date', 'remarks', 'reviewed', 'submittedAt', 'dayStart', 'dayEnd']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
+      for (const k of ['owner', 'team', 'ownerTitle', 'date', 'remarks', 'reviewed', 'submittedAt', 'dayStart', 'dayEnd', 'shareToken']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
       if (mine) { next.entries = cleanEntries(next.entries); if (prev.status !== 'submitted') checkVisits(next.entries); if (next.calls !== undefined) next.calls = cleanCalls(next.calls); }
       const edited = ['entries', 'calls', 'plan', 'blockers', 'nums'].some((k) => JSON.stringify(next[k] ?? null) !== JSON.stringify(prev[k] ?? null));
       if (edited && !mine) throw new Rule('Only the writer can change a report. Managers can add a remark.', 403);
@@ -885,6 +885,7 @@ export async function beforeUpdate(t, rec, next, user) {
           if (next.entries.some((e) => e.state === 'running')) throw new Rule('A task is still running. Press Finish on it before you submit.');
           next.submittedAt = now; log(next, me, 'Report submitted');
           next.dayEnd = next.date === today() ? now : next.entries.map((e) => e.end || '').sort().pop() || now; // the day ends at submit
+          next.shareToken ||= newKey(); // the report's own link, /daily/<key>, opens without sign-in (the WhatsApp button); kept when it is sent back and submitted again
           for (const to of await reportWatchers(t, next)) await notify(t, to, `${user.name} submitted the daily report for ${inDate(next.date)}.`, 'report', rec.id, user, rec.sample);
           await queueReport(t, { ...next, id: rec.id, sample: rec.sample }, user); // and to management on WhatsApp, once linked (server/whatsapp.js)
         } else if (next.status === 'open') {

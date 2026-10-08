@@ -5,7 +5,7 @@ import { useStore, store, list, create, update, poll, saveSetting, http } from '
 import { m, AnimatePresence, SPRING, EASE } from '../motion.jsx';
 import { Ico } from '../icons.jsx';
 import { today, addDays, fmtDate, fmtDT, iso, parse, rel, isManager, isTop, activeUsers, uname, TITLES, TEAMS, inr, waLink, settings, desig, user, mobile10 } from '../lib.js';
-import { Tabs, Seg, Pill, Av, Empty, Field, In, Area, Sel, Sample, Stat, DeleteButton, Modal, attempt, toast } from '../ui.jsx';
+import { Tabs, Seg, Pill, Av, Avatar, Empty, Field, In, Area, Sel, Sample, Stat, DeleteButton, Modal, attempt, toast } from '../ui.jsx';
 import { Check } from './Calls.jsx';
 import { readSheets } from '../xlsx.js';
 import { askVisit } from '../visit.jsx';
@@ -99,7 +99,7 @@ function reportText(r) {
   if (r.calls?.length) out.push('', `*Calls:* ${callLine(callStats(r))}`, ...r.calls.filter((c) => ['Interested', 'Call back'].includes(c.resp) || c.met).slice(0, 15).map((c) => `• ${c.org}${c.place ? ', ' + c.place : ''} – ${c.resp}${c.meeting ? ', meeting: ' + c.meeting : ''}${c.note ? ' – ' + c.note : ''}`));
   if (r.blockers?.trim()) out.push('', `*Problems / help needed:* ${r.blockers.trim()}`);
   if (r.plan?.trim()) out.push('', `*Plan for tomorrow:* ${r.plan.trim()}`);
-  out.push('', r.status === 'submitted' ? 'Status: submitted' : 'Status: still being written', `Aali One: ${location.origin}/daily`);
+  out.push('', r.status === 'submitted' ? 'Status: submitted' : 'Status: still being written', r.shareToken ? `Full report: ${shareLink(r)}` : `Aali One: ${location.origin}/daily`);
   return out.filter((x, i, a) => !(x === '' && a[i - 1] === '')).join('\n');
 }
 // The team's day as one message. Detailed: every person's tasks in order, client visits with their outcome, the calls that matter,
@@ -131,6 +131,8 @@ function WaSend({ text, to, title = 'Send on WhatsApp to' }) {
     {!to.length && <span className="muted">No management members added yet.</span>}</div>;
 }
 const reportOf = (uid, date) => list('report').find((r) => r.owner === uid && r.date === date);
+// A submitted report's own link: opens that report alone, with no sign-in (like a project's client progress link).
+const shareLink = (r) => `${location.origin}/daily/${r.shareToken}`;
 const dayOf = (s) => (s ? iso(new Date(s)) : '');
 const hm = (s) => new Date(s).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
 const ago = (s) => { const m = Math.round((Date.now() - new Date(s)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : fmtDT(s); };
@@ -343,6 +345,30 @@ function OneReport({ date, uid }) {
           <Pill k={status(r)[1]}>{status(r)[0]}</Pill></div>
         <ReportView r={r} me={me} /></div>}
   </>;
+}
+
+// ---------- a report's own link (/daily/<key>): the WhatsApp message's "Open full report" button opens it, with no sign-in ----------
+export function SharedReport({ token }) {
+  const [d, setD] = useState(null), [err, setErr] = useState('');
+  useEffect(() => { http('GET', '/public/report/' + token).then(setD, (e) => setErr(e.message)); }, [token]);
+  if (err) return <div className="empty" style={{ margin: 40 }}>{err}</div>;
+  if (!d) return <div className="empty" style={{ margin: 40 }}>Loading…</div>;
+  const r = d.report, [l, k] = r.status === 'submitted' ? (r.reviewedAt ? ['Reviewed', 'ok'] : ['Submitted', 'info']) : ['Sent back to be corrected', 'warn'];
+  return <div style={{ maxWidth: 960, margin: '0 auto', padding: 16 }} className="stack">
+    <div className="row"><img src="/icon.svg" alt="" width="36" height="36" /><div><b style={{ fontFamily: 'var(--doc)', fontSize: 18 }}>Aali One</b><div className="small muted">Daily work report</div></div></div>
+    <div className="card stack">
+      <div className="row"><Avatar u={{ name: d.person.name }} /><div className="grow" style={{ minWidth: 0 }}><h1 style={{ margin: 0 }}>{d.person.name}</h1>
+        <div className="small muted">{[d.person.role, TEAMS[d.person.team] && TEAMS[d.person.team] + ' team', fullDate(r.date)].filter(Boolean).join(' · ')}</div></div><Pill k={k}>{l}</Pill></div>
+      <DaySummary r={r} />
+      <Entries r={r} />
+      {r.calls.length > 0 && <div className="stack gap4"><span className="lbl">Call sheet · {callLine(callStats(r))}</span><CallTable calls={r.calls} /></div>}
+      <div><span className="lbl">Time by kind of work</span><TimeBars reports={[r]} empty="No timed work in this report." /></div>
+      {r.plan.trim() && <div className="small"><span className="lbl">Plan for tomorrow</span><div style={{ whiteSpace: 'pre-wrap' }}>{r.plan}</div></div>}
+      {r.blockers.trim() && <div className="banner bad"><b>Problems / help needed:</b> {r.blockers}</div>}
+      <div className="small muted">{r.submittedAt ? `Submitted ${fmtDT(r.submittedAt)}` : 'Sent back – being corrected'}{r.reviewedAt ? ` · reviewed${d.reviewedBy ? ' by ' + d.reviewedBy : ''} ${fmtDT(r.reviewedAt)}` : ''}</div>
+    </div>
+    <div className="row"><a className="btn" href={`/daily/${r.date}/${encodeURIComponent(r.owner)}`}>Open in Aali One</a><span className="small muted">To add a remark or mark it reviewed. Asks you to sign in.</span></div>
+  </div>;
 }
 
 // ---------- my report ----------
@@ -600,6 +626,8 @@ export function ReportView({ r, me }) {
     <div className="small muted">{sub ? `Submitted ${fmtDT(r.submittedAt)}` : 'Still being written – not submitted yet'}{r.reviewed ? ` · reviewed by ${uname(r.reviewed.by)} ${fmtDT(r.reviewed.at)}` : ''}</div>
     {(r.remarks || []).length > 0 && <Remarks r={r} />}
     <WaSend text={reportText(r)} to={management(me)} title="Send this report on WhatsApp to" />
+    {r.shareToken && r.owner !== me.id && isManager(me) && <div className="row small"><span className="lbl">Report link</span><span className="muted">Opens this report without sign-in, like a client's progress link.</span>
+      <button className="btn sm" type="button" onClick={() => navigator.clipboard?.writeText(shareLink(r)).then(() => toast('Report link copied.'), () => toast('Could not copy.', true))}>Copy the report link</button></div>}
     {r.owner !== me.id && <div className="row">
       <input className="in grow" style={{ minWidth: 180 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Write a remark for them (optional)" maxLength={500} />
       <button className="btn sm" type="button" disabled={!note.trim()} onClick={() => act({ _remark: note }, 'Remark sent.')}>Send remark</button>
