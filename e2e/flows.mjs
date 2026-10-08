@@ -47,7 +47,7 @@ try {
   // ---------- a BDE's day, on a laptop ----------
   console.log('BDE on a laptop screen (1366 × 768)');
   const bde = await open({ width: 1366, height: 768 });
-  await step('the opening screen shows, then lifts away', async () => { await bde.goto(BASE); await bde.locator('#splash img').waitFor({ timeout: 8000 });
+  await step('the opening screen shows, then lifts away', async () => { await bde.goto(BASE); await bde.locator('#splash svg').waitFor({ timeout: 8000 });
     await bde.locator('#splash').waitFor({ state: 'detached', timeout: 6000 }); await bde.locator('input[type=email]').waitFor(); });
   await step('sign in; the dashboard greets the person', async () => { await signIn(bde, 'bde@e2e.test'); must((await bde.locator('.hero h1').textContent()).includes('Kiran'), 'no greeting by name'); });
   await step('first sign-in offers the guide; it walks the BDE through the pages of a BDE, and only those', async () => { await bde.locator('.modal', { hasText: 'Welcome to Aali One' }).waitFor();
