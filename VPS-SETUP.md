@@ -1,7 +1,8 @@
-# Aali One on the VPS (Hostinger + Coolify) at one.aaligroup.co
+# Aali One on the VPS (Hostinger + Coolify) at one.aaliconssultancy.com
 
 Decided 8 Oct 2026. Aali One moves from Vercel + Neon to the Hostinger VPS, run by Coolify, with its database on the VPS too.
-The address becomes **https://one.aaligroup.co** (domain at GoDaddy).
+The address is **https://one.aaliconssultancy.com**. The domain's records are kept at **Netlify**, where the Aali
+Conssultancy website is. Until the move, the address points at the live site on Vercel (A record `one` → 76.76.21.21).
 
 No password, token or database address is ever sent in chat or email. They are typed straight into Coolify, or into
 `.env.local` on the office computer.
@@ -31,7 +32,7 @@ No password, token or database address is ever sent in chat or email. They are t
 | --- | --- |
 | `DATABASE_URL` | the internal address from step 1, with `?sslmode=disable` added at the end (the app and the database talk inside the VPS) |
 | `JWT_SECRET` | a long random text (64+ letters and numbers). It signs everyone's sign-in. |
-| `APP_URL` | `https://one.aaligroup.co` |
+| `APP_URL` | `https://one.aaliconssultancy.com` |
 | `HRM_DATABASE_URL` | the same value as on Vercel today (Aali HRM, read-only) |
 | `WHATSAPP_TOKEN` | Meta system-user token (see Settings → Connections → WhatsApp in Aali One). Add when ready. |
 | `WHATSAPP_PHONE_NUMBER_ID` | the Aali One number's ID in WhatsApp Manager. Add when ready. |
@@ -40,13 +41,15 @@ No password, token or database address is ever sent in chat or email. They are t
 4. **Deploy**. When it is green, open the temporary address Coolify shows (…sslip.io). Aali One opens on the "first time
    here" screen, because the database is still empty. Do **not** create anything there. Step 5 brings the real data.
 
-## 3. The address one.aaligroup.co (GoDaddy, then Coolify)
+## 3. The address one.aaliconssultancy.com (Netlify, then Coolify). Do this at the very end of step 5.
 
-1. GoDaddy → My Products → aaligroup.co → **DNS** → **Add New Record**:
-   Type **A**, Name **one**, Value = **the VPS's IP address** (Hostinger hPanel → VPS → Overview), TTL **600 seconds**. Save.
-2. Coolify → the app → **Domains**: `https://one.aaligroup.co` → Save → **Redeploy**.
-   Coolify gets the HTTPS certificate (Let's Encrypt) by itself once GoDaddy's record has spread, usually in 5–30 minutes.
-3. Check: https://one.aaligroup.co opens with the padlock.
+1. Netlify (app.netlify.com) → **Domains** → aaliconssultancy.com → **DNS records**: open the **A** record named
+   **one** (today 76.76.21.21, the live site on Vercel) → change the value to **the VPS's IP address** (Hostinger hPanel →
+   VPS → Overview) → Save. Never change the domain's nameservers: the Aali Conssultancy website lives on them.
+2. Coolify → the app → **Domains**: `https://one.aaliconssultancy.com` → Save → **Redeploy**.
+   Coolify gets the HTTPS certificate (Let's Encrypt) by itself once the record has spread, usually in 5–30 minutes.
+3. Check: https://one.aaliconssultancy.com opens with the padlock. Then remove the address from the Vercel project
+   (Vercel → aali-one → Settings → Domains), so Vercel stops asking for it.
 
 ## 4. Aali HRM and the client HRMs
 
@@ -55,7 +58,7 @@ A client's own HRM, once set up, adds `HRM_DATABASE_URL_<link code>` the same wa
 
 ## 5. Moving the data (Neon → VPS), the final time
 
-Pick a quiet time (evening). Tell everyone: "Aali One moves to one.aaligroup.co tonight. Please don't use it between
+Pick a quiet time (evening). Tell everyone: "Aali One moves to one.aaliconssultancy.com tonight. Please don't use it between
 8 and 8:30 pm."
 
 1. Coolify → `aali-one-db` → **Make it publicly available** (on), note its **public** address (VPS IP and a port).
@@ -64,7 +67,7 @@ Pick a quiet time (evening). Tell everyone: "Aali One moves to one.aaligroup.co 
 3. Run: `node scripts/move-to-vps.mjs` (or with `--replace` if a test copy was made before). Neon is only **read**.
    It prints how many people, records, files and audit lines were copied, and checks each count.
 4. Coolify → `aali-one-db` → **Make it publicly available** → **off** again.
-5. Coolify → the app → **Restart**. Open https://one.aaligroup.co and sign in. Check that today's reports, leads,
+5. Coolify → the app → **Restart**. Open https://one.aaliconssultancy.com and sign in. Check that today's reports, leads,
    payroll and files are there.
 6. Tell everyone the new address. The old Vercel address can send people to the new one a week later.
 
@@ -75,7 +78,7 @@ Coolify → `aali-one-db` → **Backups** → **Scheduled backups**: daily at 02
 
 ## Checks after the move
 
-- https://one.aaligroup.co/api/health answers `{"ok":true}`.
+- https://one.aaliconssultancy.com/api/health answers `{"ok":true}`.
 - Sign-in, Daily reports, Payroll → Rules & Aali HRM ("Linked").
 - Settings → Connections → WhatsApp shows "Linked" once the two WhatsApp settings are added.
   "Send me a test message" arrives from **Aali One**.

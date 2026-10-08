@@ -1123,6 +1123,14 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
     const st = (await call('GET', '/whatsapp', null, OPS)).body;
     assert.equal(st.ready, true); assert.match(st.template.text, /Daily report from \{\{1\}\} for \{\{2\}\}/); assert.ok(st.recent.some((x) => /132001/.test(x.error)));
     assert.equal((await call('GET', '/whatsapp', null, B)).status, 403);
+    // On Vercel the submit waits until WhatsApp has the messages: they are sent by the time the page has its answer.
+    process.env.VERCEL = '1'; setWaSender((to, template) => { sent.push({ to, template }); return 'wamid.v'; });
+    try { await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', ['u_wb3', 'wb3@test.in', 'wb3', 'bde', 'sales', hashPassword('password123')]);
+      const B3 = await login('wb3@test.in'), r3 = (await add(B3, 'report', { entries: [{ text: 'Shop visits' }] })).record;
+      assert.equal((await patch(B3, r3.id, { status: 'submitted' })).status, 200);
+      const got = (await db.query("select status from outbox where ref = $1", [r3.id])).rows;
+      assert.ok(got.length > 0 && got.every((x) => x.status === 'sent'), 'sent before the answer, with no wait: ' + JSON.stringify(got));
+    } finally { delete process.env.VERCEL; }
     // When WhatsApp takes it again, the waiting messages go (once the pause is over).
     setWaSender((to, template) => { sent.push({ to, template }); return 'wamid.x'; });
     await db.query("update outbox set next_at = now() where status = 'queued'");

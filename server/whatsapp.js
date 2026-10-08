@@ -5,7 +5,7 @@
 //   WHATSAPP_TOKEN            a permanent access token (Meta Business → System users → Generate token, whatsapp_business_messaging)
 //   WHATSAPP_PHONE_NUMBER_ID  the business number's ID (WhatsApp Manager → Phone numbers)
 //   WHATSAPP_REPORT_TEMPLATE  the approved template's name (default daily_report), WHATSAPP_TEMPLATE_LANG (default en)
-//   WHATSAPP_API_VERSION      Graph API version (default v23.0) · APP_URL  the address in links (default https://one.aaligroup.co)
+//   WHATSAPP_API_VERSION      Graph API version (default v23.0) · APP_URL  the address in links (default https://one.aaliconssultancy.com)
 //   WHATSAPP_BUSINESS_ACCOUNT_ID  the WhatsApp Business Account's ID – only for "Check the template with Meta" in Settings
 // A business may write first only with a template Meta has approved, so the report goes as the template's four fields (see
 // REPORT_TEMPLATE below, which is what is pasted into WhatsApp Manager). Template fields may not hold line breaks, so the report is
@@ -27,7 +27,7 @@ let testSender = null;
 export const setWaSender = (fn) => { testSender = fn; }; // tests: (to, template) => message id, or throw
 export const waReady = () => !!(testSender || (env('WHATSAPP_TOKEN') && env('WHATSAPP_PHONE_NUMBER_ID')));
 export const waTemplate = () => ({ name: env('WHATSAPP_REPORT_TEMPLATE', 'daily_report'), lang: env('WHATSAPP_TEMPLATE_LANG', 'en') });
-const appUrl = () => env('APP_URL', 'https://one.aaligroup.co').replace(/\/+$/, '');
+const appUrl = () => env('APP_URL', 'https://one.aaliconssultancy.com').replace(/\/+$/, '');
 
 // An Indian mobile as WhatsApp wants it: 91 and the 10 digits. Anything else that is long enough is taken as written with its country code.
 export function waNumber(phone) {
@@ -136,11 +136,14 @@ export async function flushOutbox(db, max = 25) {
 }
 // Started after a report is submitted, and by the page's regular checks (at most every 30 seconds), so a message that could not go
 // at once is tried again without anyone pressing anything. Never more than one at a time on this server.
+// On the VPS the sending carries on after the page has its answer. On Vercel a function may be stopped once it has answered –
+// a message could then wait, or go twice – so there the request waits until WhatsApp has taken the messages (waitForSending).
 let busy = false, lastKick = 0;
+export const waitForSending = () => !!process.env.VERCEL;
 export function kickOutbox(db, now = false) {
-  if (!waReady() || busy || (!now && Date.now() - lastKick < 30000)) return;
+  if (!waReady() || busy || (!now && Date.now() - lastKick < 30000)) return Promise.resolve();
   busy = true; lastKick = Date.now();
-  flushOutbox(db).catch((e) => console.error('whatsapp outbox', e.message)).finally(() => { busy = false; });
+  return flushOutbox(db).catch((e) => console.error('whatsapp outbox', e.message)).finally(() => { busy = false; });
 }
 // A message stuck in 'sending' (the server stopped half way) goes back to the queue after 10 minutes.
 const unstick = (db) => db.query("update outbox set status = 'queued' where status = 'sending' and claimed_at < now() - interval '10 minutes'");

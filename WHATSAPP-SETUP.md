@@ -1,10 +1,13 @@
 # WhatsApp for Aali One: setting up, and checking the message template
 
+The detailed step-by-step version, with tick boxes and Copy buttons, is the page "Aali One WhatsApp Setup":
+https://claude.ai/artifact/1Agz1zSXUyLvcFSsPfqWZ8 (private to Nikhil; share it from its Share menu).
+
 **What it does today:** when someone submits their daily report, each person in management gets that report on WhatsApp
 at once, from a number that shows as **Aali One**. Nothing else is sent on WhatsApp yet: no deadline or follow-up
 messages go to BDEs.
 
-**When:** after Aali One is on the VPS (one.aaligroup.co).
+**When:** after Aali One is on the VPS (one.aaliconssultancy.com).
 **Who:** Nikhil (Meta Business account owner). Tokens and passwords are typed into Meta and Coolify, never sent in chat.
 
 ---
@@ -23,7 +26,7 @@ messages go to BDEs.
    - Verify the number with the SMS or call code.
 5. In the number's **Profile**: photo = the Aali One logo, About = "Aali One – Aali Group's work app".
 6. **Wait for the display name review.** The Phone numbers list shows *Name status*. Wait for **Approved** (usually
-   1–2 days). Meta checks that the name belongs to your business, so one.aaligroup.co must be live first: its sign-in
+   1–2 days). Meta checks that the name belongs to your business, so one.aaliconssultancy.com must be live first: its sign-in
    page shows "Aali One · Aali Group". If Meta **rejects** the name, it shows the reason. Reply with the website, or
    change it to "Aali One by Aali Group".
 7. **Payment method:** WhatsApp Manager → **Payment settings** → add a card. Meta charges a small amount per message.
@@ -56,7 +59,7 @@ blanks with the report.
    - {{1}} `Ravi Kumar, BDE`
    - {{2}} `Wed 8 Oct 2026`
    - {{3}} `Day 09:30–18:10, worked 7h 45m · 6 tasks · 42 calls: 7 interested`
-   - {{4}} `https://one.aaligroup.co/daily`
+   - {{4}} `https://one.aaliconssultancy.com/daily`
 7. No header, no footer, no buttons. Press **Submit**.
 
 ### Checking the template

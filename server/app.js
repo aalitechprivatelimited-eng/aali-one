@@ -5,7 +5,9 @@ import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSwe
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP } from '../shared/defaults.js';
 import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE } from '../shared/access.js';
 import { hrmConnected, hrmMonth, hrmPeople, hrmEmailOf, hrmEnv, hrmFind } from './hrm.js';
-import { waReady, waTemplate, waNumber, kickOutbox, queueTest, checkTemplate, REPORT_TEMPLATE } from './whatsapp.js';
+import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE } from './whatsapp.js';
+// WhatsApp sending: in the background on the VPS; waited for on Vercel, which may stop a function once it has answered (server/whatsapp.js).
+const sendWa = async (db, now) => { const k = kickOutbox(db, now); if (waitForSending()) await k; };
 import { attendanceDays, onBasis, clientPay } from '../shared/payroll.js';
 import { buildAccess, loadIndex } from './access.js';
 import { checkCalls, rebuild, dropList } from './prospects.js';
@@ -146,7 +148,7 @@ export async function handle(req, res) {
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
     // Deadline reminders: the first request of the day sends them (a quick check on every other request).
-    if (path === '/bootstrap' || path === '/changes') { await deadlineSweep(db).catch((e) => console.error('deadline reminders', e.message)); kickOutbox(db); } // WhatsApp messages still waiting
+    if (path === '/bootstrap' || path === '/changes') { await deadlineSweep(db).catch((e) => console.error('deadline reminders', e.message)); await sendWa(db); } // WhatsApp messages still waiting
     if (path === '/bootstrap' && method === 'GET') {
       const [users, recs, settings, now] = await Promise.all([
         db.query('select * from users order by name'), db.query('select * from records where deleted_at is null'), allSettings(db, user), db.query('select now() as t')]);
@@ -202,7 +204,7 @@ export async function handle(req, res) {
         await t.query('insert into audit (user_id, record_id, type, action, summary) values ($1,$2,$3,$4,$5)', [user.id, rec.id, rec.type, 'update', `${label(next)}: ${changed}`.slice(0, 300)]);
         return toClient((await t.query('select * from records where id = $1', [rec.id])).rows[0]);
       });
-      if (out.type === 'report' && b.data?.status === 'submitted') kickOutbox(db, true); // its WhatsApp messages go now
+      if (out.type === 'report' && b.data?.status === 'submitted') await sendWa(db, true); // its WhatsApp messages go now
       return send(res, 200, { record: out });
     }
     if (m && method === 'DELETE') {
@@ -435,7 +437,7 @@ export async function handle(req, res) {
     if (path === '/whatsapp/test' && method === 'POST') {
       if (!(admin || isTop(user))) throw new Rule('WhatsApp settings are for management and the admin.', 403);
       try { await queueTest(db, user); } catch (e) { throw new Rule(e.message); }
-      kickOutbox(db, true); return send(res, 200, { ok: true });
+      await sendWa(db, true); return send(res, 200, { ok: true });
     }
     // ---------- admin ----------
     m = path.match(/^\/settings\/(\w+)$/);
