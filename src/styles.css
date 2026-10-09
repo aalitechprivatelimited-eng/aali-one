@@ -281,8 +281,6 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 @keyframes badge-tick{to{stroke-dashoffset:0}}
 @keyframes welcome-up{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:none}}
 
-.deptcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:16px;align-items:start}
-.deptcol{background:color-mix(in srgb,var(--paper-2) 70%,transparent);border:1px solid var(--line);border-radius:var(--r);padding:14px 14px 6px;min-width:0}
 
 .menu-wrap{position:relative;display:inline-block}
 .menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;min-width:250px;background:var(--raise);border:1px solid var(--line-2);border-radius:14px;box-shadow:var(--e3);padding:5px;text-align:left;animation:drop-in .18s var(--ease)}

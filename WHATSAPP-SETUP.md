@@ -39,8 +39,9 @@ A business may send the first message to someone only with a template Meta has a
 blanks with the report, and the button opens that one report.
 
 1. WhatsApp Manager → **Message templates** → **Create template**.
-2. **Category: Utility.** It's an update about work, not an advert.
-3. **Name: `daily_report`** (exactly this, small letters with the underscore). **Language: English** (choose "English",
+2. **Category: Utility.** It's an update about work, not an advert. Meta's form starts on Marketing – change it.
+   (The first try, `daily_report`, went in as Marketing on 9 Oct 2026, so the template is now `daily_work_report`.)
+3. **Name: `daily_work_report`** (exactly this, small letters with the underscore). **Language: English** (choose "English",
    not "English (US)" or "English (UK)").
 4. **Type of variable: Number.**
 5. **Body:** paste exactly (Aali One → Settings → Connections → WhatsApp has a **Copy** button). Each blank is one line,
@@ -76,7 +77,7 @@ blanks with the report, and the button opens that one report.
 
 ### Checking the template
 
-- **In WhatsApp Manager:** Message templates → `daily_report` → the **Status** column:
+- **In WhatsApp Manager:** Message templates → `daily_work_report` → the **Status** column:
   - **In review**: wait (minutes, at most a day).
   - **Active** (or "Active – quality pending"): approved and ready.
   - **Rejected**: open it to read why, press **Edit**, fix it and submit again. Usual reasons: the text was changed so a
@@ -98,6 +99,7 @@ blanks with the report, and the button opens that one report.
 4. Coolify → Aali One → **Environment variables** (secret):
    - `WHATSAPP_TOKEN` = the token
    - `WHATSAPP_PHONE_NUMBER_ID` = WhatsApp Manager → Phone numbers → the number → **Phone number ID**
+   - `WHATSAPP_REPORT_TEMPLATE` = `daily_work_report` (the template's name)
    - `WHATSAPP_BUSINESS_ACCOUNT_ID` = WhatsApp Manager → **WhatsApp account ID** (on the overview page). Used only by
      "Check the template with Meta".
    - Then **Restart**.

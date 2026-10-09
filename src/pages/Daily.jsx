@@ -328,7 +328,7 @@ export default function Daily() {
   const seg = useLocation().pathname.split('/');
   if (/^\d{4}-\d\d-\d\d$/.test(seg[2] || '') && seg[3]) return <OneReport date={seg[2]} uid={decodeURIComponent(seg[3])} />;
   return <>
-    <div className="topbar"><h1>Daily work reports <small>{boss ? (isTop(me) ? 'all departments' : leadOn(me) ? 'developers' : TEAMS[me.team] + ' team') : 'your day, as it happens'}</small></h1>
+    <div className="topbar"><h1>Daily work reports <small>{boss ? (isTop(me) ? 'department by department' : leadOn(me) ? 'developers' : TEAMS[me.team] + ' team') : 'your day, as it happens'}</small></h1>
       <span className="pill ok" title="This page checks for new updates every few seconds">● Live</span></div>
     {boss && !noReport && <Tabs value={tab} onChange={setTab} tabs={[['team', isTop(me) ? 'All reports' : 'My team'], ['mine', 'My report']]} />}
     {boss && (tab === 'team' || noReport) ? <Team /> : <Mine />}
@@ -550,7 +550,8 @@ const Remarks = ({ r }) => <div className="stack gap4">{r.remarks.map((x, i) => 
 function Team() {
   // ?d=YYYY-MM-DD&p=<person>: the team view opened on that day, with that person's report open.
   const q = new URLSearchParams(useLocation().search), qd = /^\d{4}-\d\d-\d\d$/.test(q.get('d') || '') && q.get('d') <= today() ? q.get('d') : '', qu = user(q.get('p') || '');
-  const me = store.me, [date, setDate] = useState(qd || today()), [team, setTeam] = useState(qu && isTop(me) ? qu.team : 'all'), [view, setView] = useState('day'), [open, setOpen] = useState(qu?.id || ''), [full, setFull] = useState(true); // full: the detailed team message
+  const me = store.me, [date, setDate] = useState(qd || today()), [team, setTeam] = useState(isTop(me) ? (qu?.team === 'it' ? 'it' : 'sales') : 'all'), [view, setView] = useState('day'), [open, setOpen] = useState(qu?.id || ''), [full, setFull] = useState(true); // full: the detailed team message
+  // Management picks a department, Sales or IT – there is no "All" (the user, 9 Oct 2026); a manager sees the people they look after.
   const people = watched(me).filter((u) => team === 'all' || u.team === team).sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name));
   const rows = people.map((u) => ({ u, r: reportOf(u.id, date) }));
   const n = (f) => rows.filter(f).length;
@@ -562,7 +563,7 @@ function Team() {
         <In type="date" style={{ width: 'auto' }} value={date} max={today()} onChange={(e) => e.target.value && setDate(e.target.value)} />
         <button className="btn sm" type="button" disabled={date >= today()} onClick={() => setDate(addDays(date, 1))} aria-label="Next day">→</button>
         {date !== today() && <button className="btn sm" type="button" onClick={() => setDate(today())}>Today</button>}<b>{dayName(date)}</b></div>
-      <div className="row">{isTop(me) && <Seg value={team} onChange={setTeam} options={[['all', 'All'], ['sales', 'Sales'], ['it', 'IT'], ['management', 'Management']]} />}
+      <div className="row">{isTop(me) && <Seg value={team} onChange={setTeam} options={[['sales', 'Sales'], ['it', 'IT']]} />}
         <Seg value={view} onChange={setView} options={[['day', 'Day'], ['week', 'Week']]} /></div></div>
     <div className="stats">
       <Stat label="Submitted" value={n((x) => x.r?.status === 'submitted')} sub={`of ${rows.length} people`} />
@@ -574,7 +575,7 @@ function Team() {
     {me.title === 'ops' && <label className="check card" style={{ marginBottom: 12 }}><input type="checkbox" checked={!!settings().leadSeesReports}
       onChange={(e) => attempt(() => saveSetting('leadSeesReports', e.target.checked), e.target.checked ? "On: the IT Team Lead can now read the developers' reports." : "Off: only the IT Manager and top management read the developers' reports.")} />
       <span><b>IT Team Lead can read the developers' daily reports</b><br /><span className="small muted">Off for now. Switch it on when the IT team grows. The Team Lead can read and remark; review and send-back stay with the IT Manager.</span></span></label>}
-    {rows.length > 0 && isTop(me) && (() => { const text = teamText(rows, date, team === 'all' ? (isTop(me) ? 'All departments' : TEAMS[me.team] + ' team') : TEAMS[team] + ' team', full);
+    {rows.length > 0 && isTop(me) && (() => { const text = teamText(rows, date, TEAMS[team] + ' team', full);
       return <div className="card stack gap4" style={{ marginBottom: 12 }}><div className="row"><span className="lbl">Team report message</span><Seg value={full} onChange={setFull} options={[[true, 'Detailed'], [false, 'Short']]} /></div>
         <WaSend text={text} to={management(me)} title={`Send the ${dayName(date).toLowerCase()} team report on WhatsApp to`} />
         {text.length > 5000 && <span className="small" style={{ color: 'var(--warn)' }}>This message is long. If WhatsApp opens without it, press “Copy the message” and paste it in the chat.</span>}
@@ -582,12 +583,12 @@ function Team() {
     {!rows.length && <Empty>No people in this view. Add people in Settings → People.</Empty>}
     {view === 'week' ? <Week people={people} end={date} pick={(d, id) => { setDate(d); setView('day'); setOpen(id); }} />
       : <div className={isTop(me) ? 'stack gap16' : 'split'}>
-        {/* Management sees the departments side by side (Sales | IT); the Sales or IT filter opens one department: every person's whole
-            report, the manager's first. A department manager keeps the single list with the side panel. */}
-        {isTop(me) && team !== 'all' ? <TeamDetail rows={rows} date={date} open={open} /> :
-        <div className={isTop(me) ? 'deptcols' : 'stack gap16'}>{['sales', 'it', 'management'].map((t) => { const g = rows.filter((x) => x.u.team === t); if (!g.length) return null;
+        {/* Management sees the chosen department in full: every person's whole report, the manager's first. A department manager keeps
+            the single list with the side panel. */}
+        {isTop(me) ? <TeamDetail rows={rows} date={date} open={open} /> :
+        <div className="stack gap16">{['sales', 'it', 'management'].map((t) => { const g = rows.filter((x) => x.u.team === t); if (!g.length) return null;
           const parts = [['Manager', g.filter((x) => isManager(x.u))], ['Team', g.filter((x) => !isManager(x.u))]].filter((x) => x[1].length), cs = g.reduce((n, x) => n + callStats(x.r).n, 0);
-          return <section key={t} className={isTop(me) ? 'deptcol' : ''}><div className="row between" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{TEAMS[t]} Team</h2>
+          return <section key={t}><div className="row between" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{TEAMS[t]} Team</h2>
             <span className="small muted">{g.filter((x) => x.r).length} of {g.length} present · {g.filter((x) => x.r?.status === 'submitted').length} submitted{t === 'sales' ? ` · ${cs} calls` : ''}</span></div>
             {parts.map(([label, list]) => <div key={label} style={{ marginBottom: 10 }}><span className="lbl">{TEAMS[t]} {label}{label === 'Team' ? ` · ${list.length}` : ''}</span>
               <div className="list" style={{ marginTop: 4 }}>{list.map(({ u, r }, i) => <PersonRow key={u.id} u={u} r={r} date={date} first={!i} open={open === u.id} toggle={() => setOpen(open === u.id ? '' : u.id)} />)}</div></div>)}

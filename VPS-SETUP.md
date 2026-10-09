@@ -36,6 +36,7 @@ No password, token or database address is ever sent in chat or email. They are t
 | `HRM_DATABASE_URL` | the same value as on Vercel today (Aali HRM, read-only) |
 | `WHATSAPP_TOKEN` | Meta system-user token (see Settings → Connections → WhatsApp in Aali One). Add when ready. |
 | `WHATSAPP_PHONE_NUMBER_ID` | the Aali One number's ID in WhatsApp Manager. Add when ready. |
+| `WHATSAPP_REPORT_TEMPLATE` | `daily_work_report` – the approved template's name. |
 | `WHATSAPP_BUSINESS_ACCOUNT_ID` | the WhatsApp account's ID. Only for "Check the template with Meta" (see WHATSAPP-SETUP.md). |
 
 4. **Deploy**. When it is green, open the temporary address Coolify shows (…sslip.io). Aali One opens on the "first time

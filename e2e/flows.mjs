@@ -194,8 +194,9 @@ try {
     await top.getByRole('button', { name: 'Start the guide' }).click(); const { seen } = await walkGuide(top);
     for (const p of ['/daily', '/payments', '/quotes', '/projects', '/collab', '/settings/people', '/settings/access', '/settings/staff', '/settings/audit']) must(seen.has(p), 'the guide did not open ' + p); });
 
-  await step("daily reports for management: the Sales filter shows each person's whole report, the Sales Manager first; a name in the table jumps to it", async () => { await top.goto(BASE + '/daily');
-    await top.locator('.seg button', { hasText: /^Sales$/ }).click(); const kiran = top.locator('.repcard', { hasText: 'Kiran' }); await kiran.waitFor();
+  await step("daily reports for management: Sales and IT only (no All); Sales opens first with each person's whole report, the Sales Manager first; a name in the table jumps to it", async () => { await top.goto(BASE + '/daily');
+    await top.locator('.repcard').first().waitFor(); must(await top.locator('.seg button', { hasText: /^All$/ }).count() === 0, 'the All filter is still there');
+    must(await top.locator('.seg button[aria-pressed=true]', { hasText: /^Sales$/ }).count() === 1, 'Sales is not chosen at first'); const kiran = top.locator('.repcard', { hasText: 'Kiran' }); await kiran.waitFor();
     const names = await top.locator('.repcard .rep-name').allTextContents(); must(names[0].includes('Meera') && names.length >= 3, 'not the Sales Manager first, then the team: ' + names.join(', '));
     must(await kiran.locator('.pill', { hasText: 'Reviewed' }).count() > 0 && await kiran.locator('.li.tl').count() > 0, "Kiran's report is not shown in full");
     await top.locator('.linkbtn', { hasText: 'Vani' }).click(); await sleep(900);
