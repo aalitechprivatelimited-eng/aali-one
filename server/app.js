@@ -160,7 +160,8 @@ export async function handle(req, res) {
     const access = async (rows) => buildAccess(user, rows || (isTop(user) ? [] : await loadIndex(db)), (u, d) => canSeeReport(u, d, leadSees));
     const shown = (acc, r) => { const a = acc.read(r); return a === true ? toClient(r) : a === 'card' ? clientCard(r) : null; };
     // Other people's login email and mobile go only to management, to their own manager, and to themselves.
-    const seeUser = (u) => { const p = publicUser(u); return admin || isTop(user) || u.id === user.id || (isManager(user) && u.team === user.team) ? p : { ...p, email: '', phone: '', personalEmail: '', removedReason: '', removedBy: null }; };
+    // A person's UPI QR code (for paying their bills back) goes only to themselves, management and the admin.
+    const seeUser = (u) => { const p = publicUser(u); if (!(admin || isTop(user) || u.id === user.id)) p.upiQr = ''; return admin || isTop(user) || u.id === user.id || (isManager(user) && u.team === user.team) ? p : { ...p, email: '', phone: '', personalEmail: '', removedReason: '', removedBy: null }; };
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
     // Deadline reminders: the first request of the day sends them (a quick check on every other request).
@@ -280,7 +281,7 @@ export async function handle(req, res) {
       const sectionOf = (x) => (['login', 'loginfail'].includes(x.action) ? 'signin' : ['pclient', 'pemp'].includes(x.type) || (x.type === 'payrun' && clientRuns.has(x.record_id)) ? 'clientpay'
         : ['salary', 'payrun', 'loan', 'payee'].includes(x.type) || x.action === 'people' || (x.action === 'settings' && x.summary === 'payroll') ? 'payroll'
         : x.type === 'report' ? 'reports' : ['lead', 'deal', 'client', 'quote', 'prospect', 'activity', 'target'].includes(x.type) || ['import', 'calls', 'enquiry'].includes(x.action) ? 'sales'
-        : ['invoice', 'receipt', 'payment'].includes(x.type) ? 'money' : ['project', 'task', 'ticket', 'asset', 'collab', 'signoff', 'approval'].includes(x.type) ? 'projects'
+        : ['invoice', 'receipt', 'payment', 'bill'].includes(x.type) ? 'money' : ['project', 'task', 'ticket', 'asset', 'collab', 'signoff', 'approval'].includes(x.type) ? 'projects'
         : x.type === 'agreement' ? 'agreements' : ['user', 'settings', 'sample'].includes(x.action) ? 'people' : 'other');
       return send(res, 200, { rows: r.rows.filter((x) => !hiddenFrom(user, x.type)).map((x) => ({ ...x, section: sectionOf(x) })) }); // agreement and payroll work only for those who see them
     }
@@ -525,6 +526,17 @@ export async function handle(req, res) {
       }
       if (next.title !== HR_TITLE && u.hr) await db.query('update users set hr = false where id = $1', [u.id]); // no longer the Company Secretary
       if (b.personalEmail !== undefined) await db.query('update users set personal_email = $2 where id = $1', [u.id, cleanPersonal(b.personalEmail)]); // self, admin or their manager (checked above)
+      // UPI QR code: set only by the person themselves – nobody else can send their bill money somewhere else – and never changed while
+      // a bill of theirs waits to be paid (the user, 9 Oct 2026): management pays the QR they saw when they approved it.
+      if (b.upiQr !== undefined && String(b.upiQr || '') !== (u.upi_qr || '')) {
+        if (!self) throw new Rule('Only the person can set their own UPI QR code.', 403);
+        const qr = String(b.upiQr || '');
+        if (qr) { const f = (await db.query('select mime, created_by from files where id = $1', [qr])).rows[0];
+          if (!f || f.created_by !== user.id || !PHOTO.test(f.mime)) throw new Rule('Choose a picture of your UPI QR code (JPG or PNG).'); }
+        const open = (await db.query("select count(*)::int n from records where deleted_at is null and type = 'bill' and data->>'owner' = $1 and data->>'status' in ('submitted', 'approved')", [u.id])).rows[0].n;
+        if (open) throw new Rule(`You have ${open} bill${open === 1 ? '' : 's'} waiting to be paid. The UPI QR code can be changed once ${open === 1 ? 'it is' : 'they are all'} paid or rejected.`);
+        await db.query('update users set upi_qr = $2 where id = $1', [u.id, qr]); await audit(db, user, null, 'user', `${u.name}: UPI QR code for bills ${qr ? (u.upi_qr ? 'changed' : 'added') : 'removed'}`);
+      }
       await db.query('update users set name=$2, phone=$3, title=$4, team=$5, active=$6, is_admin=$7, company=$8, designation=$9, surname=$10, display=$11, photo=$12, updated_at=now() where id=$1',
         [u.id, next.name, next.phone, next.title, nTeam, next.active, next.is_admin, nCompany, nDesig, nSurname, nDisplay, nPhoto]);
       if (b.password) {

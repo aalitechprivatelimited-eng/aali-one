@@ -71,6 +71,8 @@ function about(k, me) {
       : t === 'salesmgr' ? 'Client files uploaded by the BDEs. The ones sent to you wait here: give each to the person who will do the work. You are also told when a BDE sends files to the IT Manager.'
       : t === 'itmgr' ? 'Client files sent to the IT team wait here: give each to the person who will do the work.'
       : top ? `Every client file uploaded: who it went to, who is working on it, and whether it is done.${ro}` : 'Client files given to you for your work. Mark them done when you have used them.';
+    case 'bills': return top ? 'Bills the team paid for work – petrol, a courier, a client lunch. You are told the moment one comes in. Open it, check the photo, press Approve; pay it by scanning the person’s UPI QR code shown on the bill, then press “Mark paid”. A wrong bill can be rejected with the reason.'
+      : 'Paid for something for work – petrol for a client visit, a courier, a client lunch? Add your UPI QR code once, then press “+ Submit a bill”, fill the form and take a photo of the bill. Management is told at once, approves it and pays it back to your QR code. You are told at each step.';
     case 'money': return `Payments to collect, receipts and tax invoices. “Record payment” makes the receipt and updates the balance; overdue amounts are in red.${ro}`;
     case 'collab': return `The colleges and employers that work with Aali Conssultancy, with their contacts and terms.${ro}`;
     case 'messages': return `Ready-made WhatsApp messages. They open with one tap from a lead, a deal or a payment, with the names already filled in.${ro}`;

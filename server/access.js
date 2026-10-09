@@ -10,7 +10,7 @@ export const loadIndex = async (db) => (await db.query(`select id, type, created
   'clientId', data->'clientId', 'dealId', data->'dealId', 'projectId', data->'projectId', 'team', data->'team') as data from records where deleted_at is null and type = any($1)`, [INDEX_TYPES])).rows;
 
 // The kinds of item people add themselves. Notifications, presence and anything unknown are made by the server only (audit ACB-1, ACB-3).
-const CREATABLE = new Set(['lead', 'deal', 'client', 'quote', 'invoice', 'receipt', 'payment', 'project', 'task', 'ticket', 'activity', 'comment', 'approval', 'target', 'signoff', 'asset', 'collab', 'report', 'prospect', 'agreement', 'salary', 'payrun', 'loan', 'payee', 'pclient', 'pemp']);
+const CREATABLE = new Set(['lead', 'deal', 'client', 'quote', 'invoice', 'receipt', 'payment', 'project', 'task', 'ticket', 'activity', 'comment', 'approval', 'target', 'signoff', 'asset', 'bill', 'collab', 'report', 'prospect', 'agreement', 'salary', 'payrun', 'loan', 'payee', 'pclient', 'pemp']);
 const LABEL = { assets: 'client assets', calls: 'the call register', leads: 'leads', deals: 'deals', clients: 'clients', quotes: 'quotations', money: 'receipts and payments', projects: 'projects', support: 'support requests', collab: 'collaborations', agreements: 'agreements', payroll: 'payroll' };
 
 // rows: every live record (or the light index). canSeeReport: the daily-report rule, passed in from logic.js.
@@ -57,6 +57,7 @@ export function buildAccess(user, rows, canSeeReport) {
       case 'presence': return top || (isManager(user) && d.team === user.team); // who is out of the office: only the person's manager and management, not teammates
       // Client assets: the BDE who uploaded them, the manager they were sent to, the person they were given to, the Sales Manager and management.
       case 'asset': return top || user.title === 'salesmgr' || d.owner === uid || d.assignee === uid || (user.title === 'itmgr' && d.to === 'it');
+      case 'bill': return top || d.owner === uid; // the person who submitted it, and management
       case 'prospect': { const s = sc('calls'); return s === 'all' ? true : s === 'own' ? d.owner === uid : false; } // a number in the call register
       default: return top;
     }
@@ -81,6 +82,7 @@ export function buildAccess(user, rows, canSeeReport) {
     if (type === 'signoff' && !within('projects', myProjects, data.projectId)) return 'You cannot open this project.';
     if (type === 'approval' && by.has(data.relId) && !parent(data.relId)) return 'You cannot open this item.';
     if (type === 'target' && !(user.is_admin || user.title === 'salesmgr')) return 'Only the Sales Manager or an admin sets targets.';
+    if (type === 'bill' && user.team === 'management') return 'Management does not submit bills here.';
     return '';
   }
   // Why this person cannot change or delete this record ('' when they can). patch: the fields being changed (empty for a delete).
@@ -105,6 +107,8 @@ export function buildAccess(user, rows, canSeeReport) {
     if (r.type === 'activity' && !canEdit(user, 'leads')) return 'Your access is view only here.';
     if (r.type === 'comment' && r.created_by !== uid && !user.is_admin) return 'Only the writer can change a comment.';
     if (r.type === 'target' && !(user.is_admin || user.title === 'salesmgr')) return 'Only the Sales Manager or an admin sets targets.';
+    // A bill is deleted by the person who submitted it while it waits for approval, or by management.
+    if (r.type === 'bill' && !Object.keys(patch).length && !top && d.status !== 'submitted') return 'This bill is already approved. Ask management if it must be removed.';
     return '';
   }
   return { read, createBlock, writeBlock };

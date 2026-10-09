@@ -626,3 +626,16 @@ table.chart td,table.chart th{white-space:normal;vertical-align:top;min-width:10
 /* Daily reports: a department in full – a name in the team table jumps to that person's report, which stops below the sticky top bar */
 .linkbtn{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer}.linkbtn:hover b,.linkbtn:focus-visible b{text-decoration:underline}
 .repcard{scroll-margin-top:96px}
+/* Bills: the bill photos, the facts beside the QR code to pay, and the person's own QR code */
+.billpics{display:flex;flex-wrap:wrap;gap:10px}
+.billpic{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.billpic img,.billpdf{width:132px;height:132px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:var(--paper-2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-weight:700;color:var(--ink-soft);text-align:center}
+.billpdf small{font-weight:400;font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filebtn{align-self:flex-start;cursor:pointer}
+.billwrap{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start}
+.billfacts{flex:1 1 300px;min-width:0;margin:0;display:grid;gap:8px}
+.billfacts>div{display:grid;grid-template-columns:minmax(120px,38%) 1fr;gap:10px}
+.billfacts dt{color:var(--ink-soft);font-size:13px}.billfacts dd{margin:0;overflow-wrap:anywhere}
+.billqr{flex:0 1 260px;display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
+.billqr img{width:100%;max-width:236px;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:8px}
+.qrcard{gap:14px;align-items:center}.qr-thumb{width:84px;height:84px;object-fit:contain;background:#fff;border-radius:8px;border:1px solid var(--line)}

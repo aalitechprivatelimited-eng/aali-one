@@ -16,6 +16,9 @@ export const ACCESS = {
   daily:     { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'team', bde: 'own', itmgr: 'team', itlead: 'own', dev: 'own' },
   tasks:     { chairman: 'all', ops: 'all', cs: 'all', salesmgr: 'team', bde: 'team', itmgr: 'team', itlead: 'team', dev: 'team' },
   inbox:     everyone('own'),
+  // Bills an employee paid for the company, to be paid back (the user, 9 Oct 2026): everyone but management submits their own;
+  // management sees them all, approves them and marks them paid. Department managers see only their own.
+  bills:     { chairman: 'all', ops: 'all', cs: 'all', salesmgr: 'own', bde: 'own', itmgr: 'own', itlead: 'own', dev: 'own' },
   approvals: { chairman: 'all', ops: 'all', cs: 'all', salesmgr: 'team', itmgr: 'team' },
   leads:     { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all', bde: 'own' },
   calls:     { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all', bde: 'own' },
@@ -45,7 +48,7 @@ export const ACCESS = {
 
 // The sidebar, in order. [key, label, path, group]
 export const SECTIONS = [
-  ['today', 'Dashboard', '/', ''], ['daily', 'Daily reports', '/daily', ''], ['tasks', 'Tasks', '/tasks', ''], ['inbox', 'Notifications', '/inbox', ''], ['approvals', 'Approvals', '/approvals', ''],
+  ['today', 'Dashboard', '/', ''], ['daily', 'Daily reports', '/daily', ''], ['tasks', 'Tasks', '/tasks', ''], ['bills', 'Bills', '/bills', ''], ['inbox', 'Notifications', '/inbox', ''], ['approvals', 'Approvals', '/approvals', ''],
   ['leads', 'Leads & enquiries', '/leads', 'Sales'], ['calls', 'Call register', '/calls', 'Sales'], ['deals', 'Deals pipeline', '/deals', 'Sales'], ['clients', 'Clients', '/clients', 'Sales'], ['quotes', 'Quotations', '/quotes', 'Sales'], ['agreements', 'Agreements', '/agreements', 'Sales'],
   ['projects', 'Projects', '/projects', 'Delivery'], ['support', 'Support', '/support', 'Delivery'], ['assets', 'Client assets', '/assets', 'Delivery'],
   ['money', 'Payments & receipts', '/payments', 'Money'], ['payroll', 'Payroll', '/payroll', 'Money'], ['clientpay', 'Client payroll', '/client-payroll', 'Money'],
@@ -57,6 +60,7 @@ export const MEANS = {
   today: { own: 'Own work', team: 'Own work + the team’s late items', all: 'Everyone’s work' },
   daily: { own: 'Writes own report', team: 'Own report + reads the team’s', 'all:view': 'Reads all, can remark', all: 'Reads all, sends back, deletes' },
   tasks: { team: 'Own tasks + the team list', all: 'Every task' },
+  bills: { own: 'Submits own bills, sees what happens to them', all: 'Every bill; approves and marks paid' },
   inbox: { own: 'Own notifications', all: 'Own notifications' },
   approvals: { team: 'Decides for own team', all: 'Decides all' },
   agreements: { all: 'Makes service agreements; a closure agreement is made by the Operations Manager only', 'all:view': 'Reads every agreement' },
@@ -94,7 +98,7 @@ export const canClose = (u) => !!u && u.title === 'ops';
 
 // Which section a kind of record belongs to.
 export const SECTION_OF = { lead: 'leads', deal: 'deals', client: 'clients', quote: 'quotes', invoice: 'money', receipt: 'money', payment: 'money',
-  project: 'projects', ticket: 'support', collab: 'collab', prospect: 'calls', asset: 'assets', agreement: 'agreements',
+  project: 'projects', ticket: 'support', collab: 'collab', prospect: 'calls', asset: 'assets', bill: 'bills', agreement: 'agreements',
   salary: 'payroll', payrun: 'payroll', loan: 'payroll', payee: 'payroll', pclient: 'payroll', pemp: 'payroll' };
 // Kinds of item that only the people of their section may know exist: not in the recycle bin, the audit log, the list of deleted
 // items, file downloads or comments for anyone else – management and admins included.

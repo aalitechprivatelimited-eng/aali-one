@@ -16,6 +16,7 @@ const Today = lazy(() => import('./pages/Today.jsx'));
 const Leads = lazy(() => import('./pages/Leads.jsx'));
 const Calls = lazy(() => import('./pages/Calls.jsx'));
 const Assets = lazy(() => import('./pages/Assets.jsx'));
+const Bills = lazy(() => import('./pages/Bills.jsx'));
 const Deals = lazy(() => import('./pages/Deals.jsx'));
 const Clients = lazy(() => import('./pages/Clients.jsx'));
 const Quotes = lazy(() => import('./pages/Quotes.jsx'));
@@ -156,7 +157,8 @@ function Shell() {
   const unread = list('notice').filter((n) => n.to === me.id && !n.read).length;
   const pending = can('approvals') ? list('approval').filter((a) => a.status === 'pending').length : 0;
   const toReview = can('approvals') ? list('report').filter((r) => r.owner !== me.id && r.status === 'submitted' && !r.reviewed).length : 0;
-  const cnt = { today: late, daily: toReview, inbox: unread, approvals: pending, calendar: urgentDeadlines() };
+  const billsToDo = isTop() ? list('bill').filter((b) => b.status === 'submitted' || b.status === 'approved').length : 0; // management: to approve or to pay
+  const cnt = { today: late, daily: toReview, bills: billsToDo, inbox: unread, approvals: pending, calendar: urgentDeadlines() };
   // Which section is open: the gold mark in the sidebar slides to it, and the page changes with a short movement.
   const path = loc.pathname, seg = path.split('/')[1] || 'home';
   const on = (k, to) => (to === '/' ? path === '/' : k === 'settings' ? path.startsWith('/settings') && !path.startsWith('/settings/people') : path === to || path.startsWith(to + '/'));
@@ -192,7 +194,7 @@ function Shell() {
               <Route path="/" element={<Today />} /><Route path="/inbox" element={<Inbox />} /><Route path="/approvals" element={<Gate s="approvals"><Approvals /></Gate>} />
               <Route path="/leads/*" element={<Gate s="leads"><Leads /></Gate>} /><Route path="/calls" element={<Gate s="calls"><Calls /></Gate>} /><Route path="/deals/*" element={<Gate s="deals"><Deals /></Gate>} /><Route path="/clients/*" element={<Gate s="clients"><Clients /></Gate>} />
               <Route path="/quotes/*" element={<Gate s="quotes"><Quotes /></Gate>} /><Route path="/agreements/*" element={<Gate s="agreements"><Agreements /></Gate>} /><Route path="/projects/*" element={<Gate s="projects"><Projects /></Gate>} /><Route path="/tasks" element={<Tasks />} />
-              <Route path="/support" element={<Gate s="support"><Support /></Gate>} /><Route path="/assets" element={<Gate s="assets"><Assets /></Gate>} /><Route path="/payments/*" element={<Gate s="money"><Payments /></Gate>} /><Route path="/payroll/*" element={<Gate s="payroll"><Payroll /></Gate>} /><Route path="/client-payroll/*" element={<Gate s="clientpay"><ClientPayrollPage /></Gate>} /><Route path="/calendar/*" element={<Calendar />} /><Route path="/daily/*" element={<Daily />} /><Route path="/collab" element={<Gate s="collab"><Collab /></Gate>} />
+              <Route path="/support" element={<Gate s="support"><Support /></Gate>} /><Route path="/assets" element={<Gate s="assets"><Assets /></Gate>} /><Route path="/bills/*" element={<Gate s="bills"><Bills /></Gate>} /><Route path="/payments/*" element={<Gate s="money"><Payments /></Gate>} /><Route path="/payroll/*" element={<Gate s="payroll"><Payroll /></Gate>} /><Route path="/client-payroll/*" element={<Gate s="clientpay"><ClientPayrollPage /></Gate>} /><Route path="/calendar/*" element={<Calendar />} /><Route path="/daily/*" element={<Daily />} /><Route path="/collab" element={<Gate s="collab"><Collab /></Gate>} />
               <Route path="/reports" element={<Gate s="reports"><Reports /></Gate>} /><Route path="/messages" element={<Gate s="messages"><Messages /></Gate>} /><Route path="/settings/*" element={<Settings />} />
               <Route path="/signoff/:projectId" element={<Gate s="projects"><Signoff /></Gate>} /><Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

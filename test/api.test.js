@@ -1185,6 +1185,69 @@ test("A submitted daily report has its own link that opens it with no sign-in, c
   assert.equal((await call('GET', '/public/report/' + key)).status, 404);
 });
 
+test('Bills: an employee submits a bill with its photo; management is told, approves it and marks it paid to the UPI QR code, which cannot change while a bill waits', async () => {
+  const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  for (const [id, email, title, team] of [['u_bb', 'bb@test.in', 'bde', 'sales'], ['u_bb2', 'bb2@test.in', 'bde', 'sales'], ['u_bsm', 'bsm@test.in', 'salesmgr', 'sales'],
+    ['u_bops', 'bops@test.in', 'ops', 'management'], ['u_bcs', 'bcs@test.in', 'cs', 'management'], ['u_bch', 'bch@test.in', 'chairman', 'management']])
+    await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', [id, email, email.split('@')[0], title, team, hashPassword('password123')]);
+  const B = await login('bb@test.in'), B2 = await login('bb2@test.in'), SM = await login('bsm@test.in'), OPS = await login('bops@test.in'), CH = await login('bch@test.in');
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const file = async (c, name = 'bill.png') => (await call('POST', '/files', { name, mime: 'image/png', data: PNG }, c)).body;
+  const ph = await file(B), photo = { id: ph.id, name: ph.name, size: ph.size, mime: ph.mime };
+  const day = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const bill = { date: day, amount: 450, kind: 'Fuel', paidTo: 'Indian Oil, Brodipet', purpose: 'Petrol for the client visit', paidBy: 'Cash', files: [photo] };
+  // No UPI QR code yet: the bill waits for it.
+  let r = await call('POST', '/records', { type: 'bill', data: bill }, B); assert.equal(r.status, 400); assert.match(r.body.error, /UPI QR code/);
+  // Only the person sets their QR code, with a picture they uploaded.
+  const qr = await file(B, 'qr.png');
+  assert.equal((await call('PATCH', '/users/u_bb', { upiQr: qr.id }, OPS)).status, 403, 'nobody else can send his money somewhere else');
+  assert.equal((await call('PATCH', '/users/u_bb', { upiQr: (await file(OPS, 'other.png')).id }, B)).status, 400, "not someone else's picture");
+  r = await call('PATCH', '/users/u_bb', { upiQr: qr.id }, B); assert.equal(r.status, 200); assert.equal(r.body.user.upiQr, qr.id);
+  // Management does not submit bills; the form is checked; nobody attaches another person's photo.
+  assert.equal((await call('POST', '/records', { type: 'bill', data: bill }, OPS)).status, 403);
+  assert.match((await call('POST', '/records', { type: 'bill', data: { ...bill, files: [] } }, B)).body.error, /photo of the bill/);
+  assert.match((await call('POST', '/records', { type: 'bill', data: { ...bill, kind: 'Holiday' } }, B)).body.error, /type of expense/);
+  assert.match((await call('POST', '/records', { type: 'bill', data: { ...bill, paidBy: '' } }, B)).body.error, /how you paid/);
+  assert.match((await call('POST', '/records', { type: 'bill', data: bill }, B2)).body.error, /photo of the bill again/);
+  // Submitted: a number, the QR code it will be paid to, and every member of management told – not the Sales Manager.
+  const b = (await add(B, 'bill', bill)).record;
+  assert.match(b.number, /^B-\d{4}$/); assert.equal(b.status, 'submitted'); assert.equal(b.qr, qr.id); assert.equal(b.owner, 'u_bb');
+  const told = (await db.query("select data->>'to' t from records where type = 'notice' and data->>'relId' = $1", [b.id])).rows.map((x) => x.t);
+  assert.ok(['u_bops', 'u_bcs', 'u_bch'].every((x) => told.includes(x)) && !told.includes('u_bsm'), 'told: ' + told);
+  // Only he and management see the bill, his QR code and its picture.
+  const boot = async (c) => (await call('GET', '/bootstrap', null, c)).body;
+  for (const [c, yes] of [[B, true], [OPS, true], [CH, true], [SM, false], [B2, false]]) {
+    const x = await boot(c); assert.equal(x.records.some((y) => y.id === b.id), yes, 'bill seen');
+    assert.equal(x.users.find((u) => u.id === 'u_bb').upiQr, yes ? qr.id : '', 'QR code seen'); }
+  assert.equal((await call('GET', '/files/' + qr.id, null, OPS)).status, 200); assert.equal((await call('GET', '/files/' + qr.id, null, SM)).status, 404);
+  // While the bill waits, the QR code cannot be changed or removed.
+  const qr2 = await file(B, 'qr2.png');
+  r = await call('PATCH', '/users/u_bb', { upiQr: qr2.id }, B); assert.equal(r.status, 400); assert.match(r.body.error, /waiting to be paid/);
+  assert.equal((await call('PATCH', '/users/u_bb', { upiQr: '' }, B)).status, 400);
+  // He corrects it before approval; management cannot change his bill; he cannot approve it; nothing is paid before approval.
+  assert.equal((await patch(B, b.id, { amount: 480 })).status, 200);
+  assert.equal((await patch(OPS, b.id, { amount: 10 })).status, 403);
+  assert.equal((await patch(B, b.id, { status: 'approved' })).status, 403);
+  assert.equal((await patch(OPS, b.id, { status: 'paid' })).status, 400);
+  // Approved: he is told; the bill is locked for him.
+  assert.equal((await patch(OPS, b.id, { status: 'approved' })).status, 200);
+  assert.equal((await patch(B, b.id, { amount: 500 })).status, 400);
+  assert.equal((await call('DELETE', '/records/' + b.id, {}, B)).status, 403);
+  // Paid (the Chairman too can pay): he is told.
+  assert.equal((await patch(CH, b.id, { status: 'paid' })).status, 200);
+  const done = (await db.query('select data from records where id = $1', [b.id])).rows[0].data;
+  assert.equal(done.status, 'paid'); assert.equal(done.amount, 480); assert.equal(done.approved.by, 'u_bops'); assert.equal(done.paid.by, 'u_bch');
+  const toHim = (await db.query("select data->>'text' x from records where type = 'notice' and data->>'to' = 'u_bb' and data->>'relId' = $1", [b.id])).rows.map((x) => x.x);
+  assert.ok(toHim.some((x) => /approved your bill/.test(x)) && toHim.some((x) => /paid your bill/.test(x)), toHim.join(' | '));
+  // Nothing waits now: the QR code can be changed. A rejected bill needs the reason, and he reads it.
+  assert.equal((await call('PATCH', '/users/u_bb', { upiQr: qr2.id }, B)).status, 200);
+  const b2 = (await add(B, 'bill', { ...bill, amount: 120, kind: 'Courier' })).record;
+  assert.equal(b2.qr, qr2.id);
+  assert.equal((await patch(OPS, b2.id, { status: 'rejected' })).status, 400);
+  assert.equal((await patch(OPS, b2.id, { status: 'rejected', _reason: 'The photo is not clear' })).status, 200);
+  assert.ok((await db.query("select 1 from records where type = 'notice' and data->>'to' = 'u_bb' and data->>'text' like '%The photo is not clear%'")).rowCount);
+});
+
 test('WhatsApp: "Check the template with Meta" says whether the template is approved, a utility one, in English and with its four fields', async () => {
   const { setWaTemplates, REPORT_TEMPLATE } = await import('../server/whatsapp.js');
   const db = await getDb();

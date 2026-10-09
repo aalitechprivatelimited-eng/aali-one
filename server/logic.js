@@ -1,8 +1,8 @@
 // Business rules that must hold whoever calls the API: numbering, duplicate checks, auto-assign,
 // the advance gate, sign-off before Live, payments updating reminders, approvals, recurring tasks.
 import { newId, newKey } from './auth.js';
-import { docTotals, receiptTotals, fyLabel, dayLabel, mobile10, num, round2 } from '../shared/money.js';
-import { MANAGER_TITLES, TOP_TITLES, DEFAULT_SETTINGS, GROUP, COMPANIES } from '../shared/defaults.js';
+import { docTotals, receiptTotals, fyLabel, dayLabel, mobile10, num, round2, inr } from '../shared/money.js';
+import { MANAGER_TITLES, TOP_TITLES, DEFAULT_SETTINGS, GROUP, COMPANIES, BILL_KINDS, BILL_PAID_BY } from '../shared/defaults.js';
 import { canSee, canEdit, scopeOf } from '../shared/access.js';
 import { applyCalls, checkCalls, claimForLead, holderOf, prospectCreate, prospectUpdate } from './prospects.js';
 import { payFor, clientPay, grossOf, fromSheet, sheetAttendance, attendanceDays, onBasis, daysIn, monthLabel, loanLeft, salaryFor } from '../shared/payroll.js';
@@ -221,6 +221,17 @@ export async function beforeCreate(t, type, data, user, sample) {
       for (const k of Object.keys(data)) delete data[k];
       Object.assign(data, keep); log(data, me, `Uploaded and sent to the ${data.to === 'it' ? 'IT Manager' : 'Sales Manager'}`); break;
     }
+    case 'bill': { // a bill the person paid for the company, to be paid back to their UPI QR code (the user, 9 Oct 2026)
+      if (!user) throw new Rule('Please sign in.', 401);
+      if (user.team === 'management') throw new Rule('Management does not submit bills here.');
+      const b = cleanBill(data); await ownFiles(t, b.files, me);
+      const qr = (await t.query('select upi_qr from users where id = $1', [me])).rows[0]?.upi_qr || '';
+      if (!qr) throw new Rule('Add your UPI QR code first, so management can pay you back.');
+      for (const k of Object.keys(data)) delete data[k];
+      // qr: the QR code as it was when the bill was submitted – it cannot change while the bill waits (server/app.js, PATCH /users).
+      Object.assign(data, b, { owner: me, team: user.team, qr, status: 'submitted', number: 'B-' + String(await counter(t, 'bill')).padStart(4, '0') });
+      log(data, me, 'Bill submitted'); break;
+    }
     case 'collab':
       if (!canEditCollab(user)) throw new Rule('Only the Operations Manager or Company Secretary can add a collaboration.', 403);
       if (!['college', 'employer'].includes(data.kind)) throw new Rule('Choose college or employer.');
@@ -256,6 +267,29 @@ const cleanEntries = (list) => (Array.isArray(list) ? list : []).filter((e) => S
   ...(e.trip?.to === 'office' ? { trip: { to: 'office', from: String(e.trip.from || '').slice(0, 120), ...(e.trip.reachedAt ? { reachedAt: String(e.trip.reachedAt).slice(0, 30) } : {}) } } : {}),
   ...(e.proj ? { proj: String(e.proj).trim().slice(0, 120) } : {}), ...(e.note ? { note: String(e.note).trim().slice(0, 300) } : {}),
   ...(e.refId ? { refId: e.refId, refLabel: String(e.refLabel || '').slice(0, 120), refLink: String(e.refLink || '').slice(0, 120) } : {}) }));
+// A bill's details as the form sends them: every field checked, nothing else kept.
+function cleanBill(d) {
+  const b = { date: String(d.date || ''), amount: round2(num(d.amount)), kind: String(d.kind || ''), paidTo: String(d.paidTo || '').trim().slice(0, 120),
+    purpose: String(d.purpose || '').trim().slice(0, 500), paidBy: String(d.paidBy || ''), clientId: String(d.clientId || '').slice(0, 40), clientName: String(d.clientName || '').trim().slice(0, 120),
+    files: (Array.isArray(d.files) ? d.files : []).slice(0, 10).map((f) => ({ id: String(f?.id || ''), name: String(f?.name || 'bill').slice(0, 200), size: +f?.size || 0, mime: String(f?.mime || '').slice(0, 100), at: String(f?.at || ''), by: String(f?.by || '') })) };
+  if (!/^\d{4}-\d\d-\d\d$/.test(b.date) || b.date > today()) throw new Rule('Enter the date on the bill (not a future date).');
+  if (!(b.amount > 0)) throw new Rule('Enter the amount of the bill.');
+  if (b.amount > 500000) throw new Rule('That amount looks too large for a bill. Check it.');
+  if (!BILL_KINDS.includes(b.kind)) throw new Rule('Choose the type of expense.');
+  if (!b.paidTo) throw new Rule('Enter the shop or the person you paid.');
+  if (!b.purpose) throw new Rule('Write what the bill was for.');
+  if (!BILL_PAID_BY.includes(b.paidBy)) throw new Rule('Choose how you paid.');
+  if (!b.files.length) throw new Rule('Attach a photo of the bill.');
+  if (!b.clientId) delete b.clientId; if (!b.clientName) delete b.clientName;
+  return b;
+}
+// Bill photos: only pictures or PDFs the person uploaded themselves – knowing a file's number must not bring someone else's file into view.
+async function ownFiles(t, files, me) {
+  const ids = [...new Set(files.map((f) => f.id))]; if (!ids.length) return;
+  const ok = (await t.query('select id, mime from files where id = any($1) and created_by = $2', [ids, me])).rows;
+  if (ok.length !== ids.length) throw new Rule('Attach the photo of the bill again.');
+  if (ok.some((f) => !/^(image\/(png|jpeg|gif|webp)|application\/pdf)$/.test(f.mime))) throw new Rule('The bill must be a photo (JPG or PNG) or a PDF.');
+}
 export const VISIT_OUTCOMES = ['Deal accepted', 'Next meeting fixed', 'Interested – follow up', 'Will think – call back', 'Not interested', 'Could not meet'];
 // A client visit must say who was visited: client name, the person met, their number and the place.
 // A client visit says who and where from the start (client name and place) – enough when a client asks to meet out of the blue.
@@ -328,6 +362,9 @@ export async function afterCreate(t, type, id, data, user, sample) {
   if (type === 'agreement') await tellAgreement(t, ['ops', 'salesmgr'], `${user.name} made ${AGREEMENT[data.kind].name.toLowerCase()} ${data.number} for ${data.clientName} (draft).`, id, user, sample);
   if (type === 'comment') for (const to of data.mentions || []) await notify(t, to, `${user?.name || 'Someone'} mentioned you: "${String(data.text).slice(0, 80)}"`, data.relType, data.relId, user, sample);
   if (type === 'lead') await claimForLead(t, id, data, user, sample); // the business now belongs to this lead's BDE
+  if (type === 'bill') // management hears of every bill at once (the user, 9 Oct 2026)
+    for (const u of (await t.query('select id from users where active and removed_at is null and title = any($1)', [TOP_TITLES])).rows)
+      await notify(t, u.id, `${user.name} submitted a bill: ${inr(data.amount)} · ${data.kind} · ${data.paidTo} (${data.number}).`, 'bill', id, user, sample);
   if (type === 'asset') { // tell the manager they go to; the Sales Manager always (the BDE is in her team); the Operations Manager and Company Secretary always
     const dest = data.to === 'it' ? 'the IT Manager' : 'the Sales Manager', n = (data.files || []).length, what = `${n ? `${n} file${n === 1 ? '' : 's'}` : 'a link'}${data.what ? ` for ${data.what}` : ''}`;
     for (const u of (await t.query("select id, title from users where active and title in ('salesmgr', 'itmgr', 'ops', 'cs')")).rows) {
@@ -858,6 +895,38 @@ export async function beforeUpdate(t, rec, next, user) {
       const changed = ['files', 'link', 'note', 'what'].some((k) => JSON.stringify(next[k] ?? '') !== JSON.stringify(prev[k] ?? ''));
       if (changed && !(mineA || boss)) throw new Rule('Only the person who uploaded these assets or the manager can change them.', 403);
       if (JSON.stringify(next.files || []) !== JSON.stringify(prev.files || [])) log(next, me, 'Files changed');
+      break;
+    }
+    case 'bill': {
+      const mine = prev.owner === me, boss = isTop(user), what = `${prev.number} (${inr(prev.amount)} · ${prev.kind})`, now = new Date().toISOString();
+      for (const k of ['owner', 'team', 'number', 'qr', 'approved', 'paid', 'rejected']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
+      // The person who submitted it may correct it until management approves it; management is told.
+      if (['date', 'amount', 'kind', 'paidTo', 'purpose', 'paidBy', 'clientId', 'clientName', 'files'].some((k) => JSON.stringify(next[k] ?? '') !== JSON.stringify(prev[k] ?? ''))) {
+        if (!mine) throw new Rule('Only the person who submitted the bill can change it.', 403);
+        if (prev.status !== 'submitted') throw new Rule('This bill is already approved, so it cannot be changed.');
+        const b = cleanBill(next); await ownFiles(t, b.files.filter((f) => !(prev.files || []).some((p) => p.id === f.id)), me);
+        delete next.clientId; delete next.clientName; Object.assign(next, b); log(next, me, 'Bill changed');
+        for (const u of (await t.query('select id from users where active and removed_at is null and title = any($1)', [TOP_TITLES])).rows)
+          await notify(t, u.id, `${user.name} changed the bill ${next.number}: ${inr(next.amount)} · ${next.kind} · ${next.paidTo}.`, 'bill', rec.id, user, rec.sample);
+      }
+      // Management: approve → (pay to the person's UPI QR) → mark paid. A bill can be rejected, with the reason, until it is paid.
+      if (next.status !== prev.status) {
+        if (!boss) throw new Rule('Only management approves bills and marks them paid.', 403);
+        if (next.status === 'approved') {
+          if (prev.status !== 'submitted') throw new Rule('Only a bill waiting for approval can be approved.');
+          next.approved = { by: me, at: now }; log(next, me, 'Approved');
+          await notify(t, prev.owner, `${user.name} approved your bill ${what}. It will be paid to your UPI QR code.`, 'bill', rec.id, user, rec.sample);
+        } else if (next.status === 'paid') {
+          if (prev.status !== 'approved') throw new Rule('Approve the bill before marking it paid.');
+          next.paid = { by: me, at: now }; log(next, me, 'Marked paid');
+          await notify(t, prev.owner, `${user.name} paid your bill ${what}. Check your UPI app.`, 'bill', rec.id, user, rec.sample);
+        } else if (next.status === 'rejected') {
+          if (!['submitted', 'approved'].includes(prev.status)) throw new Rule('A paid bill cannot be rejected.');
+          const why = String(reason || '').trim(); if (why.length < 5) throw new Rule('Write why the bill is rejected (at least 5 characters).');
+          next.rejected = { by: me, at: now, reason: why.slice(0, 300) }; log(next, me, `Rejected: ${why.slice(0, 300)}`);
+          await notify(t, prev.owner, `${user.name} rejected your bill ${what}: ${why.slice(0, 200)}`, 'bill', rec.id, user, rec.sample);
+        } else throw new Rule('Unknown bill status.');
+      }
       break;
     }
     case 'collab':

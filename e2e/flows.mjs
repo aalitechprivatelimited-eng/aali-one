@@ -338,6 +338,26 @@ try {
   await step('a BDE has the Sales team calendar and Deadlines, not the IT one', async () => { await bde.goto(BASE + '/calendar'); await bde.getByRole('tab', { name: 'Sales team' }).waitFor();
     must(await bde.getByRole('tab', { name: 'IT team' }).count() === 0 && await bde.getByRole('tab', { name: 'Deadlines' }).count() === 1, 'wrong calendars for a BDE'); });
 
+  console.log('Bills (the BDE on a laptop, the Operations Manager)');
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await step('a BDE adds the UPI QR code once and submits a bill with its photo; the QR code is then locked; management has no "+ Submit a bill"', async () => {
+    await bde.goto(BASE + '/bills'); await bde.getByText('My UPI QR code – needed before your first bill').waitFor();
+    await bde.locator('.qrcard input[type=file]').setInputFiles({ name: 'my-qr.png', mimeType: 'image/png', buffer: PNG }); await toast(bde, 'UPI QR code saved'); await bde.locator('.qrcard img.qr-thumb').waitFor();
+    await bde.getByRole('button', { name: '+ Submit a bill' }).click(); const m = bde.locator('.modal');
+    await m.locator('input[type=number]').fill('450'); await m.locator('select').selectOption('Fuel'); await m.getByPlaceholder('e.g. Indian Oil, Brodipet').fill('Indian Oil, Brodipet');
+    await m.locator('textarea').fill('Petrol for the client visit'); await m.locator('.seg button', { hasText: 'Cash' }).click();
+    must(await m.getByRole('button', { name: 'Submit the bill' }).isDisabled(), 'a bill without its photo can be sent');
+    await m.locator('input[type=file]').setInputFiles({ name: 'bill.png', mimeType: 'image/png', buffer: PNG }); await m.locator('.billpic img').waitFor();
+    await m.getByRole('button', { name: 'Submit the bill' }).click(); await toast(bde, 'Bill submitted');
+    await bde.locator('tr', { hasText: 'Indian Oil' }).locator('.pill', { hasText: 'Waiting for approval' }).waitFor(); await bde.getByText(/waiting to be paid, so the QR code/).waitFor();
+    await ops.goto(BASE + '/bills'); await ops.locator('.page h1').waitFor(); must(await ops.getByRole('button', { name: '+ Submit a bill' }).count() === 0, 'management can submit a bill'); });
+  await step('management sees the photo and the QR code to pay, approves the bill and marks it paid; the BDE sees it paid and can change the QR code again', async () => {
+    must(+(await ops.locator('.nav a', { hasText: 'Bills' }).locator('.cnt').textContent()) >= 1, 'the sidebar does not count the bill');
+    await ops.locator('tr', { hasText: 'Indian Oil' }).click(); const m = ops.locator('.modal'); await m.locator('.billqr img').waitFor(); await m.locator('.billpic img').waitFor();
+    await m.getByRole('button', { name: 'Approve' }).click(); await toast(ops, 'Approved'); await m.getByRole('button', { name: 'Mark paid' }).click(); await toast(ops, 'Marked paid');
+    await bde.goto(BASE + '/bills'); await bde.locator('tr', { hasText: 'Indian Oil' }).locator('.pill', { hasText: 'Paid' }).waitFor();
+    must(await bde.locator('.qrcard label', { hasText: 'Change QR code' }).count() === 1, 'the QR code is still locked after the bill was paid'); });
+
   await step('no errors were written to the browser console', async () => must(!errors.length, errors.slice(0, 3).join(' | ')));
   console.log(failed ? `\n${failed} step(s) failed.` : '\nAll steps passed.');
   await stop(failed ? 1 : 0);

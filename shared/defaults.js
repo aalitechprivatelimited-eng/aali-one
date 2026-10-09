@@ -7,6 +7,9 @@ export const TITLES = {
 export const TITLE_TEAM = { admin: 'management', chairman: 'management', ops: 'management', cs: 'management',
   salesmgr: 'sales', bde: 'sales', itmgr: 'it', itlead: 'it', dev: 'it' };
 export const TEAMS = { sales: 'Sales', it: 'IT', management: 'Management' };
+// Bills: what the money was spent on, and how the employee paid it (the form the user chose, 9 Oct 2026).
+export const BILL_KINDS = ['Travel', 'Fuel', 'Food', 'Client meeting', 'Office supplies', 'Phone & internet', 'Courier', 'Other'];
+export const BILL_PAID_BY = ['Cash', 'UPI', 'Card', 'Own bank transfer'];
 export const MANAGER_TITLES = ['salesmgr', 'itmgr', 'ops', 'cs', 'chairman', 'admin'];
 export const TOP_TITLES = ['ops', 'cs', 'chairman'];
 // Aali Group and its companies. Management belongs to the group and looks after every company.
