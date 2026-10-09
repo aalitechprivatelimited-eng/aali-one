@@ -16,18 +16,26 @@
 import { getSetting } from './logic.js';
 import { ROLE_NAME } from '../shared/access.js';
 
-// Meta refused seven blanks in this little text ("too many variables for its length"), so the link to the report is the template's
+// The user's order (8 Oct 2026): 1. the employee's name and designation, 2. the hours worked with their details, 3. the final report.
+// Meta refused seven blanks in a short text ("too many variables for its length"), so the link to the report is the template's
 // button – "Open full report", a website button whose address ends in a blank – and the body has more words of its own.
-export const REPORT_TEMPLATE = `📋 Daily work report from Aali One · {{1}}
+export const REPORT_TEMPLATE = `👤 {{1}}
+Daily work report · Aali One
 
-Employee: {{2}}
-Day: {{3}}
+⏱️ Worked hours: {{2}}
+Work done: {{3}}
+
+📋 Final report
 Calls: {{4}}
-Work: {{5}}
+Plan for tomorrow: {{5}}
 Problem: {{6}}
 
 This report was just submitted in Aali One. Tap the button below to open it in full.`;
 export const TEMPLATE_FIELDS = 6;
+// What Meta asks for when the template is made: a sample for each blank (shown in Settings → WhatsApp and on the setup page).
+export const TEMPLATE_SAMPLES = ['*Rasheed Shaik*, BDE · Thu 8 Oct 2026', '4 h 40 min (9:40 am – 3:51 pm · Break 40 min · Nothing recorded 1 h 30 min)',
+  'Calling 2 h 25 min · Client visit 1 h 30 min · Quotations 45 min', '3 calls · 1 interested · 1 to call back · 1 meeting fixed · 0 met in person',
+  'Visit Ravi Stores and send the demo link to Sri Sai Traders', 'Need the new price list from the office'];
 export const REPORT_BUTTON = { text: 'Open full report', url: () => `${appUrl()}/daily/{{1}}` }; // the blank: the report's key
 const env = (k, d = '') => process.env[k] || d;
 let testSender = null;
@@ -45,7 +53,6 @@ export function waNumber(phone) {
 const field = (s, max) => { const t = String(s || '').replace(/[\r\n\t]+/g, ' · ').replace(/ {4,}/g, '   ').replace(/( · ){2,}/g, ' · ').trim(); return t.length > max ? t.slice(0, max - 1) + '…' : t || '–'; };
 
 // ---------- one daily report, line by line, as the Daily reports page writes it (src/pages/Daily.jsx dayLine, dayText, timeByType) ----------
-// The user's format (8 Oct 2026): the person in bold, the day line, the calls line, the kinds of work, the problem, the link.
 // A template's blank may not hold a line break, so each line is its own blank; the kinds of work share one line.
 const SHORT_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -66,16 +73,16 @@ export function dayLine(r) {
   const sum = (f) => Math.round(es.filter(f).reduce((t, x) => t + (x.en - x.s), 0) / 60000);
   return { start, end, open, worked: sum((x) => !x.e.brk), brk: sum((x) => x.e.brk), idle: Math.round(idle / 60000) };
 }
-// The report's lines: [day line, calls line, kinds of work, problem].
+// The report's lines: [hours worked with their details, kinds of work, calls, plan for tomorrow, problem].
 export function reportLines(r) {
   const d = dayLine(r), c = r.calls || [], n = (f) => c.filter(f).length, meet = n((x) => x.meeting);
-  const day = d.start ? `${clock(d.start)} – ${d.open ? 'still on' : clock(d.end)} · Worked ${fmtMins(d.worked)}${d.brk ? ` · Break ${fmtMins(d.brk)}` : ''} · Nothing recorded ${fmtMins(d.idle)}` : 'No time recorded';
+  const hours = d.start ? `${fmtMins(d.worked)} (${clock(d.start)} – ${d.open ? 'still on' : clock(d.end)}${d.brk ? ` · Break ${fmtMins(d.brk)}` : ''} · Nothing recorded ${fmtMins(d.idle)})` : 'No time recorded';
   const calls = c.length ? `${c.length} call${c.length === 1 ? '' : 's'} · ${n((x) => x.resp === 'Interested')} interested · ${n((x) => x.resp === 'Call back')} to call back · ${meet} meeting${meet === 1 ? '' : 's'} fixed · ${n((x) => x.met)} met in person` : 'No calls';
   const kinds = new Map();
   for (const e of r.entries || []) { if (e.brk) continue; const [s0, e0] = bounds(e), m = +e.mins || Math.max(0, Math.round((e0 - s0) / 60000)); if (!m) continue;
     const k = kindLabel(e.kind).toLowerCase(), x = kinds.get(k) || { label: kindLabel(e.kind), mins: 0 }; x.mins += m; kinds.set(k, x); }
   const work = [...kinds.values()].sort((a, b) => b.mins - a.mins).map((x) => `${x.label} ${fmtMins(x.mins)}`).join(' · ') || 'No timed work';
-  return [day, calls, work, r.blockers?.trim() || 'None'];
+  return [hours, work, calls, r.plan?.trim() || 'Not written', r.blockers?.trim() || 'None'];
 }
 
 // ---------- the outbox ----------
@@ -90,8 +97,8 @@ export async function reportRecipients(t, writerId) {
 export async function queueReport(t, report, writer) {
   if (!waReady() || report.sample) return 0;
   const to = await reportRecipients(t, writer.id); if (!to.length) return 0;
-  const [day, calls, work, problem] = reportLines(report), role = (writer.designation || '').trim() || ROLE_NAME[writer.title] || '';
-  const params = [field(dayOf(report.date), 40), field(`*${writer.name}*${role ? ` (${role})` : ''}`, 140), field(day, 200), field(calls, 200), field(work, 400), field(problem, 250)];
+  const [hours, work, calls, plan, problem] = reportLines(report), role = (writer.designation || '').trim() || ROLE_NAME[writer.title] || '';
+  const params = [field(`*${writer.name}*${role ? `, ${role}` : ''} · ${dayOf(report.date)}`, 120), field(hours, 160), field(work, 220), field(calls, 120), field(plan, 200), field(problem, 200)];
   // The button opens /daily/<key>: that report alone, with no sign-in (the user, 8 Oct 2026). Every submitted report has its key.
   const button = report.shareToken || `${report.date}/${encodeURIComponent(report.owner)}`;
   for (const u of to) await t.query("insert into outbox (kind, to_user, to_phone, payload, ref) values ('report', $1, $2, $3, $4)", [u.id, waNumber(u.phone), JSON.stringify({ params, button }), report.id]);
@@ -100,8 +107,9 @@ export async function queueReport(t, report, writer) {
 export async function queueTest(t, u) {
   if (!waReady()) throw new Error('WhatsApp is not linked yet.');
   if (!waNumber(u.phone)) throw new Error('Add your mobile number in Settings → My profile first.');
-  const params = [field(dayOf(new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)), 40), field(`*${u.name}* (a test message)`, 140), '9:30 am – 6:10 pm · Worked 7 h 45 min · Nothing recorded 25 min',
-    '42 calls · 7 interested · 5 to call back · 2 meetings fixed · 0 met in person', 'Calling 4 h 10 min · Client visit 2 h 5 min · Information gathering 1 h 30 min', 'None – daily reports will arrive like this'];
+  const params = [field(`*${u.name}* (a test message) · ${dayOf(new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10))}`, 120), '7 h 45 min (9:30 am – 6:10 pm · Break 40 min · Nothing recorded 25 min)',
+    'Calling 4 h 10 min · Client visit 2 h 5 min · Information gathering 1 h 30 min', '42 calls · 7 interested · 5 to call back · 2 meetings fixed · 0 met in person',
+    'Follow up the 5 call-backs', 'None – daily reports will arrive like this'];
   // The test's button opens the latest submitted report's link, to see the page a real message opens.
   const last = (await t.query("select data->>'shareToken' k from records where type = 'report' and deleted_at is null and data->>'shareToken' is not null order by updated_at desc limit 1")).rows[0];
   const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);

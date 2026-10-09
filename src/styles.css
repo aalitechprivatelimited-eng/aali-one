@@ -624,3 +624,7 @@ table.chart td,table.chart th{white-space:normal;vertical-align:top;min-width:10
 @media (hover:none){.btn:hover,.chip:hover,a.stat:hover,.kc:hover,.act:hover,button.pill:hover{transform:none}.btn:not(.primary):hover{box-shadow:var(--e1)}a.stat:hover,.kc:hover,.act:hover{box-shadow:var(--e1)}.btn.primary:hover{filter:none}.btn.primary:hover::after{transform:translateX(-120%);transition:none}.li:hover,tr.click:hover td,.nav a:hover:not(.active){background:none}}
 @media (max-width:560px){.search-bg{padding-top:8px}.search-f{display:none}.stats{grid-template-columns:1fr 1fr;gap:10px}.stat{padding:13px 13px 12px}.stat .v{font-size:24px}.stat .v.txt{font-size:18px}.steps .n{display:none}.steps button{padding:10px 8px;font-size:13px}h1{font-size:24px}.card{padding:15px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}.confetti{display:none}.welcome-badge svg path{stroke-dashoffset:0}}
+
+/* Daily reports: a department in full – a name in the team table jumps to that person's report, which stops below the sticky top bar */
+.linkbtn{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer}.linkbtn:hover b,.linkbtn:focus-visible b{text-decoration:underline}
+.repcard{scroll-margin-top:96px}

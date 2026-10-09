@@ -48,26 +48,29 @@ blanks with the report, and the button opens that one report.
    so the link is a button and the body has more words.)
 
    ```
-   📋 Daily work report from Aali One · {{1}}
+   👤 {{1}}
+   Daily work report · Aali One
 
-   Employee: {{2}}
-   Day: {{3}}
+   ⏱️ Worked hours: {{2}}
+   Work done: {{3}}
+
+   📋 Final report
    Calls: {{4}}
-   Work: {{5}}
+   Plan for tomorrow: {{5}}
    Problem: {{6}}
 
    This report was just submitted in Aali One. Tap the button below to open it in full.
    ```
 
 6. **Samples** (one per blank):
-   - {{1}} `Thu 8 Oct 2026`
-   - {{2}} `*Ravi Kumar* (BDE)`
-   - {{3}} `10:50 am – 7:12 pm · Worked 5 h 29 min · Break 1 h 26 min · Nothing recorded 1 h 19 min`
-   - {{4}} `1 call · 1 interested · 0 to call back · 1 meeting fixed · 0 met in person`
-   - {{5}} `Calling 3 h 21 min · Client work 1 h 19 min · Information gathering 13 min`
-   - {{6}} `None`
+   - {{1}} `*Rasheed Shaik*, BDE · Thu 8 Oct 2026`
+   - {{2}} `4 h 40 min (9:40 am – 3:51 pm · Break 40 min · Nothing recorded 1 h 30 min)`
+   - {{3}} `Calling 2 h 25 min · Client visit 1 h 30 min · Quotations 45 min`
+   - {{4}} `3 calls · 1 interested · 1 to call back · 1 meeting fixed · 0 met in person`
+   - {{5}} `Visit Ravi Stores and send the demo link to Sri Sai Traders`
+   - {{6}} `Need the new price list from the office`
 7. **Buttons → Add button → Visit website:** text `Open full report`, URL type **Dynamic**, URL
-   `https://one.aaliconssultancy.com/daily/{{1}}`, sample `https://one.aaliconssultancy.com/daily/2026-10-08/u_sample`.
+   `https://one.aaliconssultancy.com/daily/{{1}}`, sample `https://one.aaliconssultancy.com/daily/Xq3Lm8Rt2Vb6Nw9Kd4Hs7Pa1`.
    The button opens only that person's report of that day, with no sign-in (each submitted report gets its own link, like a
    client's progress link). No header, no footer. Press **Submit**.
 

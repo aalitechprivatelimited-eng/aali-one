@@ -162,14 +162,14 @@ function autoStats(uid, date) {
 }
 
 // The department in one box: goes with the manager's own report, so top management reads one page per team.
-function TeamSummary({ team, date }) {
+function TeamSummary({ team, date, pick }) {
   const people = expected().filter((u) => u.team === team && !isManager(u)), rows = people.map((u) => ({ u, r: reportOf(u.id, date) })), rs = rows.map((x) => x.r).filter(Boolean);
   const help = rs.filter((r) => r.blockers?.trim()), tot = rs.reduce((t, r) => { const k = callStats(r); for (const x in k) t[x] += k[x]; return t; }, { n: 0, pos: 0, back: 0, meet: 0, met: 0 });
   return <div className="card stack"><div className="row between"><h3 style={{ margin: 0 }}>{TEAMS[team]} team summary · {dayName(date)}</h3>
     <span className="small muted">{rs.length} present · {people.length - rs.length} not started · {rs.filter((r) => r.status === 'submitted').length} submitted</span></div>
     {team === 'sales' && <div className="row small"><Pill k="gold">Calls made: {tot.n}</Pill><Pill k="ok">Interested: {tot.pos}</Pill><Pill k="warn">Call back: {tot.back}</Pill><Pill k="gold">Meetings fixed: {tot.meet}</Pill><Pill k="gold">Met in person: {tot.met}</Pill></div>}
     <div className="tbl"><table><thead><tr><th>Name</th><th>Attendance</th>{team === 'sales' && <><th className="n">Calls</th><th className="n">Interested</th><th className="n">Call back</th><th className="n">Meetings</th><th className="n">Met</th></>}<th className="n">Worked</th><th className="n">Nothing recorded</th></tr></thead>
-      <tbody>{rows.map(({ u, r }) => { const k = callStats(r), d = r ? dayLine(r) : null; return <tr key={u.id}><td><b>{u.name}</b><div className="small muted">{desig(u)}</div></td><td>{r ? <Pill k="ok">Present{d.start ? ' · ' + hm(d.start) : ''}</Pill> : <Pill k="bad">No report</Pill>}</td>
+      <tbody>{rows.map(({ u, r }) => { const k = callStats(r), d = r ? dayLine(r) : null; return <tr key={u.id}><td>{pick ? <button type="button" className="linkbtn" onClick={() => pick(u.id)}><b>{u.name}</b></button> : <b>{u.name}</b>}<div className="small muted">{desig(u)}</div></td><td>{r ? <Pill k="ok">Present{d.start ? ' · ' + hm(d.start) : ''}</Pill> : <Pill k="bad">No report</Pill>}</td>
         {team === 'sales' && <><td className="n">{k.n}</td><td className="n">{k.pos}</td><td className="n">{k.back}</td><td className="n">{k.meet}</td><td className="n">{k.met}</td></>}<td className="n">{d ? fmtMins(d.worked) : '—'}</td><td className="n">{d ? fmtMins(d.idle) : '—'}</td></tr>; })}</tbody></table></div>
     <TimeBars reports={rs} empty="The team has not written any timed work for this day yet." />
     {help.length > 0 && <div className="banner bad">{help.map((r) => <div key={r.id}><b>{uname(r.owner)}:</b> {r.blockers}</div>)}</div>}
@@ -582,14 +582,16 @@ function Team() {
     {!rows.length && <Empty>No people in this view. Add people in Settings → People.</Empty>}
     {view === 'week' ? <Week people={people} end={date} pick={(d, id) => { setDate(d); setView('day'); setOpen(id); }} />
       : <div className={isTop(me) ? 'stack gap16' : 'split'}>
-        {/* Management sees the departments side by side (Sales | IT); a department manager keeps the single list with the side panel. */}
+        {/* Management sees the departments side by side (Sales | IT); the Sales or IT filter opens one department: every person's whole
+            report, the manager's first. A department manager keeps the single list with the side panel. */}
+        {isTop(me) && team !== 'all' ? <TeamDetail rows={rows} date={date} open={open} /> :
         <div className={isTop(me) ? 'deptcols' : 'stack gap16'}>{['sales', 'it', 'management'].map((t) => { const g = rows.filter((x) => x.u.team === t); if (!g.length) return null;
           const parts = [['Manager', g.filter((x) => isManager(x.u))], ['Team', g.filter((x) => !isManager(x.u))]].filter((x) => x[1].length), cs = g.reduce((n, x) => n + callStats(x.r).n, 0);
           return <section key={t} className={isTop(me) ? 'deptcol' : ''}><div className="row between" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{TEAMS[t]} Team</h2>
             <span className="small muted">{g.filter((x) => x.r).length} of {g.length} present · {g.filter((x) => x.r?.status === 'submitted').length} submitted{t === 'sales' ? ` · ${cs} calls` : ''}</span></div>
             {parts.map(([label, list]) => <div key={label} style={{ marginBottom: 10 }}><span className="lbl">{TEAMS[t]} {label}{label === 'Team' ? ` · ${list.length}` : ''}</span>
               <div className="list" style={{ marginTop: 4 }}>{list.map(({ u, r }, i) => <PersonRow key={u.id} u={u} r={r} date={date} first={!i} open={open === u.id} toggle={() => setOpen(open === u.id ? '' : u.id)} />)}</div></div>)}
-          </section>; })}</div>
+          </section>; })}</div>}
         <div className={isTop(me) ? 'grid3' : 'stack'} style={{ alignItems: 'start' }}>
           <div className="card"><h3>Time by kind of work</h3><TimeBars reports={rows.map((x) => x.r)} empty="No timed work written for this day yet." /></div>
           <div className="card"><h3>Latest updates</h3>{feed.length ? <div className="stack gap4">{feed.map((e) => <div key={e.u.id + e.id} className="small"><span className="num faint">{hm(e.at)}</span> <b>{e.u.name.split(' ')[0]}</b> · {e.brk ? 'Break' : (e.kind ? e.kind + ': ' : '') + e.text}{e.state === 'running' ? ' (in progress)' : e.mins ? ` (${fmtMins(e.mins)})` : ''}</div>)}</div> : <p className="small muted" style={{ margin: 0 }}>Nothing written for this day yet. New lines show here by themselves.</p>}</div>
@@ -599,7 +601,7 @@ function Team() {
 }
 function PersonRow({ u, r, date, open, toggle, first }) {
   const me = store.me, [l, k] = status(r), cs = callStats(r), out = date === today() && list('presence').find((x) => x.user === u.id && x.out && x.date === date);
-  const nudge = waLink(u.phone, `Hi ${u.name.split(' ')[0]}, please update your daily work report for ${fmtDate(date)} in Aali One: ${location.origin}/daily`);
+  const nudge = nudgeLink(u, date);
   return <div style={{ borderTop: first ? 'none' : '1px solid var(--line)' }}>
     <button type="button" className="li" onClick={toggle} aria-expanded={open} style={{ width: '100%', border: 'none', background: 'none', textAlign: 'left' }}>
       <Av id={u.id} /><div className="grow" style={{ minWidth: 150 }}><div className="t">{u.name}</div><div className="small muted">{desig(u)} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} task${r.entries?.length === 1 ? '' : 's'} · last ${ago(r.updatedAt)}` : ''}</div></div>
@@ -611,7 +613,27 @@ function PersonRow({ u, r, date, open, toggle, first }) {
         : <ReportView r={r} me={me} />}</div>}
   </div>;
 }
-export function ReportView({ r, me }) {
+const nudgeLink = (u, date) => waLink(u.phone, `Hi ${u.name.split(' ')[0]}, please update your daily work report for ${fmtDate(date)} in Aali One: ${location.origin}/daily`);
+// One department in full, for management (the Sales or IT filter, or a department card): the team at a glance, then each
+// person's whole report, one after another – the department manager first – so nobody has to be opened one by one.
+function TeamDetail({ rows, date, open }) {
+  const order = [...rows.filter((x) => isManager(x.u)), ...rows.filter((x) => !isManager(x.u))], teams = [...new Set(rows.map((x) => x.u.team))].filter((t) => t !== 'management');
+  const go = (id) => document.getElementById('rep-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  useEffect(() => { if (open) document.getElementById('rep-' + open)?.scrollIntoView({ block: 'start' }); }, [open]); // opened from a link or the week view
+  return <div className="stack gap16">
+    {teams.map((t) => <TeamSummary key={t} team={t} date={date} pick={go} />)}
+    {order.map(({ u, r }) => <PersonReport key={u.id} u={u} r={r} date={date} />)}
+  </div>;
+}
+function PersonReport({ u, r, date }) {
+  const me = store.me, [l, k] = status(r), out = date === today() && list('presence').find((x) => x.user === u.id && x.out && x.date === date), nudge = nudgeLink(u, date);
+  return <section className="card stack repcard" id={'rep-' + u.id} aria-label={`${u.name}'s report`}>
+    <div className="row"><Av id={u.id} /><div className="grow" style={{ minWidth: 0 }}><b className="rep-name">{u.name}</b><div className="small muted">{desig(u)} · {TEAMS[u.team]}{r ? ` · ${r.entries?.length || 0} task${r.entries?.length === 1 ? '' : 's'} · last update ${ago(r.updatedAt)}` : ''}</div></div>
+      {out && <Pill k="warn">Out of office · {out.why} since {hm(out.since)}</Pill>}{r?.blockers?.trim() && <Pill k="bad">Needs help</Pill>}<Pill k={k}>{l}</Pill><Sample on={r?.sample} /></div>
+    {r ? <ReportView r={r} me={me} inTeam /> : <div className="row"><span className="muted small">No report for {dayName(date).toLowerCase()} yet.</span>{nudge && <a className="btn wa sm" href={nudge} target="_blank" rel="noreferrer">Remind on WhatsApp</a>}</div>}
+  </section>;
+}
+export function ReportView({ r, me, inTeam }) {
   const [note, setNote] = useState(''), auto = autoStats(r.owner, r.date), sub = r.status === 'submitted';
   const act = (data, ok) => attempt(() => update(r.id, data), ok).then((done) => done && setNote(''));
   return <>
@@ -619,7 +641,7 @@ export function ReportView({ r, me }) {
     <Entries r={r} />
     {r.calls?.length > 0 && <div className="stack gap4"><span className="lbl">Call sheet · {callLine(callStats(r))}</span><CallTable calls={r.calls} /></div>}
     <div><span className="lbl">Time by kind of work</span><TimeBars reports={[r]} empty="No timed work in this report." /></div>
-    {['salesmgr', 'itmgr'].includes(r.ownerTitle) && <TeamSummary team={r.team} date={r.date} />}
+    {['salesmgr', 'itmgr'].includes(r.ownerTitle) && !inTeam && <TeamSummary team={r.team} date={r.date} />}
     {auto.length > 0 && <div className="row small"><span className="lbl">Recorded by Aali One</span>{auto.map((a) => <Pill key={a} k="gold">{a}</Pill>)}</div>}
     {r.plan?.trim() && <div className="small"><span className="lbl">Plan for tomorrow</span><div style={{ whiteSpace: 'pre-wrap' }}>{r.plan}</div></div>}
     {r.blockers?.trim() && <div className="banner bad"><b>Problems / help needed:</b> {r.blockers}</div>}

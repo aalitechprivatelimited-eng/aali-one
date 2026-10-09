@@ -1105,12 +1105,13 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
     // The Operations Manager and the Company Secretary (each with a mobile); not the Chairman (no number yet), not the Sales Manager (not management).
     assert.deepEqual(sent.map((m) => m.to).sort(), ['919000011111', '919848022334']);
     const p = sent[0].template.components[0].parameters.map((x) => x.text);
-    // The user's format: date · the person in bold · the day line · the calls line · the kinds of work · the problem · the link.
+    // The user's order: the name and designation (with the day) · the hours worked with their details · the kinds of work ·
+    // then the final report: calls · plan for tomorrow · problem.
     assert.equal(sent[0].template.name, 'daily_report'); assert.equal(p.length, 6);
-    assert.match(p[0], /^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4}$/); assert.equal(p[1], '*wb* (BDE)');
-    assert.match(p[2], /^\d{1,2}:\d\d (am|pm) – \d{1,2}:\d\d (am|pm) · Worked 2 h · Nothing recorded 1 h$/);
-    assert.equal(p[3], '2 calls · 1 interested · 1 to call back · 1 meeting fixed · 0 met in person');
-    assert.equal(p[4], 'Calling 2 h'); assert.equal(p[5], 'Need the price list · from the office   today · please');
+    assert.match(p[0], /^\*wb\*, BDE · [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4}$/);
+    assert.match(p[1], /^2 h \(\d{1,2}:\d\d (am|pm) – \d{1,2}:\d\d (am|pm) · Nothing recorded 1 h\)$/);
+    assert.equal(p[2], 'Calling 2 h'); assert.equal(p[3], '2 calls · 1 interested · 1 to call back · 1 meeting fixed · 0 met in person');
+    assert.equal(p[4], 'Not written'); assert.equal(p[5], 'Need the price list · from the office   today · please');
     assert.ok(p.every((x) => !/[\n\t]| {4}/.test(x)), 'no line breaks, tabs or 4 spaces in a field (Meta refuses them)');
     // The "Open full report" button: its address ends in the report's own key – /daily/<key> opens that report alone, with no sign-in.
     const key = (await db.query("select data->>'shareToken' k from records where id = $1", [r.id])).rows[0].k;
@@ -1128,7 +1129,7 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
     assert.ok(q.length === 1 && q.every((x) => x.status === 'queued' && x.tries === 1 && /132001/.test(x.error)), 'only the Operations Manager now (the Company Secretary switched it off): ' + JSON.stringify(q));
     // Settings → WhatsApp shows it, for management only.
     const st = (await call('GET', '/whatsapp', null, OPS)).body;
-    assert.equal(st.ready, true); assert.match(st.template.text, /Daily work report from Aali One · \{\{1\}\}/); assert.ok(st.recent.some((x) => /132001/.test(x.error)));
+    assert.equal(st.ready, true); assert.match(st.template.text, /^👤 \{\{1\}\}\nDaily work report · Aali One/); assert.equal(st.template.samples.length, 6); assert.ok(st.recent.some((x) => /132001/.test(x.error)));
     assert.equal((await call('GET', '/whatsapp', null, B)).status, 403);
     // On Vercel the submit waits until WhatsApp has the messages: they are sent by the time the page has its answer.
     process.env.VERCEL = '1'; setWaSender((to, template) => { sent.push({ to, template }); return 'wamid.v'; });
@@ -1143,7 +1144,7 @@ test('WhatsApp: a submitted daily report goes to each person in management on Wh
     await db.query("update outbox set next_at = now() where status = 'queued'");
     await flushOutbox(db);
     assert.ok((await db.query("select status from outbox where ref = $1", [r2.id])).rows.every((x) => x.status === 'sent'));
-    assert.deepEqual(reportLines({ entries: [], calls: [] }), ['No time recorded', 'No calls', 'No timed work', 'None']);
+    assert.deepEqual(reportLines({ entries: [], calls: [] }), ['No time recorded', 'No timed work', 'No calls', 'Not written', 'None']);
   } finally { setWaSender(null); }
 });
 

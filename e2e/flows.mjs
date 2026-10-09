@@ -194,6 +194,14 @@ try {
     await top.getByRole('button', { name: 'Start the guide' }).click(); const { seen } = await walkGuide(top);
     for (const p of ['/daily', '/payments', '/quotes', '/projects', '/collab', '/settings/people', '/settings/access', '/settings/staff', '/settings/audit']) must(seen.has(p), 'the guide did not open ' + p); });
 
+  await step("daily reports for management: the Sales filter shows each person's whole report, the Sales Manager first; a name in the table jumps to it", async () => { await top.goto(BASE + '/daily');
+    await top.locator('.seg button', { hasText: /^Sales$/ }).click(); const kiran = top.locator('.repcard', { hasText: 'Kiran' }); await kiran.waitFor();
+    const names = await top.locator('.repcard .rep-name').allTextContents(); must(names[0].includes('Meera') && names.length >= 3, 'not the Sales Manager first, then the team: ' + names.join(', '));
+    must(await kiran.locator('.pill', { hasText: 'Reviewed' }).count() > 0 && await kiran.locator('.li.tl').count() > 0, "Kiran's report is not shown in full");
+    await top.locator('.linkbtn', { hasText: 'Vani' }).click(); await sleep(900);
+    const [y, h, sy] = await top.locator('.repcard', { hasText: 'Vani' }).evaluate((e) => [e.getBoundingClientRect().top, innerHeight, scrollY]);
+    must(sy > 0 && y >= 0 && y < h - 60, "the name did not bring Vani's report into view: " + [y, h, sy]);
+    await top.locator('.seg button', { hasText: /^IT$/ }).click(); await top.getByText('No people in this view').waitFor(); must(await top.locator('.repcard').count() === 0, 'IT shows the Sales team'); });
   await step('signing out and in again opens the dashboard, not the page left', async () => { await top.goto(BASE + '/daily'); await top.locator('.page h1').first().waitFor();
     await top.getByRole('button', { name: 'Sign out' }).click(); await top.locator('input[type=email]').waitFor(); must(new URL(top.url()).pathname === '/', 'still on ' + new URL(top.url()).pathname);
     await top.locator('input[type=email]').fill('admin@e2e.test'); await top.locator('input[type=password]').fill(PW); await top.getByRole('button', { name: 'Sign in' }).click(); await top.locator('.hero h1').waitFor(); });
