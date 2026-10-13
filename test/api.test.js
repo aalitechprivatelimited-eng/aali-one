@@ -8,8 +8,9 @@ import { hashPassword } from '../server/auth.js';
 
 process.env.PGLITE_DIR = 'memory://';
 function call(method, path, body, cookie = '', more = {}) {
-  const req = Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []);
-  Object.assign(req, { method, url: '/api' + path, headers: { cookie, 'content-type': 'application/json', ...more } });
+  const { raw, headers: extra, ...plain } = more; // raw: a body sent as it is; headers / plain keys: extra request headers
+  const req = Readable.from(raw !== undefined ? [Buffer.from(raw)] : body ? [Buffer.from(JSON.stringify(body))] : []);
+  Object.assign(req, { method, url: '/api' + path, headers: { cookie, 'content-type': 'application/json', ...plain, ...(extra || {}) } });
   return new Promise((resolve) => {
     const res = { status: 0, headers: {}, writeHead(s, h) { this.status = s; this.headers = h; }, end(b) {
       const txt = Buffer.isBuffer(b) ? b.toString() : b; let json; try { json = JSON.parse(txt); } catch { json = txt; }
@@ -40,7 +41,8 @@ test('leads: round-robin, duplicate mobile+service merges, new service keeps BDE
   const b = await add(admin, 'lead', { name: 'Sita', mobile: '9000000001', service: 'Mobile app (Android + iOS)', source: 'Referral' });
   assert.notEqual(a.record.owner, b.record.owner, 'turns alternate between BDEs');
   const again = await call('POST', '/public/enquiry', { name: 'Ravi K', mobile: '+91 98765-43210', service: 'Website – 5 pages', message: 'Still interested' });
-  assert.equal(again.body.merged, true);
+  assert.deepEqual(again.body, { ok: true }, 'the public form is told nothing more (not whether that mobile asked before)');
+  assert.ok((await call('GET', '/bootstrap', null, admin)).body.records.find((r) => r.id === a.record.id).repeatPending, 'the repeat joined the open lead');
   const other = await add(admin, 'lead', { name: 'Ravi', mobile: '9876543210', service: 'SEO & digital marketing' });
   assert.equal(other.record.owner, a.record.owner); assert.equal(other.record.existingClient, true);
   const bad = await call('POST', '/records', { type: 'lead', data: { name: 'X', mobile: '123', service: 'Website – 5 pages' } }, admin);
@@ -55,7 +57,13 @@ test('quotes: numbering, deal value follows; only the Sales Manager and manageme
   const q1 = (await add(sm, 'quote', body)).record;
   const q2 = (await add(sm, 'quote', { date: '2026-09-30', items: [{ desc: 'App', qty: 1, rate: 1000 }], taxMode: 'none' })).record;
   assert.equal(q1.number, 'AC/2026-27/001'); assert.equal(q2.number, 'AC/2026-27/002');
-  assert.equal(q1.status, 'draft'); assert.ok(q1.discountApprovedAt, 'a manager\'s own discount needs no second approval'); assert.equal(q1.totals.total, 37760);
+  // Above the limit, the Sales Manager's discount waits for management (the user, 10 Oct 2026); she cannot approve it herself.
+  assert.equal(q1.status, 'needs approval'); assert.ok(!q1.discountApprovedAt); assert.equal(q1.totals.total, 37760);
+  const ask = (await call('GET', '/bootstrap', null, admin)).body.records.find((r) => r.type === 'approval' && r.relId === q1.id);
+  assert.equal((await patch(sm, ask.id, { status: 'approved' })).status, 403, 'not her own request');
+  assert.equal((await patch(admin, ask.id, { status: 'approved' })).status, 200);
+  const q1b = (await call('GET', '/bootstrap', null, admin)).body.records.find((r) => r.id === q1.id);
+  assert.deepEqual([q1b.status, q1b.discountApprovedPct], ['draft', 20]);
   const d = (await call('GET', '/bootstrap', null, admin)).body.records.find((r) => r.id === deal.id);
   assert.equal(d.value, 37760); assert.equal(d.quoteNo, 'AC/2026-27/001');
   const types = async (c) => new Set((await call('GET', '/bootstrap', null, c)).body.records.map((r) => r.type));
@@ -67,6 +75,12 @@ test('quotes: numbering, deal value follows; only the Sales Manager and manageme
   assert.equal((await call('DELETE', '/records/' + q2.id, { reason: 'Made by mistake' }, sm)).status, 200);
   const q3 = (await add(sm, 'quote', { date: '2026-09-30', items: [{ desc: 'x', qty: 1, rate: 1 }], taxMode: 'none' })).record;
   assert.equal(q3.number, 'AC/2026-27/003', 'deleted numbers are never reused');
+  // A bigger discount than the one approved asks again; approval fields sent from the browser are ignored.
+  const more = await patch(sm, q1.id, { discountValue: 30, discountApprovedAt: '2026-01-01', discountApprovedPct: 99, discountApprovedBy: 'u_sm' });
+  assert.equal(more.body.record.status, 'needs approval'); assert.equal(more.body.record.discountApprovedPct, 20);
+  // Management's own quotation above the limit is approved by them.
+  const q4 = (await add(admin, 'quote', { date: '2026-09-30', items: [{ desc: 'x', qty: 1, rate: 1000 }], taxMode: 'none', discountType: 'percent', discountValue: 25 })).record;
+  assert.deepEqual([q4.status, q4.discountApprovedPct], ['draft', 25]);
 });
 
 test('advance gate, receipt unlocks project, sign-off makes it live', async () => {
@@ -627,7 +641,8 @@ test('agreements: the Operations and Sales Managers make them, only Operations m
   assert.equal((await recs(sm)).find((r) => r.id === deal.id).handoff?.agreement, true);
   // Review findings: nothing reaches a signed agreement through another kind of item, an odd kind, a rewritten history, or management's shortcuts.
   const ap = (await add(it0, 'approval', { kind: 'discount', relType: 'project', relId: sa.id, reason: 'x' })).record;
-  assert.equal((await patch(it0, ap.id, { status: 'approved' })).status, 200);
+  assert.equal((await patch(it0, ap.id, { status: 'approved' })).status, 403, 'nobody decides their own request');
+  assert.equal((await patch(admin, ap.id, { status: 'approved' })).status, 200);
   assert.equal((await call('POST', '/records', { type: 'receipt', data: { paymentId: sa.id, payerName: 'X', items: [{ desc: 'x', amount: 100 }], taxMode: 'none', mode: 'Cash' } }, sm)).status, 200);
   assert.equal((await call('POST', '/records', { type: 'agreement', data: { kind: ['closure'], clientName: 'X' } }, sm)).status, 403, 'a list is not "service"');
   assert.equal((await call('POST', '/records', { type: 'agreement', data: { kind: 'toString', clientName: 'X' } }, OPS)).status, 400);
@@ -980,7 +995,7 @@ test('sign-in: a signed JWT that ends after 12 hours or an hour without use; pas
   assert.match((await db.query("select pass_hash from users where id = 'u_jw'")).rows[0].pass_hash, /^\$2[aby]\$12\$/, 'and is kept as bcrypt from now on');
   assert.equal((await call('POST', '/auth/login', { email: 'jw@test.in', password: 'password123' })).status, 200, 'the bcrypt password signs in');
   assert.equal((await call('POST', '/auth/login', { email: 'jw@test.in', password: 'password124' })).status, 401);
-  assert.match(r.headers['set-cookie'], /HttpOnly; SameSite=Lax; Max-Age=43200/, 'the cookie lasts 12 hours and scripts cannot read it');
+  assert.match(r.headers['set-cookie'], /HttpOnly; SameSite=Strict; Max-Age=43200/, 'the cookie lasts 12 hours, scripts cannot read it, other sites cannot send it');
   const C = r.cookie, token = C.split('=')[1], [h, p, sig] = token.split('.'), head = JSON.parse(Buffer.from(h, 'base64url')), claims = JSON.parse(Buffer.from(p, 'base64url'));
   assert.deepEqual([head.alg, head.typ, claims.sub, claims.exp - claims.iat], ['HS256', 'JWT', 'u_jw', 12 * 3600]);
   assert.equal((await call('GET', '/me', null, C)).status, 200);
@@ -1208,7 +1223,7 @@ test('Bills: an employee submits a bill with its photo; management is told, appr
   assert.match((await call('POST', '/records', { type: 'bill', data: { ...bill, files: [] } }, B)).body.error, /photo of the bill/);
   assert.match((await call('POST', '/records', { type: 'bill', data: { ...bill, kind: 'Holiday' } }, B)).body.error, /type of expense/);
   assert.match((await call('POST', '/records', { type: 'bill', data: { ...bill, paidBy: '' } }, B)).body.error, /how you paid/);
-  assert.match((await call('POST', '/records', { type: 'bill', data: bill }, B2)).body.error, /photo of the bill again/);
+  assert.match((await call('POST', '/records', { type: 'bill', data: bill }, B2)).body.error, /file again/);
   // Submitted: a number, the QR code it will be paid to, and every member of management told – not the Sales Manager.
   const b = (await add(B, 'bill', bill)).record;
   assert.match(b.number, /^B-\d{4}$/); assert.equal(b.status, 'submitted'); assert.equal(b.qr, qr.id); assert.equal(b.owner, 'u_bb');
@@ -1248,6 +1263,88 @@ test('Bills: an employee submits a bill with its photo; management is told, appr
   assert.ok((await db.query("select 1 from records where type = 'notice' and data->>'to' = 'u_bb' and data->>'text' like '%The photo is not clear%'")).rowCount);
 });
 
+test('Security review 10 Oct 2026: every reproduced attack is now refused', async () => {
+  const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  for (const [id, title, team] of [['u_xops', 'ops', 'management'], ['u_xch', 'chairman', 'management'], ['u_xb1', 'bde', 'sales'], ['u_xb2', 'bde', 'sales'], ['u_xsm', 'salesmgr', 'sales'], ['u_xit', 'itmgr', 'it'], ['u_xdev', 'dev', 'it'], ['u_xdev2', 'dev', 'it']])
+    await db.query('insert into users (id,email,name,title,team,pass_hash,company) values ($1,$2,$3,$4,$5,$6,$7)', [id, id + '@test.in', id, title, team, hashPassword('password123'), team === 'management' ? 'Aali Group' : 'Aali Conssultancy']);
+  const C = {}; for (const id of ['u_xops', 'u_xch', 'u_xb1', 'u_xb2', 'u_xsm', 'u_xit', 'u_xdev']) C[id] = await login(id + '@test.in');
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const upload = async (c) => (await call('POST', '/files', { name: 'x.png', mime: 'image/png', data: PNG }, c)).body.id;
+  const sees = async (c, id) => (await call('GET', '/bootstrap', null, c)).body.records.some((r) => r.id === id);
+
+  // H1: an admin cannot make themselves Chairman, add a second Chairman, reset or switch off the Chairman, or change their own role.
+  assert.equal((await call('PATCH', '/users/u_xops', { title: 'chairman' }, C.u_xops)).status, 403);
+  assert.equal((await call('PATCH', '/users/u_xb1', { title: 'chairman' }, C.u_xops)).status, 403);
+  assert.equal((await call('POST', '/users', { firstName: 'Second', surname: 'Chair', email: 'chair2@test.in', password: 'password123', title: 'chairman', designation: 'x' }, C.u_xops)).status, 403);
+  assert.equal((await call('PATCH', '/users/u_xch', { password: 'takenover123' }, C.u_xops)).status, 403);
+  assert.equal((await call('PATCH', '/users/u_xch', { active: false }, C.u_xops)).status, 403);
+  assert.equal((await call('DELETE', '/users/u_xch', { reason: 'testing' }, C.u_xops)).status, 403);
+  assert.equal((await call('PATCH', '/users/u_xops', { title: 'cs' }, C.u_xops)).status, 403, 'nobody changes their own role');
+  assert.equal((await call('PATCH', '/users/u_xb1', { title: 'boss' }, C.u_xops)).status, 400, 'only roles from the list');
+  // H2: naming someone else's client or project does not open it.
+  const cl = (await call('POST', '/records', { type: 'client', data: { name: 'B2 private', phone: '9811100001' } }, C.u_xb2)).body.record;
+  assert.equal((await call('POST', '/records', { type: 'deal', data: { title: 'x', clientId: cl.id } }, C.u_xb1)).status, 403);
+  assert.equal(await sees(C.u_xb1, cl.id), false);
+  const pr = (await call('POST', '/records', { type: 'project', data: { name: 'Secret', lead: 'u_xdev2', people: ['u_xdev2'] } }, C.u_xit)).body.record;
+  const tk = (await call('POST', '/records', { type: 'task', data: { title: 'mine' } }, C.u_xdev)).body.record;
+  assert.equal((await patch(C.u_xdev, tk.id, { projectId: pr.id })).status, 403);
+  assert.equal(await sees(C.u_xdev, pr.id), false);
+  // H3: wrong passwords sent at the same moment cannot pass the limit of 8.
+  const tries = await Promise.all(Array.from({ length: 20 }, () => call('POST', '/auth/login', { email: 'u_xdev2@test.in', password: 'wrong-pass-1' })));
+  assert.ok(tries.filter((x) => x.status === 401).length <= 8 && tries.filter((x) => x.status === 429).length >= 12, 'checked: ' + tries.map((x) => x.status).join(','));
+  for (let i = 0; i < 8; i++) assert.equal((await call('POST', '/auth/login', { email: 'alert-me@test.in', password: 'wrong-pass-' + i })).status, 401);
+  assert.ok((await db.query("select 1 from records where type = 'notice' and data->>'to' = 'u_xops' and data->>'text' like '8 wrong passwords for alert-me@test.in%'")).rowCount, 'management is told at the limit');
+  await call('POST', '/auth/login', { email: 'password123', password: 'x' });
+  assert.ok((await db.query("select 1 from audit where action = 'loginfail' and type = '(not an email address)'")).rowCount && !(await db.query("select 1 from audit where type = 'password123'")).rowCount, 'a password in the email box is not logged');
+  // M1: a refused change saves nothing; a change says what changed.
+  assert.equal((await call('PATCH', '/users/u_xb1', { isAdmin: true, password: 'x' }, C.u_xops)).status, 400);
+  assert.equal((await db.query("select is_admin from users where id = 'u_xb1'")).rows[0].is_admin, false);
+  assert.equal((await call('PATCH', '/users/u_xb1', { designation: 'Senior BDE' }, C.u_xops)).status, 200);
+  assert.ok((await db.query("select 1 from audit where action = 'user' and summary like 'u_xb1@test.in: designation – → Senior BDE%'")).rowCount);
+  // M2: the history cannot be rewritten from the browser.
+  const rep = (await call('POST', '/records', { type: 'report', data: { entries: [{ text: 'x' }] } }, C.u_xb1)).body.record;
+  await patch(C.u_xb1, rep.id, { log: [{ at: '2026-01-01', by: 'u_xch', text: 'Approved by the Chairman' }], plan: 5 });
+  const rd = (await db.query('select data from records where id = $1', [rep.id])).rows[0].data;
+  assert.ok(!(rd.log || []).some((l) => l.by === 'u_xch')); assert.equal(rd.plan, '5', 'M9: plan is always text');
+  // M3: another person's file cannot be put on your own item or used as your photo.
+  const f2 = await upload(C.u_xb2);
+  assert.equal((await call('POST', '/records', { type: 'comment', data: { text: 'x', f: f2 } }, C.u_xb1)).status, 403);
+  assert.equal((await call('GET', '/files/' + f2, null, C.u_xb1)).status, 404);
+  assert.equal((await call('PATCH', '/users/u_xb1', { photo: f2 }, C.u_xb1)).status, 400);
+  assert.equal((await call('PATCH', '/users/u_xb1', { photo: await upload(C.u_xb1) }, C.u_xb1)).status, 200, 'your own picture is fine');
+  // M4: Live needs the real sign-off; the browser cannot set the gates.
+  assert.equal((await patch(C.u_xit, pr.id, { stage: 'live', signoffId: 'fake' })).status, 400);
+  const born = (await call('POST', '/records', { type: 'project', data: { name: 'Born live', stage: 'live', signoffId: 'x', progressToken: 'weak' } }, C.u_xit)).body.record;
+  assert.equal(born.stage, 'planning'); assert.ok(!born.signoffId); assert.ok(born.progressToken.length >= 24 && born.progressToken !== 'weak');
+  assert.equal((await call('POST', '/records', { type: 'project', data: { name: 'Finished before Aali One', stage: 'live' } }, C.u_xops)).body.record.stage, 'live', 'management may record a finished project');
+  // M5 + M6: one business, one caller through a client too; a BDE cannot delete a closed number.
+  await call('POST', '/records', { type: 'report', data: { date: new Date(Date.now() - 864e5 + 5.5 * 3600e3).toISOString().slice(0, 10), calls: [{ org: 'Shop B', phone: '9833300001', resp: 'Interested' }] } }, C.u_xb2);
+  assert.equal((await call('POST', '/records', { type: 'client', data: { name: 'Shop B', phone: '9833300001' } }, C.u_xb1)).status, 409);
+  assert.equal((await patch(C.u_xb1, rep.id, { calls: [{ org: 'Shop A', phone: '9822200001', resp: 'Not interested' }] })).status, 200); // today's report (one a day)
+  const pros = (await db.query("select id from records where type = 'prospect' and data->>'phone10' = '9822200001'")).rows[0];
+  assert.equal((await call('DELETE', '/records/' + pros.id, {}, C.u_xb1)).status, 403);
+  // M7: only JSON, and only from Aali One's own pages.
+  assert.equal((await call('PATCH', '/users/u_xb1', null, C.u_xb1, { raw: JSON.stringify({ personalEmail: 'evil@x.in' }), headers: { 'content-type': 'text/plain' } })).status, 415);
+  assert.equal((await call('PATCH', '/users/u_xb1', { personalEmail: 'evil@x.in' }, C.u_xb1, { headers: { origin: 'https://evil.example', host: 'one.aaliconssultancy.com' } })).status, 403);
+  assert.equal((await call('PATCH', '/users/u_xb1', { personalEmail: 'mine@x.in' }, C.u_xb1, { headers: { origin: 'https://one.aaliconssultancy.com', host: 'one.aaliconssultancy.com' } })).status, 200);
+  // M8: changing the bank details printed on papers is written out in full and management is told.
+  const biz = (await call('GET', '/bootstrap', null, C.u_xops)).body.settings.business;
+  assert.equal((await call('PUT', '/settings/business', { value: { ...biz, bank: 'Account no. : 999' } }, C.u_xops)).status, 200);
+  assert.ok((await db.query("select 1 from audit where action = 'settings' and summary like 'business: bank – bank:%→ \"Account no. : 999\"%'")).rowCount);
+  assert.ok((await db.query("select 1 from records where type = 'notice' and data->>'to' = 'u_xch' and data->>'text' like '%changed the company''s bank%'")).rowCount);
+  // M11: with SETUP_TOKEN set, setup needs the code.
+  process.env.SETUP_TOKEN = 'code-123';
+  try { assert.equal((await call('POST', '/setup', { name: 'x', email: 'x@x.in', password: 'password123' })).status, 403);
+    assert.equal((await call('POST', '/setup', { name: 'x', email: 'x@x.in', password: 'password123', setupCode: 'code-123' })).status, 409, 'right code, but setup is done');
+  } finally { delete process.env.SETUP_TOKEN; }
+  // L5: an admin outside management cannot approve their own bill.
+  await db.query("update users set is_admin = true where id = 'u_xsm'"); const SM = await login('u_xsm@test.in');
+  await call('PATCH', '/users/u_xsm', { upiQr: await upload(SM) }, SM);
+  const ph = await upload(SM), day = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const bill = (await call('POST', '/records', { type: 'bill', data: { date: day, amount: 99, kind: 'Fuel', paidTo: 'x', purpose: 'x', paidBy: 'Cash', files: [{ id: ph, name: 'b.png', mime: 'image/png' }] } }, SM)).body.record;
+  assert.equal((await patch(SM, bill.id, { status: 'approved' })).status, 403);
+});
+
 test('WhatsApp: "Check the template with Meta" says whether the template is approved, a utility one, in English and with its four fields', async () => {
   const { setWaTemplates, REPORT_TEMPLATE } = await import('../server/whatsapp.js');
   const db = await getDb();
@@ -1263,6 +1360,9 @@ test('WhatsApp: "Check the template with Meta" says whether the template is appr
     setWaTemplates(() => [tpl({ status: 'REJECTED', rejected_reason: 'INVALID_FORMAT' })]); assert.match((await ask()).problems[0], /rejected it: INVALID_FORMAT/);
     setWaTemplates(() => [tpl({ category: 'MARKETING', components: [{ type: 'BODY', text: 'Report {{1}} {{2}} {{3}}.' }] })]);
     const two = await ask(); assert.equal(two.ok, false); assert.ok(two.problems.some((p) => /MARKETING/.test(p)) && two.problems.some((p) => /3 fields/.test(p)));
+    // {{1}} typed into the address box as well as the one Meta adds (10 Oct 2026): Meta stores the typed one as %7B%7B1%7D%7D.
+    const twice = tpl({ components: [{ type: 'BODY', text: REPORT_TEMPLATE }, { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'Open full report', url: 'https://one.aaliconssultancy.com/daily/%7B%7B1%7D%7D{{1}}' }] }] });
+    setWaTemplates(() => [twice]); assert.match((await ask()).problems[0], /\{\{1\}\} twice .* leave the address as https:\/\/one\.aaliconssultancy\.com\/daily\/ – Meta adds/);
     setWaTemplates(() => [tpl()]); const good = await ask(); assert.deepEqual([good.ok, good.status, good.category, good.sameText], [true, 'APPROVED', 'UTILITY', true]);
     assert.equal((await call('GET', '/whatsapp/template', null, (await call('POST', '/auth/login', { email: 'wb@test.in', password: 'password123' })).cookie)).status, 403, 'not for a BDE');
   } finally { setWaTemplates(null); }

@@ -71,7 +71,8 @@ blanks with the report, and the button opens that one report.
    - {{5}} `Visit Ravi Stores and send the demo link to Sri Sai Traders`
    - {{6}} `Need the new price list from the office`
 7. **Buttons → Add button → Visit website:** text `Open full report`, URL type **Dynamic**, URL
-   `https://one.aaliconssultancy.com/daily/{{1}}`, sample `https://one.aaliconssultancy.com/daily/Xq3Lm8Rt2Vb6Nw9Kd4Hs7Pa1`.
+   `https://one.aaliconssultancy.com/daily/` – type it only up to `/daily/`; Meta adds `{{1}}` after the box by itself
+   (typing `{{1}}` too makes it appear twice and the link breaks – happened 10 Oct 2026), sample `https://one.aaliconssultancy.com/daily/Xq3Lm8Rt2Vb6Nw9Kd4Hs7Pa1`.
    The button opens only that person's report of that day, with no sign-in (each submitted report gets its own link, like a
    client's progress link). No header, no footer. Press **Submit**.
 

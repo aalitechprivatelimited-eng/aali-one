@@ -11,9 +11,11 @@ export const newKey = () => randomBytes(18).toString('base64url'); // 24 letters
 const rounds = () => Math.max(4, Math.min(14, +process.env.BCRYPT_ROUNDS || 12));
 export const hashPassword = (pw) => bcrypt.hashSync(String(pw), rounds());
 export const isOldHash = (stored) => String(stored).startsWith('scrypt:');
-export function checkPassword(pw, stored) {
+// Checked with bcrypt's async compare: the slow check runs in small steps, so wrong passwords sent in a flood cannot freeze the server
+// for everyone (security review 10 Oct 2026). Callers await it.
+export async function checkPassword(pw, stored) {
   const s = String(stored || '');
-  if (s.startsWith('$2')) return bcrypt.compareSync(String(pw), s);
+  if (s.startsWith('$2')) return bcrypt.compare(String(pw), s);
   const [kind, salt, hash] = s.split(':');
   if (kind !== 'scrypt' || !salt || !hash) return false;
   const a = scryptSync(String(pw), Buffer.from(salt, 'hex'), 32), b = Buffer.from(hash, 'hex');
@@ -85,7 +87,7 @@ export async function sessionUser(db, token, idle = 0) {
 export async function userFromToken(db, token) { return (await sessionUser(db, token)).user || null; }
 export async function dropSession(db, token) { const k = await sessionKey(db, token); if (k) await db.query('delete from sessions where token_hash = $1', [k]); }
 export function sessionCookie(token, secure) {
-  return `aali_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${token ? LIFE_HOURS * 3600 : 0}${secure ? '; Secure' : ''}`;
+  return `aali_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${token ? LIFE_HOURS * 3600 : 0}${secure ? '; Secure' : ''}`;
 }
 export function readCookie(req, name) {
   const m = String(req.headers.cookie || '').match(new RegExp('(?:^|; )' + name + '=([^;]*)'));

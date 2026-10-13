@@ -36,7 +36,8 @@ async function q(sql, params, key = '') {
     // (last resort). The 15 s query limit is set on the reader login itself (scripts/hrm-reader.sql) – the pooler may refuse one sent at sign-in.
     let host = ''; try { host = new URL(url).hostname; } catch { /* the driver reports a bad address */ }
     const ca = [...readCerts(process.env.HRM_SSL_CA), ...(/\.supabase\.(com|co)$/.test(host) ? [SUPABASE_ROOT_CA] : [])];
-    pool = new pg.Pool({ connectionString: url, max: 2, connectionTimeoutMillis: 8000, ssl: { rejectUnauthorized: !process.env.HRM_SSL_NO_VERIFY, ...(ca.length && { ca }) } });
+    pool = new pg.Pool({ connectionString: url, max: 2, connectionTimeoutMillis: 8000, ssl: { rejectUnauthorized: process.env.HRM_SSL_NO_VERIFY !== '1', ...(ca.length && { ca }) } });
+    pool.on('error', (e) => console.error('Aali HRM connection dropped:', e.message)); // a dropped idle connection must not stop the server
     pools.set(key, pool);
   }
   return (await pool.query(sql, params)).rows;

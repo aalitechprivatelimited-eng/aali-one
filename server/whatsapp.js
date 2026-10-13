@@ -49,6 +49,10 @@ export function waNumber(phone) {
   const d = String(phone || '').replace(/\D/g, '').replace(/^0+/, '');
   return d.length === 10 && /^[6-9]/.test(d) ? '91' + d : d.length === 12 && d.startsWith('91') ? d : d.length >= 11 && d.length <= 15 && !d.startsWith('91') ? d : '';
 }
+// Text a person typed (kinds of work, plan, problem) goes out from the official number: links are broken so they do not open, and
+// WhatsApp's *bold* _italic_ ~strike~ marks are removed so nobody can dress a line up (security review 10 Oct 2026).
+const typed = (s) => String(s || '').replace(/[*_~`]/g, '').replace(/\b(https?):\/\//gi, '$1[:]//').replace(/\bwww\./gi, 'www[.]')
+  .replace(/\b([a-z0-9-]{2,63})\.(com|in|net|org|co|io|app|link|xyz|info|me|ly|biz|online|site|store|shop|club|top|live|page|dev)\b/gi, '$1[.]$2');
 // A template field: one line, no tabs, never more than 4 spaces together (Meta refuses those), and not too long.
 const field = (s, max) => { const t = String(s || '').replace(/[\r\n\t]+/g, ' · ').replace(/ {4,}/g, '   ').replace(/( · ){2,}/g, ' · ').trim(); return t.length > max ? t.slice(0, max - 1) + '…' : t || '–'; };
 
@@ -98,7 +102,7 @@ export async function queueReport(t, report, writer) {
   if (!waReady() || report.sample) return 0;
   const to = await reportRecipients(t, writer.id); if (!to.length) return 0;
   const [hours, work, calls, plan, problem] = reportLines(report), role = (writer.designation || '').trim() || ROLE_NAME[writer.title] || '';
-  const params = [field(`*${writer.name}*${role ? `, ${role}` : ''} · ${dayOf(report.date)}`, 120), field(hours, 160), field(work, 220), field(calls, 120), field(plan, 200), field(problem, 200)];
+  const params = [field(`*${writer.name}*${role ? `, ${role}` : ''} · ${dayOf(report.date)}`, 120), field(hours, 160), field(typed(work), 220), field(calls, 120), field(typed(plan), 200), field(typed(problem), 200)];
   // The button opens /daily/<key>: that report alone, with no sign-in (the user, 8 Oct 2026). Every submitted report has its key.
   const button = report.shareToken || `${report.date}/${encodeURIComponent(report.owner)}`;
   for (const u of to) await t.query("insert into outbox (kind, to_user, to_phone, payload, ref) values ('report', $1, $2, $3, $4)", [u.id, waNumber(u.phone), JSON.stringify({ params, button }), report.id]);
@@ -152,7 +156,9 @@ export async function checkTemplate() {
   if (fields.size !== TEMPLATE_FIELDS || !Array.from({ length: TEMPLATE_FIELDS }, (_, i) => i + 1).every((n) => fields.has(`{{${n}}}`))) problems.push(`It has ${fields.size} field${fields.size === 1 ? '' : 's'}; Aali One fills ${TEMPLATE_FIELDS}: {{1}} to {{${TEMPLATE_FIELDS}}}.`);
   const btn = (t.components || []).find((c) => c.type === 'BUTTONS')?.buttons?.find((b) => b.type === 'URL'), want = REPORT_BUTTON.url();
   if (!btn) problems.push(`It has no "${REPORT_BUTTON.text}" button. Add a "Visit website" button with a dynamic address: ${want}`);
-  else if (btn.url !== want) problems.push(`Its button opens ${btn.url}; it must open ${want} (a dynamic address ending in {{1}}).`);
+  else if (btn.url !== want) problems.push(/%7B%7B1%7D%7D/i.test(btn.url) || (btn.url.match(/\{\{1\}\}/g) || []).length > 1
+    ? `Its button address has {{1}} twice (${btn.url}). Edit the button: leave the address as ${want.replace('{{1}}', '')} – Meta adds {{1}} after it by itself.`
+    : `Its button opens ${btn.url}; it must open ${want} (a dynamic address ending in {{1}}).`);
   const sameText = flat(body) === flat(REPORT_TEMPLATE);
   return { ok: !problems.length, name: t.name, lang: t.language, status: t.status, category: t.category, sameText, body, problems };
 }

@@ -19,9 +19,13 @@ if (!fromUrl || !toUrl) throw new Error('Put VPS_DATABASE_URL="postgres://…" (
 const clean = (u) => { const x = new URL(u); for (const k of ['sslmode', 'channel_binding']) x.searchParams.delete(k); return x; };
 const from = clean(fromUrl), to = clean(toUrl);
 if (from.host === to.host && from.pathname === to.pathname) throw new Error('FROM and TO are the same database.');
-const plainTo = /sslmode=disable/.test(toUrl) || /^(localhost|127\.0\.0\.1)$/.test(to.hostname);
+// The copy carries every password hash, salary and file: it travels encrypted, or through an SSH tunnel to this computer (127.0.0.1).
+// sslmode=disable to any other address is refused (security review 10 Oct 2026; see VPS-SETUP.md).
+const localTo = /^(localhost|127\.0\.0\.1)$/.test(to.hostname);
+if (/sslmode=disable/.test(toUrl) && !localTo) throw new Error('Refusing to copy without encryption over the internet. Open an SSH tunnel and use 127.0.0.1 (VPS-SETUP.md), or remove sslmode=disable.');
+const plainTo = localTo;
 const src = new pg.Client({ connectionString: from.toString(), ssl: { rejectUnauthorized: true } });
-const dst = new pg.Client({ connectionString: to.toString(), ssl: plainTo ? false : { rejectUnauthorized: !process.env.DB_SSL_NO_VERIFY } });
+const dst = new pg.Client({ connectionString: to.toString(), ssl: plainTo ? false : { rejectUnauthorized: process.env.DB_SSL_NO_VERIFY !== '1' } });
 const TABLES = ['users', 'settings', 'counters', 'records', 'files', 'audit']; // in this order; sessions and the WhatsApp outbox are not copied
 await src.connect(); await dst.connect();
 try {

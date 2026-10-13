@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense, Fragment } from 'react';
+import { useEffect, useState, lazy, Suspense, Fragment, Component } from 'react';
 import { Routes, Route, Navigate, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list, idleFor } from './api.js';
 import { Toaster, In, Field, Empty, Avatar, Modal, attempt, toast, lockPage } from './ui.jsx';
@@ -68,7 +68,7 @@ const Waiting = () => <div className="stack" aria-busy="true" aria-label="Loadin
 function Private() {
   useStore();
   const [started, setStarted] = useState(false), [setup, setSetup] = useState(null);
-  useEffect(() => { boot().then(async (ok) => { if (!ok) setSetup((await http('GET', '/setup')).needsSetup); setStarted(true); liftSplash(); }); }, []);
+  useEffect(() => { boot().then(async (ok) => { if (!ok) { const s = await http('GET', '/setup'); setSetup(s.needsSetup ? { code: !!s.code } : false); } setStarted(true); liftSplash(); }); }, []);
   if (!started) return null; // the opening screen is still covering the window
   if (!store.me) return <><Login setup={setup} /><Toaster /></>;
   return <><Shell /><Toaster /></>;
@@ -88,7 +88,7 @@ function SessionTimeout() {
 }
 
 function Login({ setup }) {
-  const [f, setF] = useState({ name: '', email: '', password: '' }), [busy, setBusy] = useState(false), [show, setShow] = useState(false);
+  const [f, setF] = useState({ name: '', email: '', password: '', setupCode: '' }), [busy, setBusy] = useState(false), [show, setShow] = useState(false);
   const up = (k) => (e) => setF({ ...f, [k]: e.target.value });
   async function go(e) {
     e.preventDefault(); setBusy(true);
@@ -103,6 +103,7 @@ function Login({ setup }) {
         <div className="row" style={{ gap: 14, marginBottom: 4 }}><img className="logo-lg" src="/icon.svg" alt="" /><div><h1>Aali One</h1><div className="small muted">Aali Group · sales, delivery and payments in one place</div></div></div>
         {setup && <div className="banner info">First time here. Create the administrator account.</div>}
         {!setup && store.signedOut && <div className="banner info">{store.signedOut}</div>}
+        {setup?.code && <Field label="Setup code" hint="The SETUP_TOKEN set in the server's settings."><In value={f.setupCode} onChange={up('setupCode')} required autoComplete="off" /></Field>}
         {setup && <Field label="Your name"><In value={f.name} onChange={up('name')} required autoComplete="name" /></Field>}
         <Field label="Email"><In type="email" value={f.email} onChange={up('email')} required autoComplete="username" /></Field>
         <Field label="Password" hint={setup ? 'At least 8 characters.' : ''}><div className="pwbox"><In type={show ? 'text' : 'password'} value={f.password} onChange={up('password')} required autoComplete={setup ? 'new-password' : 'current-password'} />
@@ -135,6 +136,13 @@ function useReminders() {
   }, []);
 }
 
+// One page failing (for example on a damaged item) shows a short message instead of blanking the whole app (security review 10 Oct 2026).
+class PageGuard extends Component {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(e) { console.error(e); }
+  render() { return this.state.failed ? <Empty>This page hit a problem and could not be shown. Open another page, or reload. If it keeps happening, tell the admin.</Empty> : this.props.children; }
+}
 // A page opens only for a role that has it in the access table (shared/access.js); the sidebar shows the same sections.
 const Gate = ({ s, children }) => (can(s) ? children : <Empty>This section is not part of your access. If you need it for your work, ask the Operations Manager.</Empty>);
 
@@ -189,7 +197,7 @@ function Shell() {
         <div className="mobilebar"><button className="btn sm" type="button" onClick={() => setOpen(true)} aria-label="Open menu">☰ Menu</button><b style={{ fontFamily: 'var(--doc)' }} className="grow">Aali One</b><button type="button" className="eye theme" onClick={openSearch} aria-label="Search" title="Search"><Ico k="search" /></button><ThemeToggle /></div>
         <main className="main">
           <AnimatePresence mode="wait" onExitComplete={() => scrollTo(0, 0)}>
-            <Page key={seg}><Suspense fallback={<Waiting />}>
+            <Page key={seg}><PageGuard key={path}><Suspense fallback={<Waiting />}>
             <Routes location={loc}>
               <Route path="/" element={<Today />} /><Route path="/inbox" element={<Inbox />} /><Route path="/approvals" element={<Gate s="approvals"><Approvals /></Gate>} />
               <Route path="/leads/*" element={<Gate s="leads"><Leads /></Gate>} /><Route path="/calls" element={<Gate s="calls"><Calls /></Gate>} /><Route path="/deals/*" element={<Gate s="deals"><Deals /></Gate>} /><Route path="/clients/*" element={<Gate s="clients"><Clients /></Gate>} />
@@ -198,7 +206,7 @@ function Shell() {
               <Route path="/reports" element={<Gate s="reports"><Reports /></Gate>} /><Route path="/messages" element={<Gate s="messages"><Messages /></Gate>} /><Route path="/settings/*" element={<Settings />} />
               <Route path="/signoff/:projectId" element={<Gate s="projects"><Signoff /></Gate>} /><Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
-            </Suspense></Page>
+            </Suspense></PageGuard></Page>
           </AnimatePresence>
         </main>
         <ToTop />

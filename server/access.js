@@ -63,10 +63,21 @@ export function buildAccess(user, rows, canSeeReport) {
     }
   }
 
+  // Links (security review 10 Oct 2026): a new or changed client, lead, deal or project link must point at something this person may open.
+  // Otherwise naming another BDE's client in a deal – or someone else's project in a task – would open it to them. Management sees all.
+  function linkBlock(fields, r) {
+    if (top) return '';
+    for (const k of ['clientId', 'leadId', 'dealId', 'projectId']) {
+      const v = fields?.[k]; if (!v || v === (r?.data?.[k] || '')) continue;
+      const p = by.get(v); if (!p || !read(p)) return 'You cannot link this to an item you cannot open.';
+    }
+    return '';
+  }
   // Why this person cannot add a record of this type ('' when they can). It may adjust the data (an own-level person owns what they add).
   function createBlock(type, data) {
     const section = SECTION_OF[type];
     if (!CREATABLE.has(type)) return type === 'notice' ? 'Notifications are sent by Aali One itself.' : 'This kind of item cannot be added.';
+    const lb = linkBlock(data, null); if (lb) return lb;
     if (type === 'project' && data.dealId && canEdit(user, 'deals') && parent(data.dealId)) return ''; // handing a won deal over to IT
     if (section && !canEdit(user, section)) return `Your access does not allow adding ${LABEL[section]}.`;
     if (section && sc(section) === 'own' && ['lead', 'deal', 'client'].includes(type)) data.owner = uid;
@@ -88,6 +99,9 @@ export function buildAccess(user, rows, canSeeReport) {
   // Why this person cannot change or delete this record ('' when they can). patch: the fields being changed (empty for a delete).
   function writeBlock(r, patch = {}) {
     if (read(r) !== true) return 'Your access does not allow opening this item.';
+    const lb = linkBlock(patch, r); if (lb) return lb;
+    // A number in the call register is removed only by a manager: a BDE deleting one would wipe "not interested" or Do Not Call.
+    if (r.type === 'prospect' && !Object.keys(patch).length && !isManager(user)) return 'Only a manager removes a number from the call register.';
     if (r.type === 'presence') return 'This is set by the system from the daily report.';
     // A notification can only be marked as read – never re-addressed or re-worded (audit ACB-2).
     if (r.type === 'notice' && Object.keys(patch).some((k) => k !== 'read')) return 'A notification can only be marked as read.';

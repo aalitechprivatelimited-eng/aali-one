@@ -29,7 +29,25 @@ export const canSeeReport = (u, d, leadSees = false) => !!u && (d.owner === u.id
   || (leadSees && u.title === 'itlead' && d.team === 'it' && d.ownerTitle === 'dev'));
 export const NO_REPORT_TITLES = ['chairman', 'ops', 'cs', 'admin']; // top management reads reports, it does not write them
 // Send back / delete: the department manager, or an admin (Ops Manager, Company Secretary). The Chairman reads and remarks only.
-const canRunReport = (u, d) => u.is_admin || (d.owner !== u.id && isManager(u) && !TOP_TITLES.includes(u.title) && u.team === d.team);
+const canRunReport = (u, d) => d.owner !== u.id && (u.is_admin || (isManager(u) && !TOP_TITLES.includes(u.title) && u.team === d.team));
+// Management by title (not the admin switch): who approves a discount above the limit (the user, 10 Oct 2026).
+const MANAGEMENT = (u) => !!u && (TOP_TITLES.includes(u.title) || u.title === 'admin');
+// One business, one caller (security review 10 Oct 2026): the same check as a new lead, also when a BDE adds a client or a deal, and when
+// a lead's, deal's or client's number changes – so a number another BDE is working on cannot be taken through another door.
+async function callerCheck(t, user, phone, org) {
+  const m = mobile10(phone);
+  if (!user || m.length !== 10 || scopeOf(user, 'leads') !== 'own') return;
+  const [v] = await checkCalls(t, user, [{ phone: m, org: org || '', dupOk: true }]);
+  if (!v.ok && ['held', 'dnc'].includes(v.kind)) throw new Rule(v.msg, 409);
+}
+const phones = (d) => [d.phone, ...(Array.isArray(d.contacts) ? d.contacts.map((c) => c?.phone) : [])].map(mobile10).filter((m) => m.length === 10);
+// A discount above the limit asks management; they are told at once.
+async function askDiscount(t, quoteId, q, user, sample) {
+  await insertRec(t, 'approval', { kind: 'discount', relType: 'quote', relId: quoteId, status: 'pending', requestedBy: user?.id || null,
+    reason: `Discount ${q.totals.discountPct}% on ${q.number}` }, user, { sample });
+  for (const u of (await t.query('select id from users where active and removed_at is null and title = any($1)', [TOP_TITLES])).rows)
+    await notify(t, u.id, `${user?.name || 'Someone'} asks you to approve a ${q.totals.discountPct}% discount on quotation ${q.number}.`, 'approval', '', user, sample);
+}
 // Money papers – quotations, invoices, receipts and payments – are for the Sales Manager and management only (shared/access.js).
 export const MONEY = ['quote', 'invoice', 'receipt', 'payment'];
 export const canMoney = (u) => canSee(u, 'money');
@@ -117,8 +135,9 @@ export async function beforeCreate(t, type, data, user, sample) {
   switch (type) {
     case 'lead': { const r = await leadIntake(t, data, user, sample); if (r.merged) return r; break; }
     case 'client': if (!data.name?.trim()) throw new Rule('Enter the client name.'); data.mobile10 = mobile10(data.phone);
-      data.contacts = (data.contacts || []).map((c) => ({ ...c, mobile10: mobile10(c.phone) })); break;
-    case 'deal': if (!data.title?.trim()) throw new Rule('Enter a deal name.'); data.mobile10 = mobile10(data.phone);
+      data.contacts = (data.contacts || []).map((c) => ({ ...c, mobile10: mobile10(c.phone) }));
+      for (const m of phones(data)) await callerCheck(t, user, m, data.name); break;
+    case 'deal': if (!data.title?.trim()) throw new Rule('Enter a deal name.'); data.mobile10 = mobile10(data.phone); await callerCheck(t, user, data.phone, data.title);
       data.stage ||= 'lead'; data.stageHistory = [{ stage: data.stage, at: new Date().toISOString() }]; log(data, me, 'Deal created'); break;
     case 'quote': {
       const fy = fyLabel(data.date || today()), b = await brandSetting(t);
@@ -204,7 +223,12 @@ export async function beforeCreate(t, type, data, user, sample) {
     }
     case 'ticket': if (!data.title?.trim()) throw new Rule('Describe the problem.');
       data.number = 'T-' + String(await counter(t, 'ticket')).padStart(4, '0'); data.status ||= 'open'; log(data, me, 'Support request opened'); break;
-    case 'project': data.stage ||= 'planning'; data.progressToken ||= newId('');
+    case 'project': // what the gates depend on is the server's (security review 10 Oct 2026): no sign-off, approvals or Live from the browser
+      for (const k of ['signoffId', 'liveNoSign', 'startApproved', 'liveAt', 'advance']) delete data[k];
+      // A new project starts at the beginning – except that management may record one already further on (a project finished before
+      // Aali One, for example); they are the ones who approve the gates anyway.
+      if (!DEFAULT_SETTINGS.projectStages.some((s) => s.key === data.stage) || (!MANAGEMENT(user) && !['awaiting', 'planning', 'onhold'].includes(data.stage))) data.stage = 'planning';
+      data.progressToken = newKey(); // the client's progress link: long and never chosen by the browser
       // IT cannot open the deal, so the project itself remembers whether the advance has come.
       if (data.dealId) { const deal = await getRec(t, data.dealId, 'deal'); if (deal?.data.handoff?.advance) data.advance = true; else delete data.advance; }
       log(data, me, 'Project created'); break;
@@ -245,6 +269,7 @@ export async function beforeCreate(t, type, data, user, sample) {
       const ex = (await t.query("select id from records where deleted_at is null and type = 'report' and data->>'owner' = $1 and data->>'date' = $2", [me, data.date])).rows[0];
       if (ex) return { merged: true, id: ex.id, type: 'report' }; // one report per person per day
       data.status = 'open'; data.entries = cleanEntries(data.entries); checkVisits(data.entries); data.calls = cleanCalls(data.calls);
+      for (const k of ['plan', 'blockers']) if (data[k] !== undefined) data[k] = String(data[k] ?? '').slice(0, 2000); // always text (a number broke the page)
       await applyCalls(t, user, [], data.calls, sample); await setPresence(t, user, data, sample);
       if (data.date === today()) data.dayStart = new Date().toISOString(); else delete data.dayStart; // the day starts when the report is opened
       delete data.dayEnd;
@@ -322,21 +347,24 @@ async function reportWatchers(t, d) {
   return (mgr.length ? mgr : us.filter((u) => ['ops', 'cs'].includes(u.title))).map((u) => u.id);
 }
 
+// Discounts above the limit (the user, 10 Oct 2026): management approves them – the Operations Manager, Company Secretary or Founder & Chairman.
+// Management's own quotations count as approved by them; anyone else's (the Sales Manager's) waits. The approval is recorded by the server
+// with the percentage approved, so raising the discount later asks again, and nothing about it can be sent from the browser.
 async function quoteApproval(t, q, user, prev, sample) {
-  const limit = num(await getSetting(t, 'discountApprovalPct', 10));
-  const over = q.totals.discountPct > limit;
-  if (over && !isManager(user) && !q.discountApprovedAt) {
-    q.status = 'needs approval';
-    if (!prev || prev.status !== 'needs approval') q._askApproval = true;
-  } else if (over && isManager(user) && !q.discountApprovedAt) { q.discountApprovedAt = new Date().toISOString(); q.discountApprovedBy = user.id; }
+  const limit = num(await getSetting(t, 'discountApprovalPct', 10)), pct = num(q.totals.discountPct);
+  for (const k of ['discountApprovedAt', 'discountApprovedBy', 'discountApprovedPct', 'discountRejected']) { if (prev?.[k] === undefined) delete q[k]; else q[k] = prev[k]; }
+  const allowed = q.discountApprovedAt ? num(q.discountApprovedPct ?? prev?.totals?.discountPct ?? 0) : -1;
+  if (pct <= limit || pct <= allowed) { if (q.status === 'needs approval') q.status = 'draft'; return; }
+  if (MANAGEMENT(user)) { Object.assign(q, { discountApprovedAt: new Date().toISOString(), discountApprovedBy: user.id, discountApprovedPct: pct }); delete q.discountRejected; if (q.status === 'needs approval') q.status = 'draft'; return; }
+  q.status = 'needs approval';
+  if (!prev || prev.status !== 'needs approval') q._askApproval = true;
 }
 
 export async function afterCreate(t, type, id, data, user, sample) {
   const me = user?.id || null;
   if (type === 'quote' && data._askApproval) {
     delete data._askApproval; await t.query('update records set data = $2 where id = $1', [id, JSON.stringify(data)]);
-    await insertRec(t, 'approval', { kind: 'discount', relType: 'quote', relId: id, status: 'pending', requestedBy: me,
-      reason: `Discount ${data.totals.discountPct}% on ${data.number}` }, user, { sample });
+    await askDiscount(t, id, data, user, sample);
   }
   if ((type === 'quote' || type === 'invoice') && data.dealId) {
     const deal = await getRec(t, data.dealId, 'deal');
@@ -538,7 +566,7 @@ async function buildRun(t, run) {
   for (const { id, data: p } of (await t.query("select id, data from records where deleted_at is null and type = 'payee'")).rows) // staff without a login
     users.set(id, { id, email: p.email || '', name: p.name, title: 'payee', designation: p.designation || '', company: p.company || '', team: '', active: p.active !== false, removed_at: null });
   let hrm = null, error = '';
-  if (hrmConnected()) try { hrm = await hrmMonth(month); } catch (e) { error = 'Aali HRM could not be reached: ' + String(e?.message || e).slice(0, 160); }
+  if (hrmConnected()) try { hrm = await hrmMonth(month); } catch (e) { console.error('Aali HRM:', e?.message || e); error = 'Aali HRM could not be reached when this was made. Press "Read attendance again" later.'; }
   // If Aali HRM cannot be reached now, the attendance read last time is kept (a salary change must not wipe it).
   const before = !hrm && error && run.att?.source !== 'none' ? new Map((run.items || []).filter((i) => i.days?.att).map((i) => [i.userId, i.days.att])) : new Map(), keptAt = run.att?.at;
   const items = [];
@@ -573,7 +601,7 @@ async function buildClientRun(t, run) {
   const pc = (await getRec(t, run.pclientId, 'pclient'))?.data || {}, rules = { ...DEFAULT_SETTINGS.payroll, ...(pc.rules || {}) };
   const key = pc.attendance === 'hrm' ? pc.hrmCode || '' : '', linked = !!key && hrmConnected(key), theirs = `${pc.name || 'the client'}'s HRM`, now = today();
   let hrm = null, error = '';
-  if (linked) try { hrm = await hrmMonth(month, key); } catch (e) { error = `${theirs} could not be reached: ` + String(e?.message || e).slice(0, 160); }
+  if (linked) try { hrm = await hrmMonth(month, key); } catch (e) { console.error(`${theirs}:`, e?.message || e); error = `${theirs} could not be reached when this was made. Press "Read attendance again" later.`; }
   const kept = !hrm && error ? new Map((run.items || []).filter((i) => i.days?.att?.src === 'hrm').map((i) => [i.userId, i.days.att])) : new Map();
   const items = [];
   for (const { id, data: e } of (await t.query("select id, data from records where deleted_at is null and type = 'pemp' and data->>'pclientId' = $1", [run.pclientId])).rows) {
@@ -682,10 +710,19 @@ async function applyReceipt(t, id, r, user) {
 export async function beforeUpdate(t, rec, next, user) {
   const type = rec.type, prev = rec.data, me = user?.id || null;
   const reason = next._reason; delete next._reason;
+  // The history (log) and a deal's stage history are written only by the server: one sent from the browser is ignored, so nobody can
+  // rewrite what happened or add lines in someone else's name (security review 10 Oct 2026).
+  if (prev.log === undefined) delete next.log; else next.log = prev.log;
+  if (prev.stageHistory === undefined) delete next.stageHistory; else next.stageHistory = prev.stageHistory;
   const note = next._note; delete next._note; if (note) log(next, me, note);
   switch (type) {
+    case 'client':
+      next.mobile10 = mobile10(next.phone); next.contacts = (Array.isArray(next.contacts) ? next.contacts : []).map((c) => ({ ...c, mobile10: mobile10(c?.phone) }));
+      for (const m of phones(next)) if (!phones(prev).includes(m)) await callerCheck(t, user, m, next.name);
+      break;
     case 'deal':
       next.mobile10 = mobile10(next.phone);
+      if (next.mobile10 !== (prev.mobile10 || mobile10(prev.phone))) await callerCheck(t, user, next.phone, next.title);
       if (next.stage !== prev.stage) {
         if (next.stage === 'lost' && !next.lostReason) throw new Rule('Choose why the deal was lost.');
         next.stageHistory = [...(prev.stageHistory || []), { stage: next.stage, at: new Date().toISOString() }];
@@ -698,7 +735,8 @@ export async function beforeUpdate(t, rec, next, user) {
       }
       break;
     case 'project': {
-      if (prev.advance === undefined) delete next.advance; else next.advance = prev.advance; // set by the server only
+      // Set by the server only: the advance, the deal it came from, the client's sign-off and its time, the progress link (security review).
+      for (const k of ['advance', 'dealId', 'signoffId', 'liveAt', 'progressToken']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
       if (next.stage !== prev.stage && WORK.includes(next.stage) && next.dealId && !next.startApproved) {
         const deal = await getRec(t, next.dealId, 'deal');
         if (deal && !deal.data.handoff?.advance) throw new Rule('No advance, no work start. The BDE must record the advance first, or a manager approves an early start.');
@@ -718,7 +756,7 @@ export async function beforeUpdate(t, rec, next, user) {
     case 'quote':
       if (prev.number) { next.number = prev.number; next.seq = prev.seq; next.fy = prev.fy; }
       next.totals = docTotals(next); await quoteApproval(t, next, user, prev, rec.sample);
-      if (next._askApproval) { delete next._askApproval; await insertRec(t, 'approval', { kind: 'discount', relType: 'quote', relId: rec.id, status: 'pending', requestedBy: me, reason: `Discount ${next.totals.discountPct}% on ${next.number}` }, user, { sample: rec.sample }); }
+      if (next._askApproval) { delete next._askApproval; await askDiscount(t, rec.id, next, user, rec.sample); }
       if (next.dealId) { const deal = await getRec(t, next.dealId, 'deal'); if (deal) { deal.data.value = next.totals.total; deal.data.quoteNo = next.number; await putRec(t, deal, user); } }
       break;
     case 'invoice': next.number = prev.number; next.seq = prev.seq; next.totals = docTotals(next); break;
@@ -854,13 +892,20 @@ export async function beforeUpdate(t, rec, next, user) {
       if (next.promised !== prev.promised && prev.promised) { if (!reason) throw new Rule('Give a reason for changing the promised date.'); log(next, me, `Promised date moved to ${next.promised}: ${reason}`); }
       break;
     case 'approval':
+      // What the request is about and who asked are fixed once asked (security review 10 Oct 2026).
+      for (const k of ['kind', 'relType', 'relId', 'requestedBy', 'reason', 'decidedBy', 'decidedAt']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
       if (next.status !== prev.status) {
+        if (prev.status !== 'pending' || !['approved', 'rejected'].includes(next.status)) throw new Rule('This request is already decided.');
         if (!isManager(user)) throw new Rule('Only a manager can decide approvals.', 403);
+        if (prev.requestedBy === me) throw new Rule("You can't decide your own request.", 403);
+        if (prev.kind === 'discount' && !MANAGEMENT(user)) throw new Rule('A discount above the limit is approved by management: the Operations Manager, the Company Secretary or the Founder & Chairman.', 403);
         next.decidedBy = me; next.decidedAt = new Date().toISOString();
         await applyApproval(t, next, user);
       }
       break;
     case 'lead':
+      next.mobile10 = mobile10(next.mobile); // never taken from the browser
+      if (next.mobile10 !== prev.mobile10) { if (next.mobile10.length !== 10) throw new Rule('Enter a 10-digit mobile number.'); await callerCheck(t, user, next.mobile, next.company || next.name); }
       if (next.status !== prev.status) log(next, me, `Status: ${next.status}`);
       if ((next.owner || '') !== (prev.owner || '')) await claimForLead(t, rec.id, { ...next, mobile10: mobile10(next.mobile) }, user, rec.sample); // the business moves with the lead
       break;
@@ -912,6 +957,7 @@ export async function beforeUpdate(t, rec, next, user) {
       // Management: approve → (pay to the person's UPI QR) → mark paid. A bill can be rejected, with the reason, until it is paid.
       if (next.status !== prev.status) {
         if (!boss) throw new Rule('Only management approves bills and marks them paid.', 403);
+        if (mine) throw new Rule('You cannot approve, pay or reject your own bill.', 403);
         if (next.status === 'approved') {
           if (prev.status !== 'submitted') throw new Rule('Only a bill waiting for approval can be approved.');
           next.approved = { by: me, at: now }; log(next, me, 'Approved');
@@ -940,6 +986,7 @@ export async function beforeUpdate(t, rec, next, user) {
       const remark = String(next._remark || '').trim().slice(0, 500), reviewed = !!next._reviewed; delete next._remark; delete next._reviewed;
       for (const k of ['owner', 'team', 'ownerTitle', 'date', 'remarks', 'reviewed', 'submittedAt', 'dayStart', 'dayEnd', 'shareToken']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
       if (mine) { next.entries = cleanEntries(next.entries); if (prev.status !== 'submitted') checkVisits(next.entries); if (next.calls !== undefined) next.calls = cleanCalls(next.calls); }
+      for (const k of ['plan', 'blockers']) if (next[k] !== undefined && next[k] !== prev[k]) next[k] = String(next[k] ?? '').slice(0, 2000); // always text
       const edited = ['entries', 'calls', 'plan', 'blockers', 'nums'].some((k) => JSON.stringify(next[k] ?? null) !== JSON.stringify(prev[k] ?? null));
       if (edited && !mine) throw new Rule('Only the writer can change a report. Managers can add a remark.', 403);
       if (edited && prev.status === 'submitted') throw new Rule('This report is already submitted. Ask your manager to send it back if it needs a change.');
@@ -981,7 +1028,7 @@ async function applyApproval(t, a, user) {
   const target = await getRec(t, a.relId, { discount: 'quote', earlystart: 'project', livenosign: 'project' }[a.kind] || ''); if (!target) return;
   const ok = a.status === 'approved';
   if (a.kind === 'discount') {
-    target.data.status = ok ? 'draft' : 'needs approval'; if (ok) { target.data.discountApprovedAt = new Date().toISOString(); target.data.discountApprovedBy = user.id; }
+    target.data.status = ok ? 'draft' : 'needs approval'; if (ok) { Object.assign(target.data, { discountApprovedAt: new Date().toISOString(), discountApprovedBy: user.id, discountApprovedPct: num(target.data.totals?.discountPct) }); delete target.data.discountRejected; }
     else target.data.discountRejected = a.decisionNote || 'Rejected';
   }
   if (a.kind === 'earlystart' && ok) { target.data.startApproved = { by: user.id, at: today(), reason: a.reason }; if (target.data.stage === 'awaiting') target.data.stage = 'planning'; }

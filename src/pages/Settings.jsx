@@ -368,11 +368,11 @@ function WhatsApp() {
     <div className="stack gap4"><div className="row between"><span className="lbl">The template's body (paste it as it is)</span><button className="btn sm" type="button" onClick={() => copy(st.template.text)}>Copy</button></div>
       <pre className="small" style={{ margin: 0, whiteSpace: 'pre-wrap', background: 'var(--paper-2)', padding: 12, borderRadius: 8 }}>{st.template.text}</pre>
       <span className="small muted">Sample values Meta asks for: {st.template.samples.map((s, i) => <span key={i}>{i ? ' · ' : ''}<b>{`{{${i + 1}}}`}</b> {s}</span>)}</span>
-      <span className="small">Button: <b>Visit website</b>, text <b>Open full report</b>, address type <b>Dynamic</b>, address <code>{st.template.button}</code>, sample <code>{st.template.button.replace('{{1}}', 'Xq3Lm8Rt2Vb6Nw9Kd4Hs7Pa1')}</code></span>
+      <span className="small">Button: <b>Visit website</b>, text <b>Open full report</b>, address type <b>Dynamic</b>, address <code>{st.template.button.replace('{{1}}', '')}</code> (type it only up to <code>/daily/</code> – Meta adds <code>{'{{1}}'}</code> by itself), sample <code>{st.template.button.replace('{{1}}', 'Xq3Lm8Rt2Vb6Nw9Kd4Hs7Pa1')}</code></span>
       <div className="row"><button className="btn sm" type="button" disabled={chk?.busy} onClick={check}>{chk?.busy ? 'Asking Meta…' : 'Check the template with Meta'}</button>
         {chk && !chk.busy && (chk.ok ? <Pill k="ok">{chk.name} ({chk.lang}): approved · {chk.category.toLowerCase()}{chk.sameText ? ' · same text as here' : ''}</Pill> : <Pill k="bad">Not ready</Pill>)}</div>
       {chk && !chk.busy && (chk.problems || []).map((p, i) => <div key={i} className="small" style={{ color: 'var(--bad)' }}>• {p}</div>)}
-      {chk?.ok && !chk.sameText && <div className="small" style={{ color: 'var(--warn)' }}>• Approved, but its wording differs from the text above. It still works if it has the same four fields; the messages will read as Meta has it.</div>}</div>
+      {chk?.ok && !chk.sameText && <div className="small" style={{ color: 'var(--warn)' }}>• Approved, but its wording differs from the text above. It still works if it has the same six fields; the messages will read as Meta has it.</div>}</div>
     <div className="stack gap4"><span className="lbl">Who gets the reports</span>
       <label className="check"><input type="checkbox" checked={s.on !== false} disabled={!mayEdit} onChange={(e) => save({ ...s, on: e.target.checked }, e.target.checked ? 'Reports go on WhatsApp again.' : 'Reports are no longer sent on WhatsApp.')} /> Send daily reports on WhatsApp</label>
       <div className="list">{st.people.map((p) => <div key={p.id} className="row" style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>

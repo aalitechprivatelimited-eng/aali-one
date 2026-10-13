@@ -1,4 +1,5 @@
 // The whole API as one request handler, used by Vercel (api/[...path].js) and by server/dev.js (VPS / local).
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, isOldHash, passwordProblem, fakeCheck, sessionKey, createSession, sessionUser, dropSession, sessionCookie, readCookie, publicUser, IDLE_MIN } from './auth.js';
 import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
@@ -23,11 +24,18 @@ function send(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': isBuf ? headers['content-type'] : 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers });
   res.end(isBuf ? body : JSON.stringify(body));
 }
+// Only JSON is read. A form posted from another site (plain text or form fields) is refused, so it cannot pose as a request from Aali One
+// (security review 10 Oct 2026: CSRF). Aali One's own pages always send JSON.
 async function readBody(req) {
-  if (req.body !== undefined) return typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-  const chunks = []; let size = 0;
-  for await (const c of req) { size += c.length; if (size > MAX_BODY) throw new Rule('That file is too large (max 3 MB).', 413); chunks.push(c); }
-  const raw = Buffer.concat(chunks).toString('utf8'); return raw ? JSON.parse(raw) : {};
+  const json = /^application\/json\b/i.test(String(req.headers['content-type'] || ''));
+  let raw = req.body;
+  if (raw === undefined) { const chunks = []; let size = 0;
+    for await (const c of req) { size += c.length; if (size > MAX_BODY) throw new Rule('That file is too large (max 3 MB).', 413); chunks.push(c); }
+    raw = Buffer.concat(chunks).toString('utf8'); }
+  if (Buffer.isBuffer(raw)) raw = raw.toString('utf8');
+  if (raw == null || raw === '' || (typeof raw === 'object' && !Object.keys(raw).length)) return {};
+  if (!json) throw new Rule('Send the data as JSON.', 415);
+  return typeof raw === 'string' ? JSON.parse(raw) : raw;
 }
 // A daily report as its public link shows it (/daily/<key>, the WhatsApp "Open full report" button): the day, the work and the calls.
 // Contact numbers show only their last 4 digits, and links into the app, remarks and the log are left out – the link can be forwarded.
@@ -64,7 +72,39 @@ const clientCard = (r) => ({ id: r.id, type: 'client', name: r.data.name, city: 
 const gone = (r) => ({ id: r.id, type: r.type, deletedAt: r.deleted_at || r.updated_at });
 const MOVES = ['lead', 'deal', 'client', 'project', 'task', 'ticket', 'prospect']; // kinds of record that can pass from one person to another
 // Where a request comes from, for the limits on wrong passwords and on the public enquiry form.
-const clientIp = (req) => String(req.headers['x-real-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket?.remoteAddress || '').trim().slice(0, 60);
+// Only an address header set by the hosting itself is believed: on Vercel always, on the VPS when TRUST_PROXY=1 (Coolify's proxy sets
+// X-Real-IP). Otherwise the connection's own address – a header anyone can send cannot dodge the limits (security review 10 Oct 2026).
+const proxied = () => !!process.env.VERCEL || process.env.TRUST_PROXY === '1';
+// Two secrets compared without the time taken giving away how much of them matched.
+const sameText = (x, y) => timingSafeEqual(createHash('sha256').update(String(x)).digest(), createHash('sha256').update(String(y)).digest());
+const clientIp = (req) => String((proxied() && (req.headers['x-real-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0])) || req.socket?.remoteAddress || '').trim().slice(0, 60);
+// Wrong passwords (security review 10 Oct 2026): each try is written BEFORE the password is checked, so tries sent at the same moment all
+// count; then the limit is checked; a right password takes its own try back out. Management is told when an email reaches the limit.
+const looksLikeEmail = (s) => /^[^\s@]{1,80}@[^\s@]{1,120}$/.test(s);
+async function countTry(db, email, ip) {
+  const id = (await db.query("insert into audit (type, record_id, action, summary) values ($1, $2, 'loginfail', $3) returning id", [email, ip, `Wrong password tried for ${email}`])).rows[0].id;
+  // since this email last signed in – by the log's own order, not the clock (two lines can share a time to the millisecond)
+  const f = (await db.query(`select count(*) filter (where type = $1 and id > coalesce((select max(id) from audit where action = 'login' and summary = $1), 0))::int e,
+    count(*) filter (where record_id = $2 and $2 <> '')::int i from audit where action = 'loginfail' and at > now() - interval '15 minutes'`, [email, ip])).rows[0];
+  if (f.e > FAILS_EMAIL || f.i > FAILS_IP) { await db.query('delete from audit where id = $1', [id]); throw new Rule('Too many tries. Wait 15 minutes and try again.', 429); }
+  return { id, ...f };
+}
+async function wrongTry(db, t, email, ip) { // the password was wrong: the try stays; at the limit, management hears of it
+  if (t.e === FAILS_EMAIL || t.i === FAILS_IP)
+    for (const x of (await db.query("select id from users where active and removed_at is null and title in ('ops', 'cs', 'chairman')")).rows)
+      await notify(db, x.id, `${t.e === FAILS_EMAIL ? `${FAILS_EMAIL} wrong passwords for ${email}` : `${FAILS_IP} wrong passwords from one connection (${ip})`} in 15 minutes. Sign-ins are paused there for 15 minutes.`, '', '', null);
+}
+// Files (security review 10 Oct 2026): an item may take only files its writer uploaded – knowing a file's number must not be enough to put
+// someone else's file on your own item and so open it. Files already on the item stay as they are.
+const FILE_IDS = /(?<![\w-])f_[\w-]{12}(?![\w-])/g;
+async function ownNewFiles(db, data, prev, uid) {
+  const had = new Set(JSON.stringify(prev || {}).match(FILE_IDS) || []);
+  const ids = [...new Set(JSON.stringify(data || {}).match(FILE_IDS) || [])].filter((x) => !had.has(x));
+  if (ids.length && (await db.query("select 1 from files where id = any($1) and coalesce(created_by, '') <> $2", [ids, uid])).rowCount)
+    throw new Rule('Attach the file again: only files you uploaded yourself can be added here.', 403);
+}
+// The audit log keeps every change of money and payroll as its own line (the day view used to fold one person's edits of an item into one).
+const KEEP_EVERY = ['salary', 'payrun', 'loan', 'payee', 'pclient', 'pemp', 'bill', 'quote', 'invoice', 'receipt', 'payment', 'agreement'];
 // Limits. Wrong passwords: 8 for one email, 40 from one connection, in 15 minutes. They are counted in the database, so they hold on every server instance.
 const FAILS_EMAIL = 8, FAILS_IP = 40, ENQUIRIES_IP = 30, UPLOAD_DAY = 80_000_000;
 // A stored file is shown in the browser only if it is a plain picture or a PDF. Anything else (a web page, an SVG drawing with a script inside) is
@@ -82,13 +122,23 @@ export async function handle(req, res) {
   const url = new URL(req.url, 'http://x'), path = url.pathname.replace(/^\/api/, ''), method = req.method;
   const secure = (req.headers['x-forwarded-proto'] || '').includes('https');
   try {
+    // A request that changes something must come from Aali One's own pages: browsers send Origin with such requests, and another site's is
+    // refused (security review 10 Oct 2026: CSRF). The public forms use no sign-in, so they need no such check.
+    if (!['GET', 'HEAD'].includes(method) && !path.startsWith('/public/') && req.headers.origin !== undefined) {
+      let from = ''; try { from = new URL(req.headers.origin).host; } catch { /* "null" or junk */ }
+      if (!from || ![req.headers.host, req.headers['x-forwarded-host']].filter(Boolean).map(String).includes(from)) throw new Rule('This request did not come from Aali One.', 403);
+    }
     const db = await getDb();
     // ---------- public ----------
     if (path === '/health') return send(res, 200, { ok: true, ...(process.env.TEST_SITE ? { test: true } : {}) }); // test: the practice copy, not the real Aali One
-    if (path === '/setup' && method === 'GET') { const n = (await db.query('select count(*)::int n from users')).rows[0].n; return send(res, 200, { needsSetup: n === 0 }); }
+    // The first administrator. On a server that is reachable before its data arrives (the VPS move), SETUP_TOKEN must be typed as the
+    // "setup code", so a stranger cannot become the first admin; two requests at once cannot both win (security review 10 Oct 2026).
+    if (path === '/setup' && method === 'GET') { const n = (await db.query('select count(*)::int n from users')).rows[0].n; return send(res, 200, { needsSetup: n === 0, code: n === 0 && !!process.env.SETUP_TOKEN }); }
     if (path === '/setup' && method === 'POST') {
       const b = await readBody(req);
+      if (process.env.SETUP_TOKEN && !sameText(String(b.setupCode || ''), process.env.SETUP_TOKEN)) throw new Rule('Enter the setup code from the server settings.', 403);
       const r = await db.tx(async (t) => {
+        await t.query('select pg_advisory_xact_lock(4207)'); // one setup at a time
         const n = (await t.query('select count(*)::int n from users')).rows[0].n; if (n) throw new Rule('Setup is already done.', 409);
         if (!b.name || !b.email) throw new Rule('Enter name, email and a password.'); if (passwordProblem(b.password)) throw new Rule(passwordProblem(b.password));
         const id = newId('u_');
@@ -99,16 +149,14 @@ export async function handle(req, res) {
       return send(res, 200, { ok: true }, { 'set-cookie': sessionCookie(token, secure) });
     }
     if (path === '/auth/login' && method === 'POST') {
-      const b = await readBody(req), email = String(b.email || '').trim().toLowerCase().slice(0, 120), pw = String(b.password || ''), ip = clientIp(req);
-      // Wrong tries since this email last signed in (within 15 minutes), and wrong tries from this connection.
-      const f = (await db.query(`select count(*) filter (where type = $1 and at > coalesce((select max(at) from audit where action = 'login' and summary = $1), '-infinity'))::int e,
-        count(*) filter (where record_id = $2 and $2 <> '')::int i from audit where action = 'loginfail' and at > now() - interval '15 minutes'`, [email, ip])).rows[0];
-      if (f.e >= FAILS_EMAIL || f.i >= FAILS_IP) throw new Rule('Too many tries. Wait 15 minutes and try again.', 429);
-      const u = (await db.query('select * from users where email = $1 and active', [email])).rows[0];
-      const right = u ? checkPassword(pw, u.pass_hash) : (fakeCheck(pw), false); // an unknown email takes just as long to refuse
-      if (!right) {
-        await db.query("insert into audit (type, record_id, action, summary) values ($1, $2, 'loginfail', $3)", [email, ip, `Wrong password tried for ${email}`]);
-        throw new Rule('Wrong email or password.', 401); }
+      const b = await readBody(req), typed = String(b.email || '').trim().toLowerCase().slice(0, 120), pw = String(b.password || ''), ip = clientIp(req);
+      // A password typed into the email box by mistake is not written into the audit log.
+      const email = looksLikeEmail(typed) ? typed : '(not an email address)';
+      const tr = await countTry(db, email, ip); // wrong tries since this email last signed in (within 15 minutes), and from this connection
+      const u = looksLikeEmail(typed) ? (await db.query('select * from users where email = $1 and active', [email])).rows[0] : null;
+      const right = u ? await checkPassword(pw, u.pass_hash) : (await fakeCheck(pw), false); // an unknown email takes just as long to refuse
+      if (!right) { await wrongTry(db, tr, email, ip); throw new Rule('Wrong email or password.', 401); }
+      await db.query('delete from audit where id = $1', [tr.id]); // a right password is not a wrong try
       if (isOldHash(u.pass_hash)) await db.query('update users set pass_hash = $2 where id = $1', [u.id, hashPassword(pw)]); // an older scrypt password becomes bcrypt
       const token = await createSession(db, u.id); await audit(db, u, null, 'login', u.email);
       return send(res, 200, { user: publicUser(u) }, { 'set-cookie': sessionCookie(token, secure) });
@@ -125,7 +173,7 @@ export async function handle(req, res) {
         if (r.merged) return { merged: true };
         const id = await insertRec(t, 'lead', data, null); await afterCreate(t, 'lead', id, data, null, false); return { id };
       });
-      return send(res, 200, { ok: true, ...out });
+      return send(res, 200, { ok: true }); // nothing more: not whether that mobile asked before, nor the lead's number
     }
     let m = path.match(/^\/public\/progress\/([\w-]+)$/);
     if (m && method === 'GET') {
@@ -189,6 +237,7 @@ export async function handle(req, res) {
       if (MONEY.includes(type) && !canMoney(user)) throw new Rule('Only the Sales Manager and management handle quotations, receipts and payments.', 403);
       const acc = await access(), no = acc.createBlock(type, data);
       if (no) throw new Rule(no, 403);
+      await ownNewFiles(db, data, null, user.id);
       const out = await db.tx(async (t) => {
         const r = await beforeCreate(t, type, data, user, false);
         // A repeat enquiry joins the lead that is already open. If that lead is someone else's, say so without showing it.
@@ -211,6 +260,7 @@ export async function handle(req, res) {
         if (MONEY.includes(rec.type) && !canMoney(user)) throw new Rule('Only the Sales Manager and management handle quotations, receipts and payments.', 403);
         const no = acc.writeBlock(rec, b.data || {});
         if (no) throw new Rule(no, 403);
+        await ownNewFiles(t, b.data, rec.data, user.id);
         const next = { ...rec.data, ...(b.data || {}) };
         if (JSON.stringify(next).length > MAX_ITEM) throw new Rule('This item has become too large. Attach big text as a file instead.', 413); // audit DOS-2
         for (const k of Object.keys(next)) if (next[k] === null && b.data && k in b.data) delete next[k];
@@ -242,9 +292,10 @@ export async function handle(req, res) {
       if (rec.type === 'collab' && !canEditCollab(user)) throw new Rule('Only the Operations Manager or Company Secretary can delete a collaboration.', 403);
       if (rec.type === 'report' && !canDeleteReport(user, rec.data)) throw new Rule('Only the Operations Manager, the Company Secretary or the department manager can delete a report.', 403);
       if (['deal', 'project', 'client'].includes(rec.type) && !isManager(user) && rec.created_by !== user.id) throw new Rule('Only a manager can delete this.', 403);
-      await db.query('update records set deleted_at = now(), deleted_by = $2, delete_reason = $3, updated_at = now() where id = $1', [rec.id, user.id, reason || null]);
-      if (PAY_INPUTS.includes(rec.type)) await db.tx((t) => refreshDrafts(t, user, draftsOf(rec.type, rec.id, rec.data)));
-      await audit(db, user, rec, 'delete', `${label(rec.data)}${reason ? ' – ' + reason : ''}`);
+      await db.tx(async (t) => { // the delete, the payroll drafts and the audit line together, or none of them
+        await t.query('update records set deleted_at = now(), deleted_by = $2, delete_reason = $3, updated_at = now() where id = $1', [rec.id, user.id, reason || null]);
+        if (PAY_INPUTS.includes(rec.type)) await refreshDrafts(t, user, draftsOf(rec.type, rec.id, rec.data));
+        await audit(t, user, rec, 'delete', `${label(rec.data)}${reason ? ' – ' + reason : ''}`); });
       return send(res, 200, { ok: true });
     }
     if (m && m[2] && method === 'POST') {
@@ -255,9 +306,11 @@ export async function handle(req, res) {
         const twin = (await db.query(`select 1 from records r where r.deleted_at is null and r.type = $1 and r.data->>'${key}' = (select data->>'${key}' from records where id = $2)
           and coalesce(r.data->>'pclientId', '') = (select coalesce(data->>'pclientId', '') from records where id = $2)`, [kind, m[1]])).rowCount;
         if (twin) throw new Rule(kind === 'salary' ? 'This person already has a salary sheet. Delete that one first.' : 'There is already a payroll for that month. Delete that draft first.'); }
-      await db.query('update records set deleted_at = null, deleted_by = null, delete_reason = null, updated_at = now() where id = $1', [m[1]]);
-      if (PAY_INPUTS.includes(kind)) { const r = (await db.query('select data from records where id = $1', [m[1]])).rows[0]; await db.tx((t) => refreshDrafts(t, user, draftsOf(kind, m[1], r?.data))); }
-      await audit(db, user, { id: m[1] }, 'restore', ''); return send(res, 200, { ok: true });
+      await db.tx(async (t) => {
+        await t.query('update records set deleted_at = null, deleted_by = null, delete_reason = null, updated_at = now() where id = $1', [m[1]]);
+        if (PAY_INPUTS.includes(kind)) { const r = (await t.query('select data from records where id = $1', [m[1]])).rows[0]; await refreshDrafts(t, user, draftsOf(kind, m[1], r?.data)); }
+        await audit(t, user, { id: m[1], type: kind }, 'restore', ''); });
+      return send(res, 200, { ok: true });
     }
     if (path === '/trash' && method === 'GET') {
       if (!admin) throw new Rule('Only an admin can open the recycle bin.', 403);
@@ -273,8 +326,8 @@ export async function handle(req, res) {
       const r = await db.query(`select ((at at time zone 'UTC') + interval '330 minutes')::date::text as day, user_id, record_id, type, action, count(*)::int as n,
           min(at) as first, max(at) as at, (array_agg(summary order by at desc))[1] as summary
         from audit where at > now() - $1::int * interval '1 day' and coalesce(type, '') <> 'notice'
-        group by 1, user_id, record_id, type, action, case when action in ('update', 'login', 'loginfail') then '' else summary end
-        order by max(at) desc limit 3000`, [days]);
+        group by 1, user_id, record_id, type, action, case when coalesce(type, '') = any($2) then id::text when action in ('update', 'login', 'loginfail') then '' else summary end
+        order by max(at) desc limit 3000`, [days, KEEP_EVERY]);
       // Each line's section, for the log's section filter (asked 8 Oct 2026: payroll, reports, sign-ins…). A month of client payroll is
       // a payrun with a client on it; HR matching people to Aali HRM and the HR & payroll switch are payroll work.
       const clientRuns = new Set((await db.query("select id from records where type = 'payrun' and data ? 'pclientId'")).rows.map((x) => x.id));
@@ -308,7 +361,7 @@ export async function handle(req, res) {
             att: p ? attendanceDays({ month, today, joined: p.joined, left: p.left, records: p.records, leaves: p.leaves, holidays: h.holidays, freeLeaves: +rules.freeLeaves || 0, detail: !!one }) : null }; }),
           unmatched: !mail || one ? [] : [...h.people].filter(([e]) => !used.has(e)).map(([email, p]) => { const ins = p.records.filter((r) => r.checkIn).map((r) => r.date).sort();
             return { email, name: p.name, active: p.active, punched: ins.length, last: ins[ins.length - 1] || '' }; }).sort((a, b) => b.active - a.active || a.name.localeCompare(b.name)) });
-      } catch (e) { return send(res, 200, { connected: true, month, error: 'Aali HRM could not be reached: ' + String(e?.message || e).slice(0, 160), people: [] }); }
+      } catch (e) { console.error('Aali HRM:', e?.message || e); return send(res, 200, { connected: true, month, error: 'Aali HRM could not be reached right now. Try again in a minute; if it keeps happening, tell the admin (the details are in the server log).', people: [] }); }
     }
     // HR matches a person to someone in Aali HRM whose email differs (or undoes it with an empty email). Only HR: the Operations Manager reviews.
     if (path === '/payroll/hrm-link' && method === 'POST') {
@@ -318,7 +371,7 @@ export async function handle(req, res) {
       const all = await payrollPeople(db), u = all.find((x) => x.id === String(b.userId || ''));
       if (!u || !u.active || u.removed_at || ['chairman', 'admin'].includes(u.title)) throw new Rule('Choose a person on the payroll.');
       if (email) {
-        let there; try { there = (await hrmPeople()).find((p) => p.email === email); } catch (e) { throw new Rule('Aali HRM could not be reached: ' + String(e?.message || e).slice(0, 160)); }
+        let there; try { there = (await hrmPeople()).find((p) => p.email === email); } catch (e) { console.error('Aali HRM:', e?.message || e); throw new Rule('Aali HRM could not be reached right now. Try again in a minute.'); }
         if (!there) throw new Rule('Nobody in Aali HRM has that email.');
         const other = all.find((x) => x.id !== u.id && hrmEmailOf(x, links) === email);
         if (other) throw new Rule(`That person in Aali HRM is already matched to ${other.name}.`);
@@ -376,7 +429,7 @@ export async function handle(req, res) {
           unmatched: one ? [] : h.all.filter((p) => !used.has(p)).map((p) => { const ins = p.records.filter((r) => r.checkIn).map((r) => r.date).sort();
             return { code: p.code, name: p.name, email: p.email, active: p.active, designation: p.designation, department: p.department, joined: p.joined, punched: ins.length, last: ins[ins.length - 1] || '' }; })
             .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name)) });
-      } catch (e) { return send(res, 200, { connected: true, month, key, error: `${pc.data.name}'s HRM could not be reached: ` + String(e?.message || e).slice(0, 160), people: [] }); }
+      } catch (e) { console.error(`${pc.data.name}'s HRM:`, e?.message || e); return send(res, 200, { connected: true, month, key, error: `${pc.data.name}'s HRM could not be reached right now. Try again in a minute; if it keeps happening, tell the admin.`, people: [] }); }
     }
     if (path === '/import/leads' && method === 'POST') {
       if (!canEdit(user, 'leads')) throw new Rule('Your access does not allow adding leads.', 403);
@@ -390,7 +443,7 @@ export async function handle(req, res) {
             if (r.merged) { summary.merged++; return; }
             const id = await insertRec(t, 'lead', data, user); await afterCreate(t, 'lead', id, data, user, false); summary.created++; summary.ids.push(id);
           });
-        } catch (e) { summary.failed.push({ row: i + 2, error: e.message }); }
+        } catch (e) { if (!(e instanceof Rule)) console.error('lead import:', e); summary.failed.push({ row: i + 2, error: e instanceof Rule ? e.message : 'Could not be saved.' }); }
       }
       await audit(db, user, null, 'import', `Leads: ${summary.created} new, ${summary.merged} merged, ${summary.failed.length} failed`);
       return send(res, 200, summary);
@@ -436,6 +489,12 @@ export async function handle(req, res) {
           if (!open.some((r) => acc.read(r) === true)) throw new Rule('File not found.', 404);
         }
       }
+      // Opening someone else's bill, UPI QR code or signed agreement is written in the audit log (security review 10 Oct 2026).
+      if (f.created_by !== user.id) {
+        const on = (await db.query("select id, type, data->>'number' n from records where deleted_at is null and type in ('bill', 'agreement') and strpos(data::text, $1) > 0 limit 1", ['"' + f.id + '"'])).rows[0];
+        const qrOf = !on && (await db.query('select name from users where upi_qr = $1', [f.id])).rows[0];
+        if (on || qrOf) await audit(db, user, on ? { id: on.id, type: on.type } : { id: '', type: 'bill' }, 'download', on ? `Opened ${f.name} of ${on.type} ${on.n || ''}`.trim() : `Opened the UPI QR code of ${qrOf.name}`);
+      }
       const show = SHOWN_INLINE.test(f.mime);
       return send(res, 200, Buffer.from(f.data), { 'content-type': show ? f.mime : 'application/octet-stream', 'content-disposition': `${show ? 'inline' : 'attachment'}; filename="${encodeURIComponent(f.name)}"`, 'cache-control': 'private, max-age=86400',
         ...(f.mime === 'application/pdf' ? {} : { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox" }) });
@@ -463,7 +522,15 @@ export async function handle(req, res) {
       if (!SETTING_KEYS.includes(m[1])) throw new Rule('Unknown setting.');
       if (m[1] === 'agreements' && user.title !== 'ops') throw new Rule('The standard wording of agreements is set by the Operations Manager.', 403);
       const b = await readBody(req); if (m[1] === 'payroll') b.value = cleanRules(b.value);
-      await setSetting(db, m[1], b.value); await audit(db, user, null, 'settings', m[1]);
+      const before = m[1] === 'business' ? await getSetting(db, 'business', DEFAULT_SETTINGS.business) : null;
+      await setSetting(db, m[1], b.value);
+      if (before) { // what changed in the business details; the bank / UPI / GST details printed on papers are written out and management is told
+        const nv = b.value || {}, keys = [...new Set([...Object.keys(before), ...Object.keys(nv)])].filter((k) => JSON.stringify(before[k] ?? '') !== JSON.stringify(nv[k] ?? ''));
+        const money = keys.filter((k) => ['bank', 'upi', 'gstin', 'pan'].includes(k)), flat = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+        await audit(db, user, null, 'settings', `business: ${keys.join(', ') || 'no change'}${money.length ? ' – ' + money.map((k) => `${k}: "${flat(before[k])}" → "${flat(nv[k])}"`).join('; ') : ''}`.slice(0, 1500));
+        if (money.length) for (const x of (await db.query("select id from users where active and removed_at is null and title in ('ops', 'cs', 'chairman') and id <> $1", [user.id])).rows)
+          await notify(db, x.id, `${user.name} changed the company's ${money.join(', ')} that quotations, invoices and receipts show. Check it in Settings → Business details.`, '', '', user);
+      } else await audit(db, user, null, 'settings', m[1]);
       return send(res, 200, { ok: true });
     }
     if (path === '/users' && method === 'POST') {
@@ -472,6 +539,9 @@ export async function handle(req, res) {
       if (b.firstName !== undefined && (!String(b.firstName).trim() || !surname)) throw new Rule('Enter both the name and the surname.');
       if (!fullName || !email) throw new Rule('Enter name, email and a password.'); if (passwordProblem(b.password)) throw new Rule(passwordProblem(b.password));
       if (b.title && !TITLE_TEAM[b.title]) throw new Rule('Choose a role from the list.');
+      // Only the Founder & Chairman adds a Chairman login (the very first one can be added by an admin) – security review 10 Oct 2026.
+      if (b.title === 'chairman' && user.title !== 'chairman' && (await db.query("select 1 from users where title = 'chairman' and active and removed_at is null")).rowCount)
+        throw new Rule('Only the Founder & Chairman can add a Chairman login.', 403);
       if (!admin && !(juniors.includes(b.title) && !b.isAdmin)) throw new Rule(juniors.length ? 'You can add members to your own team only.' : 'Only an admin or a department manager can add people.', 403);
       // A department manager adds people into their own company; only management chooses or changes the company.
       const team = TITLE_TEAM[b.title] || 'sales', company = team === 'management' ? GROUP : admin ? b.company : COMPANIES.includes(user.company) ? user.company : COMPANIES[0];
@@ -495,8 +565,18 @@ export async function handle(req, res) {
       const lead = !admin && !self && juniors.includes(u.title) && !u.is_admin; // a manager looking after their own team member
       const chairHr = user.title === 'chairman' && !self && Object.keys(b).length === 1 && 'hr' in b; // the Chairman appoints HR, and that is all he changes here
       if (!admin && !self && !lead && !chairHr) throw new Rule('You can change members of your own team only.', 403);
-      // A department manager can set a password and switch a member off or on. Name, designation, company and access are for management.
-      if (lead && ['title', 'company', 'designation', 'firstName', 'surname', 'name', 'phone'].some((k) => b[k] !== undefined)) throw new Rule('Only management can change a person\'s details, company or access.', 403);
+      // A department manager can set a password and switch a member off or on. Name, designation, company, access and the personal email
+      // (payslips will go there) are for management or the person themselves.
+      if (lead && ['title', 'company', 'designation', 'firstName', 'surname', 'name', 'phone', 'personalEmail'].some((k) => b[k] !== undefined)) throw new Rule('Only management can change a person\'s details, company or access.', 403);
+      if (b.personalEmail !== undefined && !(self || admin)) throw new Rule('Only the person or an admin changes the personal email.', 403);
+      // Roles (security review 10 Oct 2026): only roles from the list; nobody changes their own role; the Founder & Chairman's account and the
+      // Chairman role are his alone – an admin can no longer make themselves (or a second login) Chairman, reset his password or switch him off.
+      if (b.title !== undefined && !TITLE_TEAM[b.title]) throw new Rule('Choose a role from the list.');
+      if (self && b.title !== undefined && b.title !== u.title) throw new Rule("You can't change your own role. Another admin can.", 403);
+      if (b.title === 'chairman' && u.title !== 'chairman' && user.title !== 'chairman' && (await db.query("select 1 from users where title = 'chairman' and active and removed_at is null")).rowCount)
+        throw new Rule('Only the Founder & Chairman can make someone Chairman.', 403);
+      if (u.title === 'chairman' && !self && ['title', 'password', 'active', 'isAdmin', 'firstName', 'surname', 'name', 'phone', 'company', 'designation', 'photo', 'display', 'personalEmail', 'upiQr'].some((k) => b[k] !== undefined))
+        throw new Rule('Only the Founder & Chairman changes his own account. If he forgets his password, it is reset on the server.', 403);
       let nSurname = u.surname || '';
       if (b.firstName !== undefined && (admin || lead || self)) { const fn = String(b.firstName).trim().slice(0, 60); nSurname = String(b.surname || '').trim().slice(0, 60);
         if (!fn || !nSurname) throw new Rule('Enter both the name and the surname.'); b.name = `${fn} ${nSurname}`; }
@@ -506,53 +586,81 @@ export async function handle(req, res) {
       if (b.company !== undefined && (admin || lead) && !COMPANIES.includes(b.company) && (TITLE_TEAM[next.title] || u.team) !== 'management') throw new Rule('Choose a company from the list.');
       const nTeam = TITLE_TEAM[next.title] || u.team, nCompany = nTeam === 'management' ? GROUP : (admin || lead) && COMPANIES.includes(b.company) ? b.company : COMPANIES.includes(u.company) ? u.company : COMPANIES[0];
       const nDesig = (admin || lead) && b.designation !== undefined ? String(b.designation).trim().slice(0, 80) : u.designation || '';
-      // Display name: only parts of the person's own name. Photo: a picture already uploaded to the files store.
+      // Display name: only parts of the person's own name. Photo: a picture the person (or the admin setting it) uploaded – not any file whose
+      // number is known, which would open that file to everyone (security review 10 Oct 2026).
       let nDisplay = u.display || '', nPhoto = u.photo || '';
       if (b.display !== undefined && (self || admin)) { nDisplay = String(b.display).trim().replace(/\s+/g, ' ').slice(0, 40);
         if (!displayOk(nDisplay, next.name)) throw new Rule(`The display name must be made from ${self ? 'your' : 'the person\'s'} own name (${next.name}), for example "${next.name.split(' ')[0]}".`); }
       else if (!displayOk(nDisplay, next.name)) nDisplay = ''; // the full name was corrected and the old display name no longer fits
-      if (b.photo !== undefined && (self || admin)) { nPhoto = String(b.photo || '');
-        if (nPhoto) { const ph = (await db.query('select mime from files where id = $1', [nPhoto])).rows[0]; if (!ph || !PHOTO.test(ph.mime)) throw new Rule('Choose a picture file for the photo (JPG or PNG).'); } }
+      if (b.photo !== undefined && (self || admin) && String(b.photo || '') !== (u.photo || '')) { nPhoto = String(b.photo || '');
+        if (nPhoto) { const ph = (await db.query('select mime, created_by from files where id = $1', [nPhoto])).rows[0];
+          if (!ph || !PHOTO.test(ph.mime) || ![u.id, user.id].includes(ph.created_by)) throw new Rule('Choose a picture file for the photo (JPG or PNG).'); } }
       // "HR & payroll": only the Company Secretary can hold it (the user's rule); the Operations Manager reviews payroll, the Chairman is not on it.
-      if (b.hr !== undefined && !!b.hr !== !!u.hr) {
-        // Switched ON only by the Founder & Chairman (the user's rule, after the payroll review): nobody who runs or reviews payroll can give
-        // themselves – or a second login of theirs – the right to change it. Switched OFF by the Chairman, an admin, or the person themselves.
+      // Switched ON only by the Founder & Chairman (the user's rule, after the payroll review): nobody who runs or reviews payroll can give
+      // themselves – or a second login of theirs – the right to change it. Switched OFF by the Chairman, an admin, or the person themselves.
+      const hrChange = b.hr !== undefined && !!b.hr !== !!u.hr;
+      if (hrChange) {
         if (b.hr ? user.title !== 'chairman' : !(admin || self || user.title === 'chairman')) throw new Rule(b.hr ? 'Only the Founder & Chairman can switch HR & payroll on.' : 'Only an admin or the Chairman can switch HR & payroll off.', 403);
         if (b.hr && (!u.active || u.removed_at)) throw new Rule('This person cannot sign in now, so they cannot be HR.');
         if (b.hr && next.title !== HR_TITLE) throw new Rule('HR & payroll can be given only to the Company Secretary.');
-        await db.query('update users set hr = $2 where id = $1', [u.id, !!b.hr]); await audit(db, user, null, 'people', `${u.name}: HR & payroll ${b.hr ? 'on' : 'off'}`);
-        await tellHrChange(db, user, `${user.name} switched HR & payroll ${b.hr ? 'ON' : 'off'} for ${u.name}.`);
-        if (!self) await notify(db, u.id, b.hr ? `${user.name} gave you HR & payroll: you can now enter salaries and make the payroll.` : `${user.name} switched off your HR & payroll access.`, 'payroll', '', user);
       }
-      if (next.title !== HR_TITLE && u.hr) await db.query('update users set hr = false where id = $1', [u.id]); // no longer the Company Secretary
-      if (b.personalEmail !== undefined) await db.query('update users set personal_email = $2 where id = $1', [u.id, cleanPersonal(b.personalEmail)]); // self, admin or their manager (checked above)
+      const personal = b.personalEmail !== undefined ? cleanPersonal(b.personalEmail) : null;
       // UPI QR code: set only by the person themselves – nobody else can send their bill money somewhere else – and never changed while
       // a bill of theirs waits to be paid (the user, 9 Oct 2026): management pays the QR they saw when they approved it.
-      if (b.upiQr !== undefined && String(b.upiQr || '') !== (u.upi_qr || '')) {
+      const qrChange = b.upiQr !== undefined && String(b.upiQr || '') !== (u.upi_qr || ''), qr = String(b.upiQr || '');
+      if (qrChange) {
         if (!self) throw new Rule('Only the person can set their own UPI QR code.', 403);
-        const qr = String(b.upiQr || '');
         if (qr) { const f = (await db.query('select mime, created_by from files where id = $1', [qr])).rows[0];
           if (!f || f.created_by !== user.id || !PHOTO.test(f.mime)) throw new Rule('Choose a picture of your UPI QR code (JPG or PNG).'); }
         const open = (await db.query("select count(*)::int n from records where deleted_at is null and type = 'bill' and data->>'owner' = $1 and data->>'status' in ('submitted', 'approved')", [u.id])).rows[0].n;
         if (open) throw new Rule(`You have ${open} bill${open === 1 ? '' : 's'} waiting to be paid. The UPI QR code can be changed once ${open === 1 ? 'it is' : 'they are all'} paid or rejected.`);
-        await db.query('update users set upi_qr = $2 where id = $1', [u.id, qr]); await audit(db, user, null, 'user', `${u.name}: UPI QR code for bills ${qr ? (u.upi_qr ? 'changed' : 'added') : 'removed'}`);
       }
-      await db.query('update users set name=$2, phone=$3, title=$4, team=$5, active=$6, is_admin=$7, company=$8, designation=$9, surname=$10, display=$11, photo=$12, updated_at=now() where id=$1',
-        [u.id, next.name, next.phone, next.title, nTeam, next.active, next.is_admin, nCompany, nDesig, nSurname, nDisplay, nPhoto]);
+      // A new password is checked before anything is saved, so a refused request changes nothing (security review: the admin switch used to
+      // be saved even when the password was refused). Your own needs the current one – counted like wrong sign-ins, so it cannot be guessed.
       if (b.password) {
         if (passwordProblem(b.password)) throw new Rule(passwordProblem(b.password));
-        // Changing your own password always needs the current one – an admin too – so an unlocked computer is not enough to take the account.
-        if (self && !checkPassword(String(b.currentPassword || ''), u.pass_hash)) throw new Rule('Your current password is not right.');
-        await db.query('update users set pass_hash = $2 where id = $1', [u.id, hashPassword(b.password)]);
-        // A password set by someone else switches HR & payroll off: nobody can take over the HR login to change payroll (review).
-        if (!self && u.hr) { await db.query('update users set hr = false where id = $1', [u.id]); await audit(db, user, null, 'people', `${u.name}: HR & payroll off (password set by ${user.name})`);
-          await tellHrChange(db, user, `${user.name} set a new password for ${u.name}, so HR & payroll was switched off for them. Switch it on again if that is right.`); }
-        // The Operations Manager reads payroll, so a password set for him by someone else is always reported to the Chairman.
-        if (!self && u.title === 'ops') await tellHrChange(db, user, `${user.name} set a new password for ${u.name} (Operations Manager).`);
-        // Every other device is signed out; the person changing their own password stays signed in here.
-        await db.query('delete from sessions where user_id = $1 and token_hash <> $2', [u.id, self ? await sessionKey(db, readCookie(req, 'aali_session')) : '']);
+        if (self) { const ip = clientIp(req), tr = await countTry(db, u.email, ip);
+          if (!(await checkPassword(String(b.currentPassword || ''), u.pass_hash))) { await wrongTry(db, tr, u.email, ip); throw new Rule('Your current password is not right.'); }
+          await db.query('delete from audit where id = $1', [tr.id]); }
       }
-      await audit(db, user, null, 'user', `Updated ${u.email}`);
+      // What changes, in words, for the audit log: old → new (it used to say only "Updated <email>").
+      const what = [];
+      if (next.name !== u.name) what.push(`name ${u.name} → ${next.name}`);
+      if (next.title !== u.title) what.push(`role ${u.title} → ${next.title}`);
+      if (!!next.is_admin !== !!u.is_admin) what.push(`admin ${next.is_admin ? 'on' : 'off'}`);
+      if (!!next.active !== !!u.active) what.push(next.active ? 'switched on' : 'switched off');
+      if (nCompany !== (u.company || '')) what.push(`company ${u.company || '–'} → ${nCompany}`);
+      if (nDesig !== (u.designation || '')) what.push(`designation ${u.designation || '–'} → ${nDesig || '–'}`);
+      if ((next.phone || '') !== (u.phone || '')) what.push('mobile changed');
+      if (nDisplay !== (u.display || '')) what.push('display name changed');
+      if (nPhoto !== (u.photo || '')) what.push('photo changed');
+      if (personal !== null && personal !== (u.personal_email || '')) what.push('personal email changed');
+      if (b.password) what.push(self ? 'own password changed' : 'password set');
+      const keep = self && b.password ? await sessionKey(db, readCookie(req, 'aali_session')) : '';
+      await db.tx(async (t) => { // everything together, or nothing
+        if (hrChange) {
+          await t.query('update users set hr = $2 where id = $1', [u.id, !!b.hr]); await audit(t, user, null, 'people', `${u.name}: HR & payroll ${b.hr ? 'on' : 'off'}`);
+          await tellHrChange(t, user, `${user.name} switched HR & payroll ${b.hr ? 'ON' : 'off'} for ${u.name}.`);
+          if (!self) await notify(t, u.id, b.hr ? `${user.name} gave you HR & payroll: you can now enter salaries and make the payroll.` : `${user.name} switched off your HR & payroll access.`, 'payroll', '', user);
+        }
+        if (next.title !== HR_TITLE && u.hr) await t.query('update users set hr = false where id = $1', [u.id]); // no longer the Company Secretary
+        if (personal !== null) await t.query('update users set personal_email = $2 where id = $1', [u.id, personal]);
+        if (qrChange) { await t.query('update users set upi_qr = $2 where id = $1', [u.id, qr]); await audit(t, user, null, 'user', `${u.name}: UPI QR code for bills ${qr ? (u.upi_qr ? 'changed' : 'added') : 'removed'}`); }
+        await t.query('update users set name=$2, phone=$3, title=$4, team=$5, active=$6, is_admin=$7, company=$8, designation=$9, surname=$10, display=$11, photo=$12, updated_at=now() where id=$1',
+          [u.id, next.name, next.phone, next.title, nTeam, next.active, next.is_admin, nCompany, nDesig, nSurname, nDisplay, nPhoto]);
+        if (u.active && !next.active) await t.query('delete from sessions where user_id = $1', [u.id]); // switched off: signed out everywhere at once
+        if (b.password) {
+          await t.query('update users set pass_hash = $2 where id = $1', [u.id, hashPassword(b.password)]);
+          // A password set by someone else switches HR & payroll off: nobody can take over the HR login to change payroll (review).
+          if (!self && u.hr) { await t.query('update users set hr = false where id = $1', [u.id]); await audit(t, user, null, 'people', `${u.name}: HR & payroll off (password set by ${user.name})`);
+            await tellHrChange(t, user, `${user.name} set a new password for ${u.name}, so HR & payroll was switched off for them. Switch it on again if that is right.`); }
+          // The Operations Manager reads payroll, so a password set for him by someone else is always reported to the Chairman.
+          if (!self && u.title === 'ops') await tellHrChange(t, user, `${user.name} set a new password for ${u.name} (Operations Manager).`);
+          // Every other device is signed out; the person changing their own password stays signed in here.
+          await t.query('delete from sessions where user_id = $1 and token_hash <> $2', [u.id, keep]);
+        }
+        if (what.length) await audit(t, user, null, 'user', `${u.email}: ${what.join('; ')}`.slice(0, 400));
+      });
       return send(res, 200, { user: publicUser((await db.query('select * from users where id = $1', [u.id])).rows[0]) });
     }
     // Sign a person out of every device (for example a lost phone).
@@ -578,6 +686,7 @@ export async function handle(req, res) {
       const b = await readBody(req), reason = String(b.reason || '').trim().slice(0, 200);
       if (reason.length < 3) throw new Rule('Write why this person is being removed.');
       const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
+      if (u.title === 'chairman' && user.title !== 'chairman') throw new Rule('Only the Founder & Chairman changes the Chairman\'s account.', 403);
       await db.query('delete from sessions where user_id = $1', [u.id]);
       await db.query('update users set active = false, removed_at = now(), removed_by = $2, removed_reason = $3, updated_at = now() where id = $1', [u.id, user.id, reason]);
       await audit(db, user, null, 'user', `Removed ${u.email} (${u.name}) – ${reason}`);
@@ -602,7 +711,7 @@ export async function handle(req, res) {
     if (m && method === 'GET') {
       if (!admin && !isTop(user)) throw new Rule('Only management can open a person\'s history.', 403);
       const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
-      const rows = (await db.query("select a.at, a.summary, a.user_id from audit a where a.action = 'user' and a.summary ilike $1 order by a.at desc limit 100", ['%' + u.email + '%'])).rows;
+      const rows = (await db.query("select a.at, a.summary, a.user_id from audit a where a.action = 'user' and a.summary ilike $1 order by a.at desc limit 100", ['%' + u.email.replace(/[\\%_]/g, '\\$&') + '%'])).rows;
       return send(res, 200, { history: rows, work: await userWork(db, u.id, user) });
     }
     if (path === '/sample/clear' && method === 'POST') {
