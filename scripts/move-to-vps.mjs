@@ -3,26 +3,31 @@
 // second run refuses unless --replace is given (then the VPS copy is emptied and filled again, e.g. for the final move).
 // Sign-in sessions are not copied: everyone signs in once on the new address with their usual password.
 //
-// usage (from this computer, while the VPS database is reachable – Coolify → the database → "Make it publicly available"):
-//   node scripts/move-to-vps.mjs [--replace]
-// It reads DATABASE_URL (the live Neon database) and VPS_DATABASE_URL (the VPS database's public address) from .env.local, which
-// stays on this computer – the addresses hold passwords, so they are typed there, never sent in chat. FROM_URL / TO_URL override them.
-// Turn the database's public access off again afterwards.
+// usage, the easy way (15 Oct 2026) – inside the server, from Coolify → the app → Terminal:
+//   node scripts/move-to-vps.mjs --here [--replace]
+// It copies from FROM_URL (the Neon address, added for the copy as a secret setting of the app in Coolify, removed afterwards) into the
+// app's own DATABASE_URL. The two databases talk over the internet encrypted (Neon) and over Coolify's private network (the VPS one).
+// usage from this computer (through an SSH tunnel, see VPS-SETUP.md): node scripts/move-to-vps.mjs [--replace]
+// It reads DATABASE_URL (the live Neon database) and VPS_DATABASE_URL from .env.local, which stays on this computer – the addresses
+// hold passwords, so they are typed there, never sent in chat. FROM_URL / TO_URL override them.
 import fs from 'node:fs';
 import pg from 'pg';
 import { SCHEMA } from '../server/schema.js';
 
 const local = fs.existsSync(new URL('../.env.local', import.meta.url)) ? fs.readFileSync(new URL('../.env.local', import.meta.url), 'utf8') : '';
 const read = (k) => ((local.match(new RegExp(`^${k}="?([^"\\n]+)`, 'm')) || [])[1] || '').trim();
-const fromUrl = process.env.FROM_URL || read('DATABASE_URL'), toUrl = (process.env.TO_URL || read('VPS_DATABASE_URL')).trim();
-if (!fromUrl || !toUrl) throw new Error('Put VPS_DATABASE_URL="postgres://…" (the VPS database\'s public address) in .env.local, next to DATABASE_URL.');
+const here = process.argv.includes('--here'); // running inside the server: the target is the app's own database
+const fromUrl = (process.env.FROM_URL || (here ? '' : read('DATABASE_URL'))).trim(), toUrl = (process.env.TO_URL || (here ? process.env.DATABASE_URL : read('VPS_DATABASE_URL')) || '').trim();
+if (!fromUrl || !toUrl) throw new Error(here ? 'Add FROM_URL (the Neon address) to the app\'s settings in Coolify, restart the app, and run this again.'
+  : 'Put VPS_DATABASE_URL="postgres://…" (the VPS database\'s address) in .env.local, next to DATABASE_URL.');
 const clean = (u) => { const x = new URL(u); for (const k of ['sslmode', 'channel_binding']) x.searchParams.delete(k); return x; };
 const from = clean(fromUrl), to = clean(toUrl);
 if (from.host === to.host && from.pathname === to.pathname) throw new Error('FROM and TO are the same database.');
 // The copy carries every password hash, salary and file: it travels encrypted, or through an SSH tunnel to this computer (127.0.0.1).
 // sslmode=disable to any other address is refused (security review 10 Oct 2026; see VPS-SETUP.md).
-const localTo = /^(localhost|127\.0\.0\.1)$/.test(to.hostname);
-if (/sslmode=disable/.test(toUrl) && !localTo) throw new Error('Refusing to copy without encryption over the internet. Open an SSH tunnel and use 127.0.0.1 (VPS-SETUP.md), or remove sslmode=disable.');
+// A one-word host name is Coolify's private network inside the VPS (the app's own database), which never crosses the internet.
+const localTo = /^(localhost|127\.0\.0\.1)$/.test(to.hostname) || !to.hostname.includes('.');
+if (/sslmode=disable/.test(toUrl) && !localTo) throw new Error('Refusing to copy without encryption over the internet. Run it inside the server (--here) or through an SSH tunnel (VPS-SETUP.md).');
 const plainTo = localTo;
 const src = new pg.Client({ connectionString: from.toString(), ssl: { rejectUnauthorized: true } });
 const dst = new pg.Client({ connectionString: to.toString(), ssl: plainTo ? false : { rejectUnauthorized: process.env.DB_SSL_NO_VERIFY !== '1' } });
@@ -51,6 +56,6 @@ try {
   for (const table of TABLES) { const n = (await dst.query(`select count(*)::int as n from ${table}`)).rows[0].n; if (n !== counts[table]) throw new Error(`${table}: ${counts[table]} read but ${n} written.`); }
   await dst.query('commit'); await src.query('rollback');
   for (const table of TABLES) console.log(`${table}: ${counts[table]} copied`);
-  console.log('Done. Aali One on the VPS now has the live data. Turn the database\'s public access off again in Coolify.');
+  console.log(here ? 'Done. Aali One on the VPS now has the live data. Remove FROM_URL from the app\'s settings in Coolify.' : 'Done. Aali One on the VPS now has the live data. Close the tunnel and turn the database\'s public access off again in Coolify.');
 } catch (e) { await dst.query('rollback').catch(() => {}); await src.query('rollback').catch(() => {}); console.error('Stopped, nothing was kept on the VPS:', e.message); process.exitCode = 1; }
 finally { await src.end(); await dst.end(); }

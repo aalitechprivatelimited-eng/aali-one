@@ -17,6 +17,8 @@ COPY --from=build /app/dist ./dist
 COPY package.json vercel.json ./
 COPY server ./server
 COPY shared ./shared
+# The one-time data copy from Neon runs inside the server (Coolify → the app → Terminal: node scripts/move-to-vps.mjs --here).
+COPY scripts/move-to-vps.mjs ./scripts/move-to-vps.mjs
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1
