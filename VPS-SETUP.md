@@ -65,16 +65,20 @@ A client's own HRM, once set up, adds `HRM_DATABASE_URL_<link code>` the same wa
 Pick a quiet time (evening). Tell everyone: "Aali One moves to one.aaliconssultancy.com tonight. Please don't use it between
 8 and 8:30 pm."
 
-The copy carries every password hash, salary and file, so it goes through an **SSH tunnel** (encrypted), never in the open.
-The move script refuses `sslmode=disable` to any address but this computer.
+The copy runs **inside the server**, from Coolify's own Terminal: no SSH, and the database never opens to the internet.
+Neon is reached encrypted; the VPS database over Coolify's private network. Neon is only **read**.
 
-1. Coolify → `aali-one-db` → **Make it publicly available** (on), note its **public port**.
-2. On the office computer open a tunnel (leave the window open): `ssh -N -L 5433:127.0.0.1:<public port> root@<VPS IP>`
-3. In `D:\Demo\aali-one\.env.local`, add one line (typed there, never sent anywhere):
-   `VPS_DATABASE_URL="postgres://postgres:<password>@127.0.0.1:5433/postgres?sslmode=disable"` (the tunnel's own end)
-4. Run: `node scripts/move-to-vps.mjs` (or with `--replace` if a test copy was made before). Neon is only **read**.
-   It prints how many people, records, files and audit lines were copied, and checks each count.
-5. Close the tunnel. Coolify → `aali-one-db` → **Make it publicly available** → **off** again.
+1. Coolify → the app → **Environment Variables** → add `FROM_URL` = the Neon address (Vercel → aali-one → Settings →
+   Environment Variables → `DATABASE_URL` → reveal → copy). Mark it secret. **Restart** the app.
+2. Coolify → the app → **Terminal** → run `node scripts/move-to-vps.mjs --here` (the final time, after a trial copy:
+   `node scripts/move-to-vps.mjs --here --replace`). It prints how many people, records, files and audit lines were
+   copied, and checks each count. If anything fails, nothing is kept.
+3. Coolify → the app → **Environment Variables** → **delete** `FROM_URL` → **Restart**.
+
+(The other way, from the office computer through an SSH tunnel: make the database publicly available, run
+`ssh -N -L 5433:127.0.0.1:<public port> root@<VPS IP>`, put `VPS_DATABASE_URL="postgres://postgres:<password>@127.0.0.1:5433/postgres?sslmode=disable"`
+in `.env.local`, run `node scripts/move-to-vps.mjs`, close the tunnel, turn public access off. The script refuses an unencrypted
+copy to any other address.)
 6. Coolify → the app → **Restart**. Open https://one.aaliconssultancy.com and sign in. Check that today's reports, leads,
    payroll and files are there.
 7. Tell everyone the new address. The old Vercel address can send people to the new one a week later.

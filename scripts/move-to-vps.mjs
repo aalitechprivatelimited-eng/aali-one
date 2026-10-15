@@ -32,9 +32,18 @@ const plainTo = localTo;
 const src = new pg.Client({ connectionString: from.toString(), ssl: { rejectUnauthorized: true } });
 const dst = new pg.Client({ connectionString: to.toString(), ssl: plainTo ? false : { rejectUnauthorized: process.env.DB_SSL_NO_VERIFY !== '1' } });
 const TABLES = ['users', 'settings', 'counters', 'records', 'files', 'audit']; // in this order; sessions and the WhatsApp outbox are not copied
-await src.connect(); await dst.connect();
+src.on('error', (e) => console.error('Neon connection:', e.message)); dst.on('error', (e) => console.error('VPS database connection:', e.message));
+// 1. Read everything from Neon in one short read-only transaction, then let Neon go (a connection kept open while writing was dropped).
+await src.connect();
+const data = {};
 try {
   await src.query('begin read only');
+  for (const table of TABLES) { const r = await src.query(`select * from ${table}`); data[table] = r; console.log(`read ${table}: ${r.rows.length}`); }
+  await src.query('rollback');
+} finally { await src.end().catch(() => {}); }
+// 2. Write it all into the VPS database in one transaction: either everything arrives, or nothing does.
+await dst.connect();
+try {
   await dst.query(SCHEMA);
   const have = (await dst.query('select count(*)::int as n from users')).rows[0].n;
   if (have && !process.argv.includes('--replace')) throw new Error(`The VPS database already has ${have} people. Run again with --replace to empty it and copy afresh.`);
@@ -42,20 +51,21 @@ try {
   await dst.query(`truncate ${['sessions', 'outbox', ...TABLES].join(', ')} restart identity cascade`);
   const counts = {};
   for (const table of TABLES) {
-    const { rows, fields } = await src.query(`select * from ${table}`);
+    const { rows, fields } = data[table];
     const cols = fields.map((f) => f.name), json = new Set(fields.filter((f) => f.dataTypeID === 3802 || f.dataTypeID === 114).map((f) => f.name)); // jsonb / json go as text
-    for (let i = 0; i < rows.length; i += 100) {
-      const part = rows.slice(i, i + 100), vals = [];
+    const step = table === 'files' ? 5 : 100; // files are big: a few at a time
+    for (let i = 0; i < rows.length; i += step) {
+      const part = rows.slice(i, i + step), vals = [];
       const sql = part.map((r, j) => `(${cols.map((c, k) => { vals.push(json.has(c) && r[c] != null ? JSON.stringify(r[c]) : r[c]); return `$${j * cols.length + k + 1}`; }).join(', ')})`).join(', ');
       await dst.query(`insert into ${table} (${cols.join(', ')}) values ${sql}`, vals);
     }
-    counts[table] = rows.length;
+    counts[table] = rows.length; console.log(`wrote ${table}: ${rows.length}`);
   }
   await dst.query("select setval(pg_get_serial_sequence('audit', 'id'), coalesce((select max(id) from audit), 1))");
   // Check: every table has as many rows on the VPS as on Neon.
   for (const table of TABLES) { const n = (await dst.query(`select count(*)::int as n from ${table}`)).rows[0].n; if (n !== counts[table]) throw new Error(`${table}: ${counts[table]} read but ${n} written.`); }
-  await dst.query('commit'); await src.query('rollback');
+  await dst.query('commit');
   for (const table of TABLES) console.log(`${table}: ${counts[table]} copied`);
   console.log(here ? 'Done. Aali One on the VPS now has the live data. Remove FROM_URL from the app\'s settings in Coolify.' : 'Done. Aali One on the VPS now has the live data. Close the tunnel and turn the database\'s public access off again in Coolify.');
-} catch (e) { await dst.query('rollback').catch(() => {}); await src.query('rollback').catch(() => {}); console.error('Stopped, nothing was kept on the VPS:', e.message); process.exitCode = 1; }
-finally { await src.end(); await dst.end(); }
+} catch (e) { await dst.query('rollback').catch(() => {}); console.error('Stopped, nothing was kept on the VPS:', e.message); process.exitCode = 1; }
+finally { await dst.end().catch(() => {}); }
