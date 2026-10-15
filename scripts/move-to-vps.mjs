@@ -38,7 +38,14 @@ await src.connect();
 const data = {};
 try {
   await src.query('begin read only');
-  for (const table of TABLES) { const r = await src.query(`select * from ${table}`); data[table] = r; console.log(`read ${table}: ${r.rows.length}`); }
+  for (const table of TABLES) {
+    if (table === 'files') { // the stored files are big: read a few at a time (one 58 MB answer was dropped on the way, 15 Oct 2026)
+      const ids = (await src.query('select id from files order by id')).rows.map((r) => r.id), rows = [], { fields } = await src.query('select * from files limit 0');
+      for (let i = 0; i < ids.length; i += 5) rows.push(...(await src.query('select * from files where id = any($1) order by id', [ids.slice(i, i + 5)])).rows);
+      data[table] = { rows, fields };
+    } else data[table] = await src.query(`select * from ${table}`);
+    console.log(`read ${table}: ${data[table].rows.length}`);
+  }
   await src.query('rollback');
 } finally { await src.end().catch(() => {}); }
 // 2. Write it all into the VPS database in one transaction: either everything arrives, or nothing does.
