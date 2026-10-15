@@ -12,7 +12,8 @@ async function open() {
     // No encryption only for a database on this same machine, or when the address says sslmode=disable (a private network). The host is read
     // from the address itself – "localhost" inside a password or a query no longer switches encryption off (security review 10 Oct 2026).
     let host = ''; try { host = new URL(url).hostname; } catch { /* the driver reports a bad address */ }
-    const plain = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host) || /[?&]sslmode=disable(&|$)/.test(url), address = url.replace(/([?&])sslmode=[^&]*&?/, '$1').replace(/[?&]$/, '');
+    // A one-word host (Coolify's private network inside the VPS, e.g. the aali-one-db container) never crosses the internet.
+    const plain = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host) || (!!host && !host.includes('.')) || /[?&]sslmode=disable(&|$)/.test(url), address = url.replace(/([?&])sslmode=[^&]*&?/, '$1').replace(/[?&]$/, '');
     const pool = new pg.Pool({ connectionString: address, max: 3, ssl: plain ? false : { rejectUnauthorized: process.env.DB_SSL_NO_VERIFY !== '1' } });
     // A connection the database drops while idle (a restart, the pooler) is reported here instead of stopping the whole server.
     pool.on('error', (e) => console.error('database connection dropped:', e.message));
