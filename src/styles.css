@@ -386,6 +386,12 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
   background:#fff url(/aali-mark-page.png) top center/100% auto repeat-y;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .agree p{margin:0 0 7px}.agree h3,.agree h4{font-family:inherit;letter-spacing:0}
 .agree .ag-wm{display:none}
+/* Watermarks (16 Oct 2026): the "a" on quotations and agreements, the logo with the name on receipts. On screen one faint mark per A4
+   page (a picture the size of the page); printed, a fixed picture, which the browser repeats on every page. */
+.paper.wm{position:relative;background:#fff url(/aali-mark-page.png) top center/100% auto no-repeat;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.paper.wm-receipt{background-image:url(/receipt-mark-page.png)}
+.paper .wm-img{display:none}
+@media print{.paper.wm{background:none}.paper .wm-img{display:block;position:fixed;top:50%;left:50%;width:360px;transform:translate(-50%,-50%);opacity:.1;z-index:0;pointer-events:none}.paper.wm-receipt .wm-img{width:420px}}
 .agree .ag-no{text-align:right;font-size:12px;color:#555;margin-bottom:6px}
 .agree .ag-title{text-align:center;font-weight:700;color:#1F3864;font-size:19px;letter-spacing:.02em;margin:0 0 4px}
 .agree .ag-sub{text-align:center;font-style:italic;color:#B8860B;margin:0 0 18px}
@@ -419,7 +425,7 @@ tr.click{cursor:pointer} tr.click:hover td{background:var(--gold-50)}
 table.kv{width:100%;border-collapse:collapse}table.kv td{padding:5px 2px;border-bottom:1px solid var(--line)}table.kv td.n{text-align:right;font-variant-numeric:tabular-nums}
 @media (max-width:640px){.slip .slip-two{grid-template-columns:1fr}}
 @media print{.slip-page{break-after:page;padding:0}.slip-page:last-child{break-after:auto}.paper.slip{margin:0}}
-@media print{.ag-edit{display:block}.ag-edit .ag-form,.seg-phone{display:none!important}.ag-edit .ag-paper{display:block!important}.ag-scale{zoom:1!important}.paper.agree{background:none;padding:4mm 6mm 0}.agree .ag-wm{display:block;position:fixed;top:50%;left:50%;width:380px;transform:translate(-50%,-50%);opacity:.055;z-index:0;pointer-events:none}}
+@media print{.ag-edit{display:block}.ag-edit .ag-form,.seg-phone{display:none!important}.ag-edit .ag-paper{display:block!important}.ag-scale{zoom:1!important}.paper.agree{background:none;padding:4mm 6mm 0}.agree .ag-wm{display:block;position:fixed;top:50%;left:50%;width:380px;transform:translate(-50%,-50%);opacity:.1;z-index:0;pointer-events:none}}
 .sig{display:block;width:100%;height:190px;border:1.5px dashed var(--line-2);border-radius:12px;background:#fff;touch-action:none;cursor:crosshair}
 .stars button{background:none;border:none;font-size:28px;color:var(--line-2);padding:0 2px;transition:color .15s,transform .15s}.stars button:hover{transform:scale(1.15)}.stars button.on{color:var(--gold)}
 @media print{

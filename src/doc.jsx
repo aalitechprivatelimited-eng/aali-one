@@ -28,7 +28,8 @@ function Sign() { const b = settings().business; return <div style={{ textAlign:
 
 export function QuoteSheet({ q, invoice }) {
   const t = docTotals(q), b = settings().business;
-  return <div className="paper">
+  // The Aali Conssultancy "a" behind a quotation (the user, 16 Oct 2026); a tax invoice has none.
+  return <div className={'paper' + (invoice ? '' : ' wm')}>{!invoice && <img className="wm-img" src="/aali-mark.png" alt="" />}
     <Head title={invoice ? 'Tax Invoice' : 'Quotation'} meta={[[invoice ? 'Invoice No.' : 'Quote No.', q.number || 'Given on save'], ['Date', fmtDate(q.date)], [invoice ? 'Due' : 'Valid until', fmtDate(invoice ? q.dueDate : q.validUntil)], invoice && ['Against', q.quoteNo]].filter(Boolean)} />
     <div className="row between" style={{ alignItems: 'flex-start' }}><Party label={invoice ? 'Bill to' : 'Quotation for'} name={q.clientName} lines={[q.contactName && 'Attn: ' + q.contactName, q.address, [q.phone, q.email].filter(Boolean).join('  ·  '), q.gstin && 'GSTIN ' + q.gstin, invoice && q.placeOfSupply && 'Place of supply: ' + q.placeOfSupply]} />
       {q.subject && <Party label="Subject" name={q.subject} lines={[]} />}</div>
@@ -54,7 +55,8 @@ export function QuoteSheet({ q, invoice }) {
 
 export function ReceiptSheet({ r }) {
   const t = receiptTotals(r), b = settings().business;
-  return <div className="paper">
+  // The Aali Conssultancy logo with its name behind a receipt (the user, 16 Oct 2026).
+  return <div className="paper wm wm-receipt"><img className="wm-img" src="/receipt-mark.png" alt="" />
     <Head title="Payment Receipt" meta={[['Receipt No.', r.number || 'Given on save'], ['Date', fmtDate(r.date)], ['Status', r.balance > 0 ? 'Part paid' : 'Received']]} />
     <Party label="Received from" name={r.payerName} lines={[r.payerPhone, r.payerAddress, r.payerGstin && 'GSTIN ' + r.payerGstin]} />
     <p style={{ margin: '4px 0 10px' }}>{b.name === 'AALI CONSSULTANCY' ? 'Thank you for your payment. We have received your payment successfully.' : 'Received with thanks.'}</p>
