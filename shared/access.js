@@ -24,10 +24,12 @@ export const ACCESS = {
   calls:     { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all', bde: 'own' },
   deals:     { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all', bde: 'own' },
   clients:   { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all', bde: 'own' },
-  quotes:    { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all' },
+  // A BDE never makes or changes a quotation or an agreement: they see only the ones given to them, take them to the client and
+  // collect the client's sign (server/logic.js docFlow, the user 16 Oct 2026).
+  quotes:    { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all', bde: 'own:view' },
   // Client service agreements and project closure agreements. Made by the Operations Manager and the Sales Manager (a closure
   // agreement by the Operations Manager only – canClose below); read by the Company Secretary and the Chairman. See STRICT.
-  agreements: { chairman: 'all:view', ops: 'all', cs: 'all:view', salesmgr: 'all' },
+  agreements: { chairman: 'all:view', ops: 'all', cs: 'all:view', salesmgr: 'all', bde: 'own:view' },
   // Payroll: the Operations Manager reads, reviews and remarks. HR changes everything – HR is not a level but a switch on a person
   // ("HR & payroll", today the Company Secretary), see levelOf. The Founder & Chairman sees it all and can step in and change anything
   // (asked 8 Oct 2026); HR and the Operations Manager are then told. Nobody else sees payroll.
@@ -63,7 +65,8 @@ export const MEANS = {
   bills: { own: 'Submits own bills, sees what happens to them', all: 'Every bill; approves and marks paid' },
   inbox: { own: 'Own notifications', all: 'Own notifications' },
   approvals: { team: 'Decides for own team', all: 'Decides all' },
-  agreements: { all: 'Makes service agreements; a closure agreement is made by the Operations Manager only', 'all:view': 'Reads every agreement' },
+  agreements: { all: 'Makes service agreements; a closure agreement is made by the Operations Manager only', 'all:view': 'Reads every agreement', 'own:view': 'Only those given to them: takes them to the client, collects the advance and the client’s sign' },
+  quotes: { 'own:view': 'Only those given to them: takes them to the client and collects the client’s sign' },
   payroll: { all: 'Salaries, payroll, loans, payslips – sees and changes everything', 'all:view': 'Reads payroll, reviews and remarks' },
   clientpay: { all: 'Clients\' payroll – their rules, employees, months, payslips – sees and changes everything', 'all:view': 'Reads clients\' payroll, reviews and remarks' },
   leads: { own: 'Own leads only' }, calls: { own: 'Own numbers; checks every number before calling', all: 'All numbers; Do Not Call list', 'all:view': 'All numbers, view only' }, deals: { own: 'Own deals only' }, clients: { own: 'Own clients only' },

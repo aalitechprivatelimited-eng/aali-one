@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore, list, get, create, update, store } from '../api.js';
 import { settings, uname, fmtDate, today, addDays, inr, clientName, can, canEdit } from '../lib.js';
@@ -6,9 +6,13 @@ import { docTotals, fyLabel } from '../../shared/money.js';
 import { Field, In, Sel, Pick, Area, Pill, Empty, Sample, DeleteButton, Message, attempt, toast, RO, ViewOnly } from '../ui.jsx';
 import { QuoteSheet } from '../doc.jsx';
 import { useId } from '../App.jsx';
+import { DocFlow } from '../flow.jsx';
 
-export const STATUS = ['draft', 'needs approval', 'sent', 'accepted', 'declined', 'expired'];
-const tone = { accepted: 'ok', 'needs approval': 'warn', declined: 'bad', expired: 'bad', sent: 'info' };
+export const STATUS = ['draft', 'needs approval', 'sent', 'changes', 'accepted', 'declined', 'expired'];
+const tone = { accepted: 'ok', 'needs approval': 'warn', changes: 'warn', declined: 'bad', expired: 'bad', sent: 'info' };
+// 'sent' is with the BDE; 'accepted' is signed by the client (src/flow.jsx).
+export const SHOW = { sent: 'with the BDE', changes: 'changes asked', accepted: 'signed' };
+const Status = ({ q }) => <span className={'pill ' + (tone[q.status] || '')}>{(q.status === 'accepted' && !q.signed ? 'accepted' : SHOW[q.status]) || q.status}</span>;
 export default function Quotes() { useStore(); const id = useId(); if (!can('quotes')) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>; return id ? <Editor id={id === 'new' ? null : id} /> : <Register />; }
 
 function Register() {
@@ -21,10 +25,10 @@ function Register() {
     <div className="stats"><div className="stat"><span className="l">Quoted</span><span className="v">{inr(sum())}</span></div><div className="stat"><span className="l">Accepted</span><span className="v">{inr(sum('accepted'))}</span></div>
       <div className="stat"><span className="l">Waiting for approval</span><span className="v">{rows.filter((q) => q.status === 'needs approval').length}</span></div></div>
     <div className="row" style={{ marginBottom: 12 }}><In placeholder="Search number, client, subject" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} style={{ maxWidth: 280 }} />
-      <Sel value={f.status} onChange={(v) => setF({ ...f, status: v })} options={STATUS} blank="All statuses" style={{ width: 'auto' }} /><Sel value={f.fy} onChange={(v) => setF({ ...f, fy: v })} options={fys} blank="All years" style={{ width: 'auto' }} /></div>
+      <Sel value={f.status} onChange={(v) => setF({ ...f, status: v })} options={STATUS.map((s) => [s, SHOW[s] || s])} blank="All statuses" style={{ width: 'auto' }} /><Sel value={f.fy} onChange={(v) => setF({ ...f, fy: v })} options={fys} blank="All years" style={{ width: 'auto' }} /></div>
     {rows.length ? <div className="tbl cards"><table><thead><tr><th>Number</th><th>Client</th><th>Subject</th><th>Date</th><th className="n">Total</th><th>Status</th><th>By</th></tr></thead><tbody>
       {rows.map((q) => <tr key={q.id} className="click" onClick={() => nav('/quotes/' + q.id)}><td className="num"><b>{q.number}</b></td><td>{q.clientName}<Sample on={q.sample} /></td><td>{q.subject}</td><td>{fmtDate(q.date)}</td>
-        <td className="n">{inr(q.totals?.total)}</td><td><span className={'pill ' + (tone[q.status] || '')}>{q.status}</span></td><td>{uname(q.createdBy)}</td></tr>)}
+        <td className="n">{inr(q.totals?.total)}</td><td><Status q={q} /></td><td>{uname(q.createdBy)}</td></tr>)}
     </tbody></table></div> : <Empty>No quotations yet. Make one from a deal, or with “+ New quotation”.</Empty>}
   </>;
 }
@@ -40,7 +44,9 @@ function blankFrom(deal) {
 function Editor({ id }) {
   const nav = useNavigate(), [sp] = useSearchParams(), saved = id ? get(id) : null;
   const [q, setQ] = useState(() => saved ? { ...saved } : blankFrom(get(sp.get('deal')))), [busy, setBusy] = useState(false);
-  const edit = canEdit('quotes');
+  const edit = canEdit('quotes') && !saved?.signed;
+  // A BDE (view only) sees each new version the moment a manager saves it.
+  useEffect(() => { if (saved && !canEdit('quotes')) setQ({ ...saved }); }, [saved?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
   if (id && !saved) return <Empty>This quotation was not found. <Link to="/quotes">Back</Link></Empty>;
   if (!id && !edit) return <Empty>Your access to quotations is view only. <Link to="/quotes">Back</Link></Empty>;
   const up = (k) => (v) => setQ({ ...q, [k]: v?.target ? (v.target.type === 'checkbox' ? v.target.checked : v.target.value) : v });
@@ -60,15 +66,16 @@ function Editor({ id }) {
     if (s === 'accepted' && q.dealId && get(q.dealId)?.stage !== 'won') toast('Accepted. Open the deal and mark it Won to hand over to IT.');
   }
   return <>
-    <div className="topbar no-print"><h1>{saved ? saved.number : 'New quotation'} {saved && <span className={'pill ' + (tone[saved.status] || '')}>{saved.status}</span>} <ViewOnly when={!edit} /></h1>
-      <div className="row"><Link className="btn" to="/quotes">Register</Link>{q.dealId && <Link className="btn" to={'/deals/' + q.dealId}>Open deal</Link>}
+    <div className="topbar no-print"><h1>{saved ? saved.number : 'New quotation'} {saved && <Status q={saved} />} <ViewOnly when={!edit} /></h1>
+      <div className="row"><Link className="btn" to="/quotes">Register</Link>{q.dealId && get(q.dealId) && <Link className="btn" to={'/deals/' + q.dealId}>Open deal</Link>}
         {saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}
         {saved && canEdit('agreements') && <Link className="btn" to={`/agreements/new?kind=service&quote=${saved.id}`}>Make agreement</Link>}
         {saved && edit && <button className="btn" type="button" onClick={() => { const c = { ...q }; ['id', 'number', 'seq', 'fy', 'status', 'createdAt', 'discountApprovedAt'].forEach((k) => delete c[k]); setQ({ ...c, date: today(), validUntil: addDays(today(), 15) }); nav('/quotes/new'); }}>Duplicate</button>}
         {edit && <button className="btn primary" type="button" disabled={busy} onClick={() => save()}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
+    {saved && <div style={{ marginBottom: 12 }}><DocFlow doc={saved} type="quote" boss={canEdit('quotes')} onSaved={(rec) => setQ({ ...rec })} /></div>}
     {saved?.status === 'needs approval' && <div className="banner no-print" style={{ marginBottom: 12 }}>Discount {saved.totals?.discountPct}% is above the {limit}% limit. It waits for a manager's approval before it can be sent.</div>}
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
-      <RO when={!edit}><div className="stack">
+      <div className="stack"><RO when={!edit}><div className="stack">
         <div className="card form"><h3 className="full">Client</h3>
           <Field label="Deal"><Pick value={q.dealId} onChange={(v) => setQ({ ...q, ...(v ? blankFrom(get(v)) : {}), dealId: v, items: q.items })} options={list('deal').map((d) => [d.id, d.title, clientName(d.clientId)])} blank="Not linked" /></Field>
           <Field label="Client name"><In value={q.clientName} onChange={up('clientName')} /></Field><Field label="Attention (person)"><In value={q.contactName} onChange={up('contactName')} /></Field>
@@ -95,10 +102,11 @@ function Editor({ id }) {
           <label className="check"><input type="checkbox" checked={!!q.showTds} onChange={up('showTds')} /> Show TDS note (194J, 2%)</label>
           <Field label="Terms" full><Area style={{ minHeight: 110 }} value={q.terms} onChange={up('terms')} /></Field>
         </div>
-        {saved && <div className="card stack"><h3>Status</h3><div className="row">{['sent', 'accepted', 'declined', 'expired'].map((s) => <button key={s} type="button" className="btn sm" disabled={saved.status === 'needs approval'} onClick={() => setStatus(s)}>Mark {s}</button>)}</div>
-          <Message phone={q.phone} defaultId="tp-quote" vars={{ client: (q.contactName || q.clientName || '').split(' ')[0], service: q.subject, quote: saved.number, amount: inr(t.total) }} />
-          <div className="row"><Sample on={saved.sample} /><span className="grow" /><DeleteButton id={saved.id} needsReason after={() => nav('/quotes')} /></div></div>}
+        {saved && edit && saved.status !== 'accepted' && <div className="card stack"><h3>Declined or expired?</h3><div className="row">{['declined', 'expired'].map((s) => <button key={s} type="button" className="btn sm" disabled={busy || saved.status === s} onClick={() => setStatus(s)}>Mark {s}</button>)}</div></div>}
       </div></RO>
+      {saved && <div className="card stack"><Message phone={q.phone} defaultId="tp-quote" vars={{ client: (q.contactName || q.clientName || '').split(' ')[0], service: q.subject, quote: saved.number, amount: inr(t.total) }} />
+        {canEdit('quotes') && <div className="row"><Sample on={saved.sample} /><span className="grow" /><DeleteButton id={saved.id} needsReason after={() => nav('/quotes')} /></div>}</div>}
+      </div>
       <div className="paper-wrap"><div style={{ transform: 'scale(.72)', transformOrigin: 'top left', width: '139%' }}><QuoteSheet q={{ ...q, number: saved?.number }} /></div></div>
     </div>
     <div className="hide print-only" style={{ display: 'none' }} />

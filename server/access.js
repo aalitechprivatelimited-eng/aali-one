@@ -39,8 +39,9 @@ export function buildAccess(user, rows, canSeeReport) {
       case 'notice': return d.to === uid;
       case 'report': return canSeeReport(user, d);
       case 'collab': return canSee(user, 'collab');
-      case 'quote': return canSee(user, 'quotes');
-      case 'agreement': return canSee(user, 'agreements'); // Operations Manager, Sales Manager, Company Secretary and Chairman only
+      // Operations Manager, Sales Manager, Company Secretary and Chairman; a BDE only the ones given to them.
+      case 'quote': return sc('quotes') === 'own' ? d.assignedTo === uid : canSee(user, 'quotes');
+      case 'agreement': return sc('agreements') === 'own' ? d.assignedTo === uid : canSee(user, 'agreements');
       case 'salary': case 'payrun': case 'loan': case 'payee': case 'pclient': case 'pemp': return canSee(user, 'payroll'); // HR and the Operations Manager only
       case 'invoice': case 'receipt': case 'payment': return canSee(user, 'money');
       case 'lead': return within('leads', myLeads, r.id) || (sc('leads') === 'own' && mine(r));
@@ -51,7 +52,7 @@ export function buildAccess(user, rows, canSeeReport) {
       case 'task': return d.projectId ? within('projects', myProjects, d.projectId) : top || mine(r) || (!!d.team && d.team === user.team);
       case 'ticket': { const s = sc('support'); return s === 'all' ? true : s === 'own' ? mine(r) || !!myProjects?.has(d.projectId) || !!myClients?.has(d.clientId) : false; }
       case 'activity': return d.leadId ? (sc('leads') === 'all' || parent(d.leadId)) : d.dealId ? (sc('deals') === 'all' || parent(d.dealId)) : top || mine(r);
-      case 'comment': return SECRET[d.relType] ? canSee(user, SECRET[d.relType]) : by.has(d.relId) ? parent(d.relId) : d.relType === 'quote' ? canSee(user, 'quotes') : top || r.created_by === uid;
+      case 'comment': return SECRET[d.relType] ? sc(SECRET[d.relType]) === 'all' : by.has(d.relId) ? parent(d.relId) : d.relType === 'quote' ? sc('quotes') === 'all' : top || r.created_by === uid;
       case 'approval': return d.requestedBy === uid || (isManager(user) && (top || (d.relType === 'quote' ? user.team === 'sales' : d.relType === 'project' ? user.team === 'it' : false)));
       case 'target': return top || user.title === 'salesmgr' || d.userId === uid;
       case 'presence': return top || (isManager(user) && d.team === user.team); // who is out of the office: only the person's manager and management, not teammates
@@ -110,6 +111,9 @@ export function buildAccess(user, rows, canSeeReport) {
     if (section === 'payroll' && !canEdit(user, 'payroll')) return r.type === 'payrun' && Object.keys(patch).length && Object.keys(patch).every((k) => k === '_remark') ? '' : 'Payroll is changed by HR. You can review it and write remarks.';
     if (r.type === 'payrun' && !Object.keys(patch).length && d.status !== 'draft') return 'A locked or paid payroll cannot be deleted. A locked one can be reopened first.';
     if (r.type === 'loan' && !Object.keys(patch).length && (d.recovered || []).length) return 'Money has already been cut for this loan. Stop it instead of deleting it.';
+    // The BDE a quotation or an agreement is given to: only its steps (the client's changes, reconfirmed, the advance, the sign) – never its contents.
+    if ((r.type === 'quote' || r.type === 'agreement') && section && !canEdit(user, section))
+      return d.assignedTo === uid && Object.keys(patch).length === 1 && '_flow' in patch ? '' : `Your access is view only for ${LABEL[section]}.`;
     if (section && !canEdit(user, section)) return `Your access is view only for ${LABEL[section]}.`;
     if (section && sc(section) === 'own' && 'owner' in patch && (patch.owner || '') !== (d.owner || '')) return 'Only a manager can give this to another person.';
     if (r.type === 'project' && 'lead' in patch && (patch.lead || '') !== (d.lead || '') && !isManager(user)) return 'The project lead is set by the IT Manager.';

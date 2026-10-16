@@ -114,3 +114,5 @@ export const DEFAULT_SETTINGS = {
   ],
   integrations: {},
 };
+// How a client paid an advance (agreements: the advance before signing, server/logic.js docFlow).
+export const PAY_MODES = ['UPI', 'Cash', 'Cheque', 'Bank transfer'];

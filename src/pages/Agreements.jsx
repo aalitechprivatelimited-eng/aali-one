@@ -2,7 +2,7 @@
 // project – both in the company's own template (shared/agreement-text.js, laid out in doc.jsx). Service agreements are made by the
 // Operations Manager and the Sales Manager; a closure agreement by the Operations Manager only. The Company Secretary and the
 // Chairman read them. Nobody else sees this page or its data (server/access.js).
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore, list, get, create, update, upload, store } from '../api.js';
 import { settings, uname, fmtDate, today, addDays, inr, can, canEdit, dealReceived } from '../lib.js';
@@ -11,9 +11,11 @@ import { DEFAULT_SETTINGS } from '../../shared/defaults.js';
 import { Field, In, Sel, Pick, Area, Pill, Seg, Empty, Modal, Sample, Log, DeleteButton, attempt, toast, RO, ViewOnly } from '../ui.jsx';
 import { AgreementSheet, agreementTotal, agreementSub, agreementGst } from '../doc.jsx';
 import { useId } from '../App.jsx';
+import { DocFlow } from '../flow.jsx';
 
 export const KIND = { service: 'Client service agreement', closure: 'Project closure agreement' };
-const STATUS = { draft: ['Draft', ''], sent: ['Sent to sign', 'info'], signed: ['Signed', 'ok'] };
+// sent: with the BDE, who takes it to the client; changes: the client asked for changes (src/flow.jsx).
+const STATUS = { draft: ['Draft', ''], sent: ['With the BDE', 'info'], changes: ['Changes asked', 'bad'], signed: ['Signed', 'ok'] };
 const Status = ({ s }) => <Pill k={STATUS[s]?.[1]}>{STATUS[s]?.[0] || s}</Pill>;
 // Who may change this agreement: a closure agreement only the Operations Manager; a service agreement the Operations or Sales Manager.
 const mayChange = (a) => (a.kind === 'closure' ? canClose(store.me) : canEdit('agreements'));
@@ -98,7 +100,9 @@ const META = ['id', 'type', 'number', 'seq', 'fy', 'createdAt', 'updatedAt', 'cr
 
 function Editor({ id }) {
   const nav = useNavigate(), [sp] = useSearchParams(), saved = id ? get(id) : null, kind = saved?.kind || (sp.get('kind') === 'closure' ? 'closure' : 'service');
-  const [a, setA] = useState(() => (saved ? { ...saved } : blank(kind, sp))), [busy, setBusy] = useState(false), [sign, setSign] = useState(false), [tab, setTab] = useState('form');
+  const [a, setA] = useState(() => (saved ? { ...saved } : blank(kind, sp))), [busy, setBusy] = useState(false), [tab, setTab] = useState('form');
+  // A BDE (view only) sees each new version the moment a manager saves it.
+  useEffect(() => { if (saved && !mayChange(saved)) setA({ ...saved }); }, [saved?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
   if (id && !saved) return <Empty>This agreement was not found. <Link to="/agreements">Back</Link></Empty>;
   const closure = kind === 'closure', locked = saved?.status === 'signed', change = mayChange({ kind }) && !locked;
   if (!saved && !mayChange({ kind })) return <Empty>{closure ? 'A closure agreement is made by the Operations Manager.' : 'Your access to agreements is view only.'} <Link to="/agreements">Back</Link></Empty>;
@@ -113,7 +117,7 @@ function Editor({ id }) {
     const r = saved ? await attempt(() => update(saved.id, data)) : await attempt(() => create('agreement', data));
     setBusy(false); if (!r) return null;
     const rec = saved ? r : r.record; setA({ ...rec });
-    if (!saved) { toast(`Saved as ${rec.number}.`); nav('/agreements/' + rec.id, { replace: true }); } else toast(extra.status === 'sent' ? 'Marked as sent to the client.' : extra.status === 'signed' ? 'Marked as signed. It cannot be changed now.' : 'Saved.');
+    if (!saved) { toast(`Saved as ${rec.number}.`); nav('/agreements/' + rec.id, { replace: true }); } else toast(rec.version > (saved.version || 0) ? `Saved as version ${rec.version}. ${uname(rec.assignedTo)} is told.` : 'Saved.');
     return rec;
   }
   return <>
@@ -123,6 +127,7 @@ function Editor({ id }) {
         {saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}
         {change && <button className="btn primary" type="button" disabled={busy} onClick={() => save()}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
     {locked && <div className="banner ok no-print" style={{ marginBottom: 12 }}><b>Signed on {fmtDate(saved.signedOn)}.</b> A signed agreement cannot be changed. If something is wrong, the Operations Manager deletes it with a reason and a new one is made.</div>}
+    {saved && <div style={{ marginBottom: 12 }}><DocFlow doc={saved} type="agreement" boss={mayChange(saved)} onSaved={(rec) => setA({ ...rec })} /></div>}
     <div className="seg-phone no-print"><Seg value={tab} onChange={setTab} options={[['form', 'Details'], ['paper', 'The agreement']]} /></div>
     <div className={'ag-edit show-' + tab}>
       <div className="ag-form"><RO when={!change}><div className="stack">
@@ -135,9 +140,7 @@ function Editor({ id }) {
           <Field label="Name"><In value={a.coSigner} onChange={up('coSigner')} /></Field><Field label="Designation"><In value={a.coRole} onChange={up('coRole')} /></Field></div>
       </div></RO>
       {saved && <div className="card stack" style={{ marginTop: 16 }}><h3>Signing</h3>
-        {!locked && <p className="small muted" style={{ margin: 0 }}>Print it, both sides sign, then mark it as signed here and attach the scanned signed copy.</p>}
-        {change && <div className="row">{saved.status === 'draft' && <button className="btn" type="button" disabled={busy} onClick={() => save({ status: 'sent' })}>Mark as sent to the client</button>}
-          <button className="btn primary" type="button" disabled={busy} onClick={() => setSign(true)}>Mark as signed…</button></div>}
+        {!locked && <p className="small muted" style={{ margin: 0 }}>Submit it and give it to a BDE in Steps above. The client pays the advance, then signs on the BDE's phone or on paper.</p>}
         {saved.sentOn && <div className="small">Sent to the client on {fmtDate(saved.sentOn)}.</div>}
         <SignedCopy a={saved} onChange={(rec) => setA({ ...rec })} />
         <div className="row"><Sample on={saved.sample} /><span className="grow" />
@@ -146,7 +149,6 @@ function Editor({ id }) {
       </div>
       <div className="ag-paper"><div className="paper-wrap"><div className="ag-scale"><AgreementSheet a={{ ...a, number: saved?.number }} /></div></div></div>
     </div>
-    {sign && <SignModal a={a} onClose={() => setSign(false)} onSign={async (x) => { if (await save({ status: 'signed', ...x })) setSign(false); }} busy={busy} />}
   </>;
 }
 
@@ -230,23 +232,6 @@ function ClosureForm({ a, setA, up, row, saved }) {
       <Field label="Free support until"><In type="date" value={a.supportUntil} onChange={up('supportUntil')} /></Field>
       <Field label="AMC after that" hint="Optional, e.g. ₹25,000 to ₹35,000 yearly from Year 2"><In value={a.amc} onChange={up('amc')} /></Field></div>
   </>;
-}
-
-// Marking an agreement as signed: the date both sides signed, who signed for the client, and the scanned copy if it is ready.
-function SignModal({ a, onClose, onSign, busy }) {
-  const [f, setF] = useState({ signedOn: today(), contactName: a.contactName || '', contactRole: a.contactRole || '', signedCopy: null }), [up, setUp] = useState(false), ref = useRef();
-  async function pick(e) { const file = e.target.files[0]; e.target.value = ''; if (!file) return; setUp(true); const r = await attempt(() => upload(file)); setUp(false);
-    if (r) setF({ ...f, signedCopy: { id: r.id, name: r.name, size: r.size, mime: r.mime, at: new Date().toISOString(), by: store.me.id } }); }
-  return <Modal title={`Mark ${a.number} as signed`} onClose={onClose} footer={<><button className="btn" type="button" onClick={onClose}>Cancel</button>
-    <button className="btn primary" type="button" disabled={busy || up || !f.contactName.trim() || !f.signedOn} onClick={() => onSign(f.signedCopy ? f : { signedOn: f.signedOn, contactName: f.contactName, contactRole: f.contactRole })}>Mark as signed</button></>}>
-    <div className="stack"><p style={{ margin: 0 }}>After this, the agreement cannot be changed. Only the scanned signed copy can still be added.</p>
-      <div className="form"><Field label="Date both sides signed"><In type="date" value={f.signedOn} max={today()} onChange={(e) => setF({ ...f, signedOn: e.target.value })} /></Field>
-        <Field label="Signed for the client by"><In value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field>
-        <Field label="Their designation"><In value={f.contactRole} onChange={(e) => setF({ ...f, contactRole: e.target.value })} /></Field>
-        <div className="field full"><label>Scanned signed copy (PDF or photo, optional now)</label>
-          <div className="row">{f.signedCopy ? <span className="small">{f.signedCopy.name}</span> : null}<button className="btn sm" type="button" disabled={up} onClick={() => ref.current.click()}>{up ? 'Uploading…' : f.signedCopy ? 'Choose another' : 'Choose file'}</button><span className="small faint">max 3 MB</span></div>
-          <input ref={ref} type="file" accept="application/pdf,image/*" hidden onChange={pick} /></div></div></div>
-  </Modal>;
 }
 
 // The scanned signed copy: everyone who can open the agreement can open it; the people who may change the agreement add or replace it.

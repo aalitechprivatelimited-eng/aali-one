@@ -639,3 +639,14 @@ table.chart td,table.chart th{white-space:normal;vertical-align:top;min-width:10
 .billqr{flex:0 1 260px;display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
 .billqr img{width:100%;max-width:236px;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:8px}
 .qrcard{gap:14px;align-items:center}.qr-thumb{width:84px;height:84px;object-fit:contain;background:#fff;border-radius:8px;border:1px solid var(--line)}
+
+/* Steps of an agreement or a quotation (src/flow.jsx) */
+.docflow .steprow{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none;counter-reset:st}
+.docflow .steprow li{counter-increment:st;padding:5px 11px 5px 8px;border-radius:999px;background:var(--paper-2);color:var(--ink-soft);font-size:12.5px;border:1px solid var(--line)}
+.docflow .steprow li::before{content:counter(st) '. ';font-weight:700}
+.docflow .steprow li.done{background:var(--ok-bg);color:var(--ok);border-color:transparent}
+.docflow .steprow li.done::before{content:'✓ '}
+.docflow .steprow li.here{background:var(--info-bg);color:var(--info);border-color:currentColor;font-weight:600}
+.docflow .changes{margin:6px 0 4px;padding-left:20px}
+.docflow .versions{margin:6px 0 0;padding-left:0;list-style:none;display:grid;gap:8px}
+.signed-sig{max-width:280px;width:100%;background:#fff;border:1px solid var(--line);border-radius:10px}

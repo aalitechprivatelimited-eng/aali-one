@@ -641,14 +641,47 @@ test('agreements: the Operations and Sales Managers make them, only Operations m
   // Nobody else: a BDE, the IT Manager, and an administrator who is none of these four.
   for (const c of [B, it0, admin]) { assert.ok(!(await recs(c)).some((r) => r.type === 'agreement'), 'no agreement is sent');
     assert.equal((await patch(c, sa.id, { title: 'x' })).status, 403); assert.equal((await call('POST', '/records', { type: 'agreement', data: { kind: 'service', clientName: 'X' } }, c)).status, 403); }
-  // Signing needs the date; after that nothing changes except the scanned signed copy; the deal's handoff box ticks itself.
-  assert.equal((await patch(sm, sa.id, { status: 'signed' })).status, 400);
-  const signed = await patch(sm, sa.id, { status: 'signed', signedOn: '2026-10-01', contactName: 'Ravi' }); assert.equal(signed.status, 200, JSON.stringify(signed.body));
+  // The flow (16 Oct 2026): submitted and given to a BDE → the client asks for changes → a manager changes it (version 2) → the BDE
+  // reconfirms → the advance is collected and confirmed (the receipt is made) → the client signs → nothing changes except the scanned copy.
+  const flow = (c, f) => patch(c, sa.id, { _flow: f }), SIG = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(40);
+  assert.equal((await patch(sm, sa.id, { status: 'signed', signedOn: '2026-10-01', contactName: 'Ravi' })).status, 200);
+  assert.equal((await recs(OPS)).find((r) => r.id === sa.id).status, 'draft', 'the status moves only through the steps');
+  assert.equal((await flow(B, { action: 'submit', to: 'u_agb' })).status, 403, 'a BDE cannot submit');
+  assert.equal((await flow(sm, { action: 'submit', to: 'u_it' })).status, 400, 'only a BDE takes it to the client');
+  assert.equal((await flow(sm, { action: 'submit', to: 'u_agb' })).status, 200);
+  let mine = (await recs(B)).find((r) => r.id === sa.id); assert.ok(mine, 'the BDE now sees it'); assert.equal(mine.status, 'sent'); assert.equal(mine.version, 1);
+  assert.ok((await recs(B)).some((r) => r.type === 'notice' && r.relId === sa.id), 'the BDE is told');
+  assert.equal((await patch(B, sa.id, { title: 'Changed by BDE' })).status, 403, 'the BDE cannot change it');
+  assert.equal((await call('POST', '/records', { type: 'agreement', data: { kind: 'service', clientName: 'X' } }, B)).status, 403, 'nor make one');
+  assert.equal((await call('DELETE', '/records/' + sa.id, { reason: 'not needed' }, B)).status, 403, 'nor delete it');
+  assert.equal((await flow(B, { action: 'sign', how: 'screen', name: 'Ravi', signature: SIG, agree: true })).status, 400, 'no sign before the advance');
+  assert.equal((await flow(B, { action: 'changes', note: 'Fees 40,000 and add the logo' })).status, 200);
+  assert.ok((await recs(OPS)).some((r) => r.type === 'notice' && r.relId === sa.id && /wants changes/.test(r.text)), 'the managers are told');
+  assert.equal((await patch(sm, sa.id, { lines: [{ text: 'Website with logo', amount: 40000 }] })).status, 200);
+  mine = (await recs(B)).find((r) => r.id === sa.id);
+  assert.equal(mine.version, 2); assert.equal(mine.status, 'sent'); assert.equal(mine.reconfirm, true);
+  assert.ok(mine.versions.at(-1).changes.some((c) => /^Total ₹0 → ₹47,200/.test(c)), JSON.stringify(mine.versions.at(-1).changes));
+  assert.equal((await flow(B, { action: 'advance', amount: 10000, mode: 'Cash' })).status, 400, 'reconfirm the new version first');
+  assert.equal((await flow(B, { action: 'reconfirmed' })).status, 200);
+  assert.equal((await flow(B, { action: 'advance', amount: 99000, mode: 'Cash' })).status, 400, 'not more than the total');
+  assert.equal((await flow(B, { action: 'advance', amount: 10000, mode: 'UPI' })).status, 400, 'UPI needs the screenshot');
+  assert.equal((await flow(B, { action: 'advance', amount: 10000, mode: 'Cash' })).status, 200);
+  assert.equal((await flow(B, { action: 'confirmAdvance' })).status, 403, 'the BDE cannot confirm it');
+  assert.equal((await flow(sm, { action: 'confirmAdvance' })).status, 200);
+  const adv = (await recs(sm)).find((r) => r.id === sa.id).advance, rc = (await recs(sm)).find((r) => r.id === adv.confirmed.receiptId);
+  assert.equal(rc.type, 'receipt'); assert.equal(rc.totals.received, 10000); assert.equal(rc.against, sa.number);
+  assert.ok(!(await recs(B)).some((r) => r.type === 'receipt'), 'the BDE does not see receipts');
+  assert.equal((await flow(B, { action: 'sign', how: 'screen', name: 'Ravi', signature: SIG })).status, 400, 'the client ticks that they agree');
+  const signed = await flow(B, { action: 'sign', how: 'screen', name: 'Ravi', role: 'Owner', signature: SIG, agree: true }); assert.equal(signed.status, 200, JSON.stringify(signed.body));
+  assert.equal(signed.body.record.status, 'signed'); assert.equal(signed.body.record.signed.v, 2);
   assert.equal((await patch(sm, sa.id, { amount: 1 })).status, 400);
+  assert.equal((await flow(sm, { action: 'submit', to: 'u_b1' })).status, 400, 'a signed agreement has no more steps');
   const f = (await call('POST', '/files', { name: 'signed.pdf', mime: 'application/pdf', data: Buffer.from('%PDF-1.4 signed').toString('base64') }, sm)).body;
   assert.equal((await patch(sm, sa.id, { signedCopy: { id: f.id, name: 'signed.pdf' } })).status, 200);
   assert.equal((await call('GET', '/files/' + f.id, null, CS)).status, 200, 'the Company Secretary opens the signed copy');
-  assert.equal((await call('GET', '/files/' + f.id, null, B)).status, 404, 'a BDE does not');
+  assert.equal((await call('GET', '/files/' + f.id, null, B)).status, 200, 'the BDE it was given to does too');
+  assert.equal((await call('GET', '/files/' + f.id, null, bde2)).status, 404, 'another BDE does not');
+  assert.ok(!(await recs(bde2)).some((r) => r.type === 'agreement'), 'another BDE sees no agreement');
   assert.equal((await recs(sm)).find((r) => r.id === deal.id).handoff?.agreement, true);
   // Review findings: nothing reaches a signed agreement through another kind of item, an odd kind, a rewritten history, or management's shortcuts.
   const ap = (await add(it0, 'approval', { kind: 'discount', relType: 'project', relId: sa.id, reason: 'x' })).record;
@@ -672,6 +705,38 @@ test('agreements: the Operations and Sales Managers make them, only Operations m
   assert.equal((await call('DELETE', '/records/' + sa.id, { reason: 'Wrong client name' }, OPS)).status, 200);
   assert.equal((await call('POST', '/records/' + sa.id + '/restore', null, CS)).status, 403);
   assert.equal((await call('POST', '/records/' + sa.id + '/restore', null, OPS)).status, 200);
+});
+
+test('quotations: a manager makes it and gives it to a BDE; the client asks for changes, reconfirms and signs on paper; then it is locked', async () => {
+  const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  for (const [id, email] of [['u_qb1', 'qb1@test.in'], ['u_qb2', 'qb2@test.in']]) await db.query("insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$2,'bde','sales',$3)", [id, email, hashPassword('password123')]);
+  const QB1 = await login('qb1@test.in'), QB2 = await login('qb2@test.in');
+  const recs = async (c) => { const r = await call('GET', '/bootstrap', null, c); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.records; }, flow = (c, id, f) => patch(c, id, { _flow: f });
+  const q = (await add(sm, 'quote', { clientName: 'Lakshmi Stores', subject: 'Billing app', status: 'accepted', signed: { name: 'fake' }, assignedTo: 'u_qb1',
+    items: [{ desc: 'Billing app', qty: 1, unit: 'Nos', rate: 30000 }], discountType: 'none', taxMode: 'intra', taxRate: 18 })).record;
+  assert.equal(q.status, 'draft'); assert.ok(!q.signed && !q.assignedTo, 'no step can be sent in with a new quotation');
+  assert.ok(!(await recs(QB1)).some((r) => r.id === q.id), 'a BDE sees no quotation until it is given to them');
+  assert.equal((await call('POST', '/records', { type: 'quote', data: { clientName: 'X', items: [] } }, QB1)).status, 403, 'a BDE cannot make one');
+  assert.equal((await flow(sm, q.id, { action: 'submit', to: 'u_qb1' })).status, 200);
+  assert.ok((await recs(QB1)).some((r) => r.id === q.id)); assert.ok(!(await recs(QB2)).some((r) => r.id === q.id), 'only the BDE it is given to');
+  assert.equal((await patch(QB1, q.id, { items: [{ desc: 'x', qty: 1, rate: 1 }] })).status, 403, 'the BDE cannot change it');
+  assert.equal((await flow(QB2, q.id, { action: 'changes', note: 'cheaper' })).status, 403, 'another BDE cannot take its steps');
+  assert.equal((await flow(QB1, q.id, { action: 'advance', amount: 100, mode: 'Cash' })).status, 400, 'a quotation takes no advance');
+  assert.equal((await flow(QB1, q.id, { action: 'changes', note: 'Client wants 25,000' })).status, 200);
+  assert.equal((await flow(QB1, q.id, { action: 'sign', how: 'paper', name: 'Lakshmi' })).status, 400, 'not while the changes wait');
+  assert.equal((await patch(sm, q.id, { items: [{ desc: 'Billing app', qty: 1, unit: 'Nos', rate: 25000 }] })).status, 200);
+  let mine = (await recs(QB1)).find((r) => r.id === q.id); assert.equal(mine.version, 2); assert.equal(mine.reconfirm, true);
+  assert.ok(mine.versions.at(-1).changes[0].startsWith('Total ₹35,400 → ₹29,500'), mine.versions.at(-1).changes[0]);
+  assert.ok((await recs(QB1)).some((r) => r.type === 'notice' && r.relId === q.id && /version 2/.test(r.text)), 'the BDE is told of version 2');
+  assert.equal((await flow(QB1, q.id, { action: 'reconfirmed' })).status, 200);
+  assert.equal((await flow(QB1, q.id, { action: 'sign', how: 'paper', name: 'Lakshmi' })).status, 400, 'paper needs the photo');
+  const ph = (await call('POST', '/files', { name: 'signed.jpg', mime: 'image/jpeg', data: Buffer.from('jpeg').toString('base64') }, QB1)).body;
+  const other = (await call('POST', '/files', { name: 'x.jpg', mime: 'image/jpeg', data: Buffer.from('jpeg').toString('base64') }, QB2)).body;
+  assert.equal((await flow(QB1, q.id, { action: 'sign', how: 'paper', name: 'Lakshmi', files: [{ id: other.id }] })).status, 403, 'only photos the BDE uploaded');
+  const s = await flow(QB1, q.id, { action: 'sign', how: 'paper', name: 'Lakshmi', files: [{ id: ph.id, name: 'signed.jpg', mime: 'image/jpeg' }] });
+  assert.equal(s.status, 200, JSON.stringify(s.body)); assert.equal(s.body.record.status, 'accepted'); assert.equal(s.body.record.signed.how, 'paper');
+  assert.equal((await patch(sm, q.id, { terms: 'new terms' })).status, 400, 'a signed quotation cannot be changed');
+  assert.equal((await patch(sm, q.id, { status: 'declined' })).status, 400);
 });
 
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {

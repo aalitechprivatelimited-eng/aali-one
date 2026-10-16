@@ -2,8 +2,8 @@
 // the advance gate, sign-off before Live, payments updating reminders, approvals, recurring tasks.
 import { newId, newKey } from './auth.js';
 import { docTotals, receiptTotals, fyLabel, dayLabel, mobile10, num, round2, inr } from '../shared/money.js';
-import { MANAGER_TITLES, TOP_TITLES, DEFAULT_SETTINGS, GROUP, COMPANIES, BILL_KINDS, BILL_PAID_BY } from '../shared/defaults.js';
-import { canSee, canEdit, scopeOf } from '../shared/access.js';
+import { MANAGER_TITLES, TOP_TITLES, DEFAULT_SETTINGS, GROUP, COMPANIES, BILL_KINDS, BILL_PAID_BY, PAY_MODES } from '../shared/defaults.js';
+import { canSee, canEdit, scopeOf, canClose } from '../shared/access.js';
 import { applyCalls, checkCalls, claimForLead, holderOf, prospectCreate, prospectUpdate } from './prospects.js';
 import { payFor, clientPay, grossOf, fromSheet, sheetAttendance, attendanceDays, onBasis, daysIn, monthLabel, loanLeft, salaryFor } from '../shared/payroll.js';
 import { hrmMonth, hrmConnected, hrmEmailOf, hrmFind } from './hrm.js';
@@ -143,7 +143,8 @@ export async function beforeCreate(t, type, data, user, sample) {
       const fy = fyLabel(data.date || today()), b = await brandSetting(t);
       data.seq = await counter(t, 'quote:' + fy); data.fy = fy;
       data.number = `${b.quotePrefix || 'AC'}/${fy}/${String(data.seq).padStart(3, '0')}`;
-      data.totals = docTotals(data); data.status ||= 'draft';
+      for (const k of FLOW_KEYS) delete data[k]; delete data.discountApprovedAt; delete data.discountApprovedBy; delete data.discountApprovedPct;
+      data.totals = docTotals(data); data.status = 'draft';
       await quoteApproval(t, data, user, null, sample); break;
     }
     case 'invoice': {
@@ -173,7 +174,7 @@ export async function beforeCreate(t, type, data, user, sample) {
       const fy = fyLabel(data.date);
       data.seq = await counter(t, `agreement:${data.kind}:${fy}`); data.fy = fy;
       data.number = `${AGREEMENT[data.kind].prefix}/${fy}/${String(data.seq).padStart(3, '0')}`;
-      data.status = 'draft'; for (const k of ['signedOn', 'signedAt', 'signedBy', 'signedCopy', 'sentOn', 'log']) delete data[k];
+      data.status = 'draft'; for (const k of ['signedOn', 'signedAt', 'signedBy', 'signedCopy', 'sentOn', 'log', ...FLOW_KEYS]) delete data[k];
       log(data, me, `${AGREEMENT[data.kind].name} made`); break;
     }
     case 'pclient': {
@@ -309,12 +310,14 @@ function cleanBill(d) {
   return b;
 }
 // Bill photos: only pictures or PDFs the person uploaded themselves – knowing a file's number must not bring someone else's file into view.
-async function ownFiles(t, files, me) {
+async function ownFiles(t, files, me, what = 'the bill') {
   const ids = [...new Set(files.map((f) => f.id))]; if (!ids.length) return;
   const ok = (await t.query('select id, mime from files where id = any($1) and created_by = $2', [ids, me])).rows;
-  if (ok.length !== ids.length) throw new Rule('Attach the photo of the bill again.');
-  if (ok.some((f) => !/^(image\/(png|jpeg|gif|webp)|application\/pdf)$/.test(f.mime))) throw new Rule('The bill must be a photo (JPG or PNG) or a PDF.');
+  if (ok.length !== ids.length) throw new Rule(`Attach the photo of ${what} again.`);
+  if (ok.some((f) => !/^(image\/(png|jpeg|gif|webp)|application\/pdf)$/.test(f.mime))) throw new Rule(`The photo of ${what} must be a picture (JPG or PNG) or a PDF.`);
 }
+const fileList = (arr, me, max = 10) => (Array.isArray(arr) ? arr : []).slice(0, max).map((f) => ({ id: String(f?.id || '').slice(0, 40), name: String(f?.name || 'photo').slice(0, 200),
+  size: +f?.size || 0, mime: String(f?.mime || '').slice(0, 100), at: new Date().toISOString(), by: me })).filter((f) => f.id);
 export const VISIT_OUTCOMES = ['Deal accepted', 'Next meeting fixed', 'Interested – follow up', 'Will think – call back', 'Not interested', 'Could not meet'];
 // A client visit must say who was visited: client name, the person met, their number and the place.
 // A client visit says who and where from the start (client name and place) – enough when a client asks to meet out of the blue.
@@ -354,8 +357,8 @@ async function quoteApproval(t, q, user, prev, sample) {
   const limit = num(await getSetting(t, 'discountApprovalPct', 10)), pct = num(q.totals.discountPct);
   for (const k of ['discountApprovedAt', 'discountApprovedBy', 'discountApprovedPct', 'discountRejected']) { if (prev?.[k] === undefined) delete q[k]; else q[k] = prev[k]; }
   const allowed = q.discountApprovedAt ? num(q.discountApprovedPct ?? prev?.totals?.discountPct ?? 0) : -1;
-  if (pct <= limit || pct <= allowed) { if (q.status === 'needs approval') q.status = 'draft'; return; }
-  if (MANAGEMENT(user)) { Object.assign(q, { discountApprovedAt: new Date().toISOString(), discountApprovedBy: user.id, discountApprovedPct: pct }); delete q.discountRejected; if (q.status === 'needs approval') q.status = 'draft'; return; }
+  if (pct <= limit || pct <= allowed) { if (q.status === 'needs approval') q.status = q.assignedTo ? 'sent' : 'draft'; return; }
+  if (MANAGEMENT(user)) { Object.assign(q, { discountApprovedAt: new Date().toISOString(), discountApprovedBy: user.id, discountApprovedPct: pct }); delete q.discountRejected; if (q.status === 'needs approval') q.status = q.assignedTo ? 'sent' : 'draft'; return; }
   q.status = 'needs approval';
   if (!prev || prev.status !== 'needs approval') q._askApproval = true;
 }
@@ -707,6 +710,193 @@ async function applyReceipt(t, id, r, user) {
 }
 
 // ---------- update ----------
+// ---------- agreements and quotations: a manager makes them, a BDE takes them to the client (the user, 16 Oct 2026) ----------
+// draft → submitted and given to a BDE ('sent') → the client asks for changes ('changes') → a manager changes it: a new version, which
+// the BDE reconfirms with the client → an agreement: the BDE collects the advance, a manager confirms it and the receipt is made (it
+// is not sent to the client) → the client signs on the BDE's phone, or on paper and the BDE uploads the photo → it can never change.
+// The BDE never changes the contents and never makes one; only these steps (data._flow) are open to them (server/access.js).
+const FLOW_KEYS = ['assignedTo', 'version', 'versions', 'reconfirm', 'requests', 'advance', 'signed'];
+const keepFlow = (prev, next) => { for (const k of FLOW_KEYS) if (k in prev) next[k] = prev[k]; else delete next[k]; };
+const docWord = (rec) => (rec.type === 'quote' ? 'Quotation' : AGREEMENT[rec.data.kind]?.name || 'Agreement');
+const agTotal = (a) => { const sub = (Array.isArray(a.lines) ? a.lines : []).reduce((s, x) => s + num(x?.amount), 0); return sub + (a.gst === 'extra' ? Math.round(sub * num(a.gstRate)) / 100 : 0); };
+// Who is told about a document's steps: the managers who may change it, and the person who made it.
+async function docMakers(t, rec) {
+  const titles = rec.type === 'agreement' && rec.data.kind !== 'service' ? ['ops'] : ['ops', 'salesmgr'];
+  const ids = (await t.query('select id from users where active and removed_at is null and title = any($1)', [titles])).rows.map((r) => r.id);
+  return [...new Set([...ids, rec.created_by].filter(Boolean))];
+}
+async function tellMakers(t, rec, text, user) { for (const id of await docMakers(t, rec)) await notify(t, id, text, rec.type, rec.id, user, rec.sample); }
+const SKIP_DIFF = new Set(['id', 'type', 'number', 'seq', 'fy', 'date', 'kind', 'log', 'status', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample', 'sentOn',
+  'signedOn', 'signedAt', 'signedBy', 'signedCopy', 'discountApprovedAt', 'discountApprovedBy', 'discountApprovedPct', 'discountRejected', 'clientId', 'quoteId', ...FLOW_KEYS]);
+const DIFF_LABEL = { clientName: 'Client', contactName: 'Signs for the client', contactRole: 'Their designation', phone: 'Phone', email: 'Email', address: 'Address', gstin: 'GSTIN',
+  subject: 'Subject', validUntil: 'Valid until', items: 'Lines', discountType: 'Discount type', discountValue: 'Discount', taxMode: 'GST', taxRate: 'GST rate %', roundOff: 'Round off',
+  showTds: 'TDS note', terms: 'Terms', dealId: 'Deal', projectId: 'Project', seat: 'Address type', title: 'Service', purpose: 'Purpose', scope: 'Scope of work', excluded: 'Not included',
+  lines: 'Fees', gst: 'GST', gstRate: 'GST rate %', schedule: 'Payment schedule', recurring: 'Recurring charges', annex: 'Annexure', handover: 'Handover', amc: 'AMC',
+  supportUntil: 'Support until', clauses: 'Clauses', coSigner: 'Signs for us', coRole: 'Our signer’s designation', value: 'Value', started: 'Started', delivered: 'Delivered',
+  received: 'Received', pending: 'Pending', balanceBy: 'Balance by', co: 'Company' };
+const shortVal = (v) => (v === undefined || v === null || v === '' ? '(empty)' : typeof v === 'boolean' ? (v ? 'yes' : 'no') : /^\d{4}-\d\d-\d\d$/.test(v) ? inDate(v) : String(v));
+// Rows (quotation lines, fees, the payment schedule…): which row, and what in it – "Line 1 (Website): rate ₹45,000 → ₹40,000".
+const ROW = { items: 'Line', lines: 'Fee', schedule: 'Payment', recurring: 'Recurring charge', handover: 'Handover item', annex: 'Annexure item' };
+const ROW_KEY = { desc: 'description', text: 'description', note: 'details', qty: 'qty', unit: 'unit', rate: 'rate', amount: 'amount', pct: '%' };
+const MONEY_KEY = new Set(['rate', 'amount']);
+function rowChanges(k, a, b) {
+  const lab = ROW[k] || DIFF_LABEL[k] || k, name = (x) => String(x?.desc ?? x?.text ?? x?.name ?? '').trim().slice(0, 40), out = [];
+  const val = (f, v) => (MONEY_KEY.has(f) && v !== '' && v != null && !isNaN(+v) ? inr(+v) : shortVal(v));
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i], y = b[i], n = name(y || x), at = `${lab} ${i + 1}${n ? ` (${n})` : ''}`;
+    if (!x) { out.push(`${lab} added: ${n || '(new)'}`); continue; }
+    if (!y) { out.push(`${lab} removed: ${n || i + 1}`); continue; }
+    for (const f of [...new Set([...Object.keys(x), ...Object.keys(y)])]) {
+      if (JSON.stringify(x[f] ?? '') === JSON.stringify(y[f] ?? '')) continue;
+      const short = (v) => v == null || (['string', 'number', 'boolean'].includes(typeof v) && String(v).length <= 60);
+      out.push(short(x[f]) && short(y[f]) ? `${at}: ${ROW_KEY[f] || f} ${val(f, x[f])} → ${val(f, y[f])}` : `${at}: ${ROW_KEY[f] || f} changed`);
+    }
+  }
+  return out.slice(0, 12);
+}
+// What changed between two versions, in plain words: "Valid until: 31 Oct 2026 → 15 Nov 2026", "Lines changed", "Total ₹40,000 → ₹35,000".
+export function docChanges(type, prev, next) {
+  const out = [], plain = (v) => v === undefined || v === null || (['string', 'number', 'boolean'].includes(typeof v) && String(v).length <= 60 && !String(v).includes('\n'));
+  for (const k of [...new Set([...Object.keys(prev), ...Object.keys(next)])]) {
+    if (SKIP_DIFF.has(k) || k.startsWith('_')) continue;
+    const a = prev[k], b = next[k]; if (JSON.stringify(a ?? '') === JSON.stringify(b ?? '')) continue;
+    const label = DIFF_LABEL[k] || k;
+    if ((Array.isArray(a) || a == null) && (Array.isArray(b) || b == null) && [...(a || []), ...(b || [])].every((x) => x && typeof x === 'object')) { out.push(...rowChanges(k, a || [], b || [])); continue; }
+    out.push(plain(a) && plain(b) ? `${label}: ${shortVal(a)} → ${shortVal(b)}` : `${label} changed`);
+  }
+  const was = type === 'quote' ? num(prev.totals?.total) : agTotal(prev), now = type === 'quote' ? num(next.totals?.total) : agTotal(next);
+  if (was !== now) out.unshift(`Total ${inr(was)} → ${inr(now)}`);
+  return out;
+}
+// A manager changed a document that is with a BDE: a new version, which the BDE must reconfirm with the client. Asked-for changes count as done.
+async function docVersion(t, rec, next, user) {
+  const prev = rec.data;
+  if (!prev.assignedTo || !['sent', 'changes', 'needs approval'].includes(prev.status)) return;
+  const changes = docChanges(rec.type, prev, next); if (!changes.length) return;
+  const v = (prev.version || 1) + 1, at = new Date().toISOString(), few = changes.slice(0, 3).join('; ') + (changes.length > 3 ? '…' : '');
+  next.version = v; next.versions = [...(prev.versions || []), { v, at, by: user.id, changes: changes.slice(0, 30) }].slice(-40);
+  next.reconfirm = true; if (next.status !== 'needs approval') next.status = 'sent';
+  next.requests = (prev.requests || []).map((r) => (r.done ? r : { ...r, done: v }));
+  log(next, user.id, `Version ${v}: ${few}`);
+  await notify(t, prev.assignedTo, `${user.name} changed ${docWord(rec).toLowerCase()} ${prev.number} for ${prev.clientName} – now version ${v}: ${few}. Reconfirm it with the client.`, rec.type, rec.id, user, rec.sample);
+}
+// One step of the flow (data._flow = { action, … }). Returns true when it was a step: nothing else in the change is kept.
+async function docFlow(t, rec, next, user) {
+  const f = next._flow; delete next._flow; if (f === undefined) return false;
+  if (!f || typeof f !== 'object' || Array.isArray(f)) throw new Rule('Unknown step.');
+  const prev = rec.data, me = user.id, word = docWord(rec), no = prev.number, client = prev.clientName, at = new Date().toISOString(), ag = rec.type === 'agreement';
+  for (const k of Object.keys(next)) delete next[k]; Object.assign(next, JSON.parse(JSON.stringify(prev)));
+  const boss = canEdit(user, ag ? 'agreements' : 'quotes') && (!ag || prev.kind === 'service' || canClose(user)), bde = !!prev.assignedTo && prev.assignedTo === me;
+  if (ag ? prev.status === 'signed' : !!prev.signed) throw new Rule(`${word} ${no} is signed and cannot be changed.`);
+  const needBoss = () => { if (!boss) throw new Rule('Only the Operations Manager or the Sales Manager can do this.', 403); };
+  const needBde = () => { if (!bde && !boss) throw new Rule(`Only the BDE this ${word.toLowerCase()} is given to can do this.`, 403); };
+  const ready = () => {
+    if (prev.status === 'changes') throw new Rule('The client asked for changes. A manager must change it first.');
+    if (prev.status === 'needs approval') throw new Rule('The discount waits for approval first.');
+    if (prev.status !== 'sent') throw new Rule(`Give this ${word.toLowerCase()} to a BDE first.`);
+    if (prev.reconfirm) throw new Rule(`It was changed to version ${prev.version}. Reconfirm the new version with the client first.`);
+  };
+  switch (f.action) {
+    case 'submit': { // submit and give it to a BDE – or give it to another BDE
+      needBoss();
+      const u = (await t.query("select id, name from users where id = $1 and active and removed_at is null and title = 'bde'", [String(f.to || '').slice(0, 40)])).rows[0];
+      if (!u) throw new Rule('Choose the BDE who takes it to the client.');
+      if (prev.status === 'needs approval') throw new Rule('The discount waits for approval. Give it to a BDE after it is approved.');
+      if (!['draft', 'sent', 'changes'].includes(prev.status)) throw new Rule(`This ${word.toLowerCase()} is ${prev.status}.`);
+      if (u.id === prev.assignedTo) throw new Rule(`It is already with ${u.name}.`);
+      const first = !prev.version;
+      next.assignedTo = u.id;
+      if (first) { next.version = 1; next.versions = [{ v: 1, at, by: me, changes: ['First version'] }]; next.status = 'sent'; next.sentOn ||= today(); next.reconfirm = false; }
+      log(next, me, first ? `Submitted and given to ${u.name}` : `Given to ${u.name}`);
+      await notify(t, u.id, `${user.name} gave you ${word.toLowerCase()} ${no} for ${client}. Take it to the client.`, rec.type, rec.id, user, rec.sample);
+      if (prev.assignedTo) await notify(t, prev.assignedTo, `${word} ${no} for ${client} was given to ${u.name}.`, rec.type, rec.id, user, rec.sample);
+      return true;
+    }
+    case 'changes': { // the client wants something changed: the BDE tells the managers
+      if (!bde) throw new Rule(`Only the BDE this ${word.toLowerCase()} is given to can report the client's changes.`, 403);
+      if (prev.status !== 'sent') throw new Rule(prev.status === 'changes' ? 'The changes are already with the managers.' : `This ${word.toLowerCase()} is not with you now.`);
+      const note = String(f.note || '').trim().slice(0, 1000); if (note.length < 3) throw new Rule('Write what the client wants changed.');
+      next.status = 'changes'; next.reconfirm = false; next.requests = [...(prev.requests || []), { at, by: me, v: prev.version || 1, note }].slice(-30);
+      log(next, me, `The client asked for changes: ${note.slice(0, 200)}`);
+      await tellMakers(t, rec, `${user.name}: ${client} wants changes in ${word.toLowerCase()} ${no} – ${note.slice(0, 200)}`, user);
+      return true;
+    }
+    case 'reconfirmed': { // the client agreed to the new version
+      needBde();
+      if (prev.status !== 'sent' || !prev.reconfirm) throw new Rule('There is no new version to reconfirm.');
+      next.reconfirm = false; log(next, me, `The client agreed to version ${prev.version}`);
+      await tellMakers(t, rec, `${user.name}: ${client} agreed to version ${prev.version} of ${word.toLowerCase()} ${no}.`, user);
+      return true;
+    }
+    case 'advance': { // an agreement: the client paid the advance; a manager confirms it
+      if (!ag) throw new Rule('Only an agreement takes an advance before signing.');
+      needBde(); ready();
+      if (prev.advance?.confirmed) throw new Rule('The advance is already confirmed.');
+      const amount = round2(num(f.amount)), mode = PAY_MODES.includes(f.mode) ? f.mode : '', date = /^\d{4}-\d\d-\d\d$/.test(f.date || '') && f.date <= today() ? f.date : today();
+      if (!(amount > 0)) throw new Rule('Enter the advance received.');
+      if (amount > Math.max(agTotal(prev), 1)) throw new Rule(`The advance cannot be more than the total, ${inr(agTotal(prev))}.`);
+      if (!mode) throw new Rule('Choose how the client paid.');
+      const files = fileList(f.files, me, 4); await ownFiles(t, files, me, 'the payment');
+      if (mode !== 'Cash' && !files.length) throw new Rule('Attach a photo or screenshot of the payment.');
+      next.advance = { amount, mode, date, reference: String(f.reference || '').trim().slice(0, 80), files, at, by: me };
+      log(next, me, `Advance collected: ${inr(amount)} by ${mode}`);
+      await tellMakers(t, rec, `${user.name} collected the advance ${inr(amount)} (${mode}) for ${word.toLowerCase()} ${no} – ${client}. Confirm it to make the receipt.`, user);
+      return true;
+    }
+    case 'confirmAdvance': { // a manager confirms the advance: the receipt is made at once (it is not sent to the client)
+      needBoss(); const a = prev.advance;
+      if (!a || a.confirmed) throw new Rule('No advance waits for confirmation.');
+      if (!canSee(user, 'money')) throw new Rule('Receipts are made by the Sales Manager and management.', 403);
+      const r = { date: a.date || today(), clientId: prev.clientId || '', dealId: prev.dealId || '', payerName: client, payerPhone: prev.phone || '', payerAddress: prev.address || '',
+        payerGstin: prev.gstin || '', items: [{ desc: `Advance – ${prev.title || word} (${no})`, amount: a.amount, incl: true }], taxMode: prev.gst === 'none' ? 'none' : 'intra',
+        taxRate: num(prev.gstRate) || 18, balance: 0, mode: a.mode, reference: a.reference || '', against: no, forText: '', agreementId: rec.id };
+      await beforeCreate(t, 'receipt', r, user, rec.sample);
+      const rid = await insertRec(t, 'receipt', r, user, { sample: rec.sample }); await afterCreate(t, 'receipt', rid, r, user, rec.sample);
+      next.advance = { ...a, confirmed: { at, by: me, receiptId: rid, receiptNo: r.number } };
+      log(next, me, `Advance ${inr(a.amount)} confirmed – receipt ${r.number}`);
+      await notify(t, a.by, `${user.name} confirmed the advance ${inr(a.amount)} for ${no} (receipt ${r.number}). The client can sign now.`, rec.type, rec.id, user, rec.sample);
+      return true;
+    }
+    case 'rejectAdvance': {
+      needBoss(); const a = prev.advance;
+      if (!a || a.confirmed) throw new Rule('No advance waits for confirmation.');
+      const why = String(f.note || '').trim().slice(0, 300); if (why.length < 3) throw new Rule('Write why the advance is not accepted.');
+      delete next.advance; log(next, me, `Advance ${inr(a.amount)} not accepted: ${why}`);
+      await notify(t, a.by, `${user.name} did not accept the advance ${inr(a.amount)} for ${no}: ${why}`, rec.type, rec.id, user, rec.sample);
+      return true;
+    }
+    case 'sign': { // the client signs: on the screen, or on paper (the photo of the signed pages is uploaded)
+      needBde(); ready();
+      if (ag && !prev.advance?.confirmed) throw new Rule('The advance must be collected and confirmed by a manager before the client signs.');
+      const how = f.how === 'paper' ? 'paper' : 'screen', name = String(f.name || '').trim().slice(0, 120), role = String(f.role || '').trim().slice(0, 80);
+      if (!name) throw new Rule('Enter the name of the person who signs for the client.');
+      let signature = '', files = [];
+      if (how === 'screen') {
+        signature = String(f.signature || '');
+        if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(signature) || signature.length < 200) throw new Rule('The client must sign in the box.');
+        if (signature.length > 400000) throw new Rule('The signature is too large. Clear it and sign again.');
+        if (!f.agree) throw new Rule('The client must tick that they agree.');
+      } else { files = fileList(f.files, me, 12); if (!files.length) throw new Rule('Attach the photo of every signed page.'); await ownFiles(t, files, me, 'the signed pages'); }
+      const v = prev.version || 1, date = today();
+      next.signed = { how, name, role, signature, files, at, by: me, v, date };
+      log(next, me, `Signed by ${name} for the client (${how === 'paper' ? 'on paper' : 'on screen'}), version ${v}`);
+      if (ag) {
+        Object.assign(next, { status: 'signed', signedOn: date, contactName: name, signedAt: at, signedBy: me }); if (role) next.contactRole = role;
+        if (files.length) next.signedCopy = files[0];
+        // The deal's handoff box "Service agreement signed" ticks itself (the deal shows no number or detail of the agreement).
+        const deal = prev.kind === 'service' && prev.dealId ? await getRec(t, prev.dealId, 'deal') : null;
+        if (deal && !deal.data.handoff?.agreement) { deal.data.handoff = { ...(deal.data.handoff || {}), agreement: true }; log(deal.data, me, 'Service agreement signed'); await putRec(t, deal, user); }
+        await tellAgreement(t, ['ops', 'salesmgr', 'cs', 'chairman'], `${word} ${no} with ${client} is signed.`, rec.id, user, rec.sample);
+      } else {
+        next.status = 'accepted';
+        await tellMakers(t, rec, `${client} signed quotation ${no} (${inr(prev.totals?.total)}).`, user);
+      }
+      return true;
+    }
+    default: throw new Rule('Unknown step.');
+  }
+}
+
 export async function beforeUpdate(t, rec, next, user) {
   const type = rec.type, prev = rec.data, me = user?.id || null;
   const reason = next._reason; delete next._reason;
@@ -754,10 +944,16 @@ export async function beforeUpdate(t, rec, next, user) {
       break;
     }
     case 'quote':
+      if (await docFlow(t, rec, next, user)) break;
+      if (prev.signed) throw new Rule(`Quotation ${prev.number} is signed by the client and cannot be changed. If something is wrong, delete it with a reason and make a new one.`);
       if (prev.number) { next.number = prev.number; next.seq = prev.seq; next.fy = prev.fy; }
+      keepFlow(prev, next);
+      // The steps (with the BDE, changes asked, signed = accepted) move only through docFlow; a manager may still mark it declined or expired.
+      if (next.status !== prev.status && !['declined', 'expired'].includes(next.status)) next.status = prev.status;
       next.totals = docTotals(next); await quoteApproval(t, next, user, prev, rec.sample);
       if (next._askApproval) { delete next._askApproval; await askDiscount(t, rec.id, next, user, rec.sample); }
       if (next.dealId) { const deal = await getRec(t, next.dealId, 'deal'); if (deal) { deal.data.value = next.totals.total; deal.data.quoteNo = next.number; await putRec(t, deal, user); } }
+      await docVersion(t, rec, next, user);
       break;
     case 'invoice': next.number = prev.number; next.seq = prev.seq; next.totals = docTotals(next); break;
     case 'receipt':
@@ -765,8 +961,10 @@ export async function beforeUpdate(t, rec, next, user) {
       next.number = prev.number; next.seq = prev.seq; next.totals = receiptTotals(next); break;
     case 'signoff': throw new Rule('A signed certificate cannot be changed.');
     case 'agreement': {
+      if (await docFlow(t, rec, next, user)) break;
       // Kept by the server: the kind, the number, the date in the number, who signed – and the history, which only Aali One writes.
-      for (const k of ['kind', 'number', 'seq', 'fy', 'date', 'signedAt', 'signedBy', 'log']) if (k in prev) next[k] = prev[k]; else delete next[k];
+      for (const k of ['kind', 'number', 'seq', 'fy', 'date', 'signedAt', 'signedBy', 'signedOn', 'sentOn', 'log']) if (k in prev) next[k] = prev[k]; else delete next[k];
+      keepFlow(prev, next);
       const word = AGREEMENT[prev.kind].name;
       // A signed agreement is final: only the scanned signed copy can still be added. A mistake is fixed by deleting it with a reason and making a new one.
       if (prev.status === 'signed') {
@@ -775,18 +973,9 @@ export async function beforeUpdate(t, rec, next, user) {
         if (next.signedCopy?.id !== prev.signedCopy?.id) log(next, me, next.signedCopy ? 'Signed copy attached' : 'Signed copy removed');
         break;
       }
-      if (!['draft', 'sent', 'signed'].includes(next.status)) next.status = prev.status;
+      next.status = prev.status; // the steps move only through docFlow (given to a BDE, changes asked, signed)
       if (!String(next.clientName || '').trim()) throw new Rule('Enter the client name.');
-      if (next.status === 'sent' && prev.status !== 'sent') { next.sentOn ||= today(); log(next, me, 'Sent to the client to sign'); }
-      if (next.status === 'signed') {
-        if (!/^\d{4}-\d\d-\d\d$/.test(next.signedOn || '') || next.signedOn > today()) throw new Rule('Enter the date both sides signed (not a future date).');
-        if (!String(next.contactName || '').trim()) throw new Rule('Enter the name of the person who signed for the client.');
-        next.signedAt = new Date().toISOString(); next.signedBy = me; log(next, me, `Signed on ${inDate(next.signedOn)}`);
-        // The deal's handoff box "Service agreement signed" ticks itself (the deal shows no number or detail of the agreement).
-        const deal = prev.kind === 'service' && next.dealId ? await getRec(t, next.dealId, 'deal') : null;
-        if (deal && !deal.data.handoff?.agreement) { deal.data.handoff = { ...(deal.data.handoff || {}), agreement: true }; log(deal.data, me, 'Service agreement signed'); await putRec(t, deal, user); }
-        await tellAgreement(t, ['ops', 'salesmgr', 'cs', 'chairman'], `${word} ${prev.number} with ${next.clientName} is signed.`, rec.id, user, rec.sample);
-      }
+      await docVersion(t, rec, next, user);
       break;
     }
     case 'pclient': {
@@ -1028,7 +1217,7 @@ async function applyApproval(t, a, user) {
   const target = await getRec(t, a.relId, { discount: 'quote', earlystart: 'project', livenosign: 'project' }[a.kind] || ''); if (!target) return;
   const ok = a.status === 'approved';
   if (a.kind === 'discount') {
-    target.data.status = ok ? 'draft' : 'needs approval'; if (ok) { Object.assign(target.data, { discountApprovedAt: new Date().toISOString(), discountApprovedBy: user.id, discountApprovedPct: num(target.data.totals?.discountPct) }); delete target.data.discountRejected; }
+    target.data.status = ok ? (target.data.assignedTo ? 'sent' : 'draft') : 'needs approval'; if (ok) { Object.assign(target.data, { discountApprovedAt: new Date().toISOString(), discountApprovedBy: user.id, discountApprovedPct: num(target.data.totals?.discountPct) }); delete target.data.discountRejected; }
     else target.data.discountRejected = a.decisionNote || 'Rejected';
   }
   if (a.kind === 'earlystart' && ok) { target.data.startApproved = { by: user.id, at: today(), reason: a.reason }; if (target.data.stage === 'awaiting') target.data.stage = 'planning'; }

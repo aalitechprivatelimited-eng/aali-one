@@ -257,7 +257,8 @@ export async function handle(req, res) {
       const out = await db.tx(async (t) => {
         const rec = (await t.query('select * from records where id = $1 and deleted_at is null for update', [m[1]])).rows[0];
         if (!rec) throw new Rule('That item no longer exists.', 404);
-        if (MONEY.includes(rec.type) && !canMoney(user)) throw new Rule('Only the Sales Manager and management handle quotations, receipts and payments.', 403);
+        // The BDE a quotation is given to may take its steps (server/access.js writeBlock allows nothing else).
+        if (MONEY.includes(rec.type) && !canMoney(user) && !(rec.type === 'quote' && rec.data.assignedTo === user.id)) throw new Rule('Only the Sales Manager and management handle quotations, receipts and payments.', 403);
         const no = acc.writeBlock(rec, b.data || {});
         if (no) throw new Rule(no, 403);
         await ownNewFiles(t, b.data, rec.data, user.id);

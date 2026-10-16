@@ -65,7 +65,7 @@ try {
   await step('first sign-in offers the guide; it walks the BDE through the pages of a BDE, and only those', async () => { await bde.locator('.modal', { hasText: 'Welcome to Aali One' }).waitFor();
     must((await bde.locator('.guide p').first().textContent()).includes('Your work is sales'), 'the welcome is not written for a BDE'); await bde.getByRole('button', { name: 'Start the guide' }).click(); await bde.locator('.tour').waitFor();
     const { seen, framed } = await walkGuide(bde); for (const p of ['/', '/daily', '/calls', '/leads', '/assets', '/settings/me']) must(seen.has(p), 'the guide did not open ' + p);
-    for (const p of ['/payments', '/quotes', '/settings/people', '/settings/audit']) must(!seen.has(p), 'the guide took a BDE to ' + p); must(framed > 3, 'the guide did not frame the part it explains'); });
+    for (const p of ['/payments', '/settings/people', '/settings/audit']) must(!seen.has(p), 'the guide took a BDE to ' + p); must(framed > 3, 'the guide did not frame the part it explains'); });
   await step('the guide does not come back by itself, and the Guide button on the dashboard opens it at any section', async () => { await bde.reload(); await bde.locator('.hero').waitFor(); await sleep(700);
     must(await bde.locator('.modal').count() === 0 && await bde.locator('.tour').count() === 0, 'the guide came back'); await bde.locator('.hero').getByRole('button', { name: 'Guide' }).click(); await bde.locator('.tour').waitFor();
     await bde.getByLabel('Jump to a section of the guide').selectOption({ label: (await bde.locator('.tour select option', { hasText: 'Call register' }).textContent()) }); await bde.locator('.page h1', { hasText: 'call register' }).waitFor();
@@ -279,9 +279,9 @@ try {
     await ops.locator('.ag-form').waitFor(); must(await ops.getByLabel('Service (short name) *').inputValue() === 'Lotus School website', 'the deal did not fill the agreement');
     await ops.getByLabel('Client name *').fill('Lotus School'); await ops.getByRole('button', { name: 'Save & get number' }).click(); await toast(ops, 'Saved as SA/');
     await ops.locator('.paper.agree', { hasText: 'Agreement No. SA/' }).waitFor(); must((await ops.locator('.paper.agree').textContent()).includes('Lotus School'), 'the agreement does not name the client'); saUrl = ops.url(); });
-  await step('marked as signed, it cannot be changed any more', async () => { await ops.getByRole('button', { name: 'Mark as signed…' }).click();
-    await ops.locator('.modal').getByLabel('Signed for the client by').fill('Mr. Prasad'); await ops.locator('.modal-f').getByRole('button', { name: 'Mark as signed' }).click(); await toast(ops, 'Marked as signed');
-    await ops.locator('.banner', { hasText: 'A signed agreement cannot be changed' }).waitFor(); must(await ops.getByRole('button', { name: 'Save changes' }).count() === 0, 'a signed agreement can still be saved'); });
+  await step('submitted and given to a BDE; the steps show it is with the BDE', async () => { const f = ops.locator('.docflow');
+    const kid = (await api('GET', '/bootstrap', null, admin)).body.users.find((u) => u.email === 'bde@e2e.test').id; await f.getByLabel('BDE').selectOption(kid); await f.getByRole('button', { name: 'Submit & give to the BDE' }).click(); await toast(ops, 'Submitted');
+    await f.locator('.steprow li.done', { hasText: 'With Kiran' }).waitFor(); });
   await step('the closure agreement is made from the finished project, with the service agreement already named', async () => {
     const p = (await api('POST', '/records', { type: 'project', data: { name: 'Lotus School website', dealId: agDeal.id, stage: 'live', scope: 'Five-page school website' } }, admin)).body.record;
     await ops.goto(BASE + '/projects/' + p.id); await ops.getByRole('link', { name: '+ Closure agreement' }).click(); await ops.locator('.ag-form').waitFor();
@@ -295,8 +295,31 @@ try {
   // One device at a time (16 Oct 2026): signing in on the phone signed the BDE out on the laptop, and the laptop says why.
   await step('one device at a time: the laptop of the BDE was signed out by the phone sign-in, and says so', async () => { await bde.goto(BASE);
     await bde.locator('.banner', { hasText: 'You signed in on another device' }).waitFor(); await signIn(bde, 'bde@e2e.test'); });
-  await step('a BDE has no Agreements in the menu and cannot open the page', async () => { await bde.goto(BASE); await bde.locator('.hero').waitFor(); must(await bde.locator('.nav a', { hasText: 'Agreements' }).count() === 0, 'a BDE sees Agreements');
-    await bde.goto(BASE + '/agreements'); await bde.getByText('This section is not part of your access').waitFor(); });
+  // The flow (16 Oct 2026): the BDE takes it to the client; the client asks for changes; the manager changes it; the BDE reconfirms,
+  // collects the advance; the manager confirms it (the receipt is made); the client signs on the BDE's screen; nothing can change after.
+  await step('the BDE sees only the agreement given to them, cannot change it, and sends the client\'s changes', async () => {
+    await bde.goto(BASE + '/agreements'); await bde.locator('tr', { hasText: 'SA/' }).waitFor(); must(await bde.locator('tr', { hasText: 'PCA/' }).count() === 0, 'the BDE sees an agreement not given to them');
+    await bde.locator('tr', { hasText: 'SA/' }).click(); await bde.locator('.docflow').waitFor(); must(await bde.getByRole('button', { name: 'Save changes' }).count() === 0, 'the BDE can change the agreement');
+    await bde.getByRole('button', { name: 'Client wants changes' }).click(); await bde.locator('.modal textarea').fill('Add the mobile app; fees 60,000');
+    await bde.locator('.modal-f').getByRole('button', { name: 'Send to the managers' }).click(); await toast(bde, 'Sent. The managers are told'); });
+  await step('the manager sees the changes, changes the agreement, and it becomes version 2', async () => { await ops.goto(saUrl); await ops.locator('.docflow .banner', { hasText: 'Add the mobile app' }).waitFor();
+    await ops.getByLabel('Service (short name) *').fill('Lotus School website and app'); await ops.getByRole('button', { name: 'Save changes' }).click(); await toast(ops, 'Saved as version 2'); });
+  await step('the BDE sees what changed in version 2, reconfirms with the client and records the advance', async () => { await bde.reload();
+    const b = bde.locator('.docflow .banner', { hasText: 'Changed to version 2' }); await b.waitFor(); must((await b.textContent()).includes('Service: Lotus School website → Lotus School website and app'), 'the change is not shown');
+    await bde.getByRole('button', { name: 'Client agrees to version 2' }).click(); await toast(bde, 'Noted: the client agrees');
+    must(await bde.getByRole('button', { name: 'Client signs…' }).count() === 0, 'the client can sign before the advance');
+    await bde.locator('.docflow').getByLabel('Amount received (₹)').fill('15000'); await bde.locator('.docflow').getByLabel('Paid by').selectOption('Cash');
+    await bde.getByRole('button', { name: 'Advance collected' }).click(); await toast(bde, 'A manager confirms it next'); });
+  await step('the manager confirms the advance and the receipt is made', async () => { await ops.reload();
+    await ops.getByRole('button', { name: 'Confirm – make the receipt' }).click(); await toast(ops, 'The receipt is made'); await ops.locator('.docflow .banner.ok', { hasText: 'Advance ₹15,000 received' }).getByRole('link').waitFor(); });
+  await step('the client signs on the BDE\'s screen; the agreement is locked', async () => { await bde.reload(); await bde.getByRole('button', { name: 'Client signs…' }).click();
+    const m = bde.locator('.modal'); await m.getByLabel('Name of the person signing *').fill('Mr. Prasad'); const box = await m.locator('canvas.sig').boundingBox();
+    await bde.mouse.move(box.x + 30, box.y + 60); await bde.mouse.down(); await bde.mouse.move(box.x + 160, box.y + 110, { steps: 10 }); await bde.mouse.move(box.x + 240, box.y + 50, { steps: 10 }); await bde.mouse.up();
+    await m.getByRole('checkbox').check(); await bde.locator('.modal-f').getByRole('button', { name: 'Save – it is signed' }).click(); await toast(bde, 'Signed');
+    await bde.locator('.docflow img.signed-sig').waitFor();
+    await ops.reload(); await ops.locator('.banner', { hasText: 'A signed agreement cannot be changed' }).waitFor(); must(await ops.getByRole('button', { name: 'Save changes' }).count() === 0, 'a signed agreement can still be saved'); });
+  await step('another BDE sees no agreement', async () => { await vis.goto(BASE + '/agreements'); await vis.locator('.page, main').first().waitFor(); await sleep(500);
+    must(await vis.locator('tr', { hasText: 'SA/' }).count() === 0, 'another BDE sees the agreement'); });
   await step('on a phone the agreement switches between the details and the A4 page, and nothing scrolls sideways', async () => { const ph = await open({ width: 390, height: 844 }, true); await signIn(ph, 'ops@e2e.test'); await skipGuide(ph);
     await ph.goto(saUrl); await ph.locator('.ag-form').waitFor(); await noSideScroll(ph); await ph.locator('.seg-phone button', { hasText: 'The agreement' }).click(); await ph.locator('.paper.agree').waitFor();
     must(await ph.locator('.ag-form').isHidden(), 'the details stay on the phone screen'); await noSideScroll(ph); await ph.context().close(); });

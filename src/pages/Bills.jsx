@@ -85,7 +85,7 @@ function BillForm({ init, onClose }) {
 }
 
 // The bill's photos: small pictures that open full size. Big phone photos are made smaller before they are sent.
-function BillPhotos({ value, onChange, readOnly }) {
+export function BillPhotos({ value, onChange, readOnly, label = 'photo of the bill' }) {
   const [busy, setBusy] = useState(false);
   async function pick(e) {
     const fs = [...e.target.files]; e.target.value = ''; if (!fs.length) return; setBusy(true); const got = [];
@@ -94,9 +94,9 @@ function BillPhotos({ value, onChange, readOnly }) {
   }
   return <div className="stack gap4">
     {value.length > 0 && <div className="billpics">{value.map((f) => <div key={f.id} className="billpic">
-      <a href={'/api/files/' + f.id} target="_blank" rel="noreferrer" title="Open full size">{/^image\//.test(f.mime) ? <img src={'/api/files/' + f.id} alt={`Bill: ${f.name}`} loading="lazy" /> : <span className="billpdf">PDF<small>{f.name}</small></span>}</a>
+      <a href={'/api/files/' + f.id} target="_blank" rel="noreferrer" title="Open full size">{/^image\//.test(f.mime) ? <img src={'/api/files/' + f.id} alt={f.name} loading="lazy" /> : <span className="billpdf">PDF<small>{f.name}</small></span>}</a>
       {!readOnly && <button className="btn ghost sm" type="button" onClick={() => onChange(value.filter((x) => x.id !== f.id))} aria-label={`Remove ${f.name}`}>Remove</button>}</div>)}</div>}
-    {!readOnly && <label className="btn sm filebtn">{busy ? 'Uploading…' : value.length ? '+ Add another photo' : '+ Add photo of the bill'}<input type="file" accept="image/*,application/pdf" multiple hidden disabled={busy} onChange={pick} /></label>}
+    {!readOnly && <label className="btn sm filebtn">{busy ? 'Uploading…' : value.length ? '+ Add another photo' : '+ Add ' + label}<input type="file" accept="image/*,application/pdf" multiple hidden disabled={busy} onChange={pick} /></label>}
   </div>;
 }
 
