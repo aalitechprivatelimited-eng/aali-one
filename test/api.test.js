@@ -7,14 +7,21 @@ import { getDb } from '../server/db.js';
 import { hashPassword } from '../server/auth.js';
 
 process.env.PGLITE_DIR = 'memory://';
+// One device at a time: a later sign-in of the same person ends the earlier one, so a cookie the tests saved earlier follows that
+// person's latest sign-in (exact: true sends the saved cookie as it is).
+const byEmail = new Map(), next = new Map();
+const follow = (c) => { while (next.has(c)) c = next.get(c); return c; };
 function call(method, path, body, cookie = '', more = {}) {
-  const { raw, headers: extra, ...plain } = more; // raw: a body sent as it is; headers / plain keys: extra request headers
+  const { raw, headers: extra, exact, ...plain } = more; // raw: a body sent as it is; headers / plain keys: extra request headers
+  if (!exact) cookie = follow(cookie);
   const req = Readable.from(raw !== undefined ? [Buffer.from(raw)] : body ? [Buffer.from(JSON.stringify(body))] : []);
   Object.assign(req, { method, url: '/api' + path, headers: { cookie, 'content-type': 'application/json', ...plain, ...(extra || {}) } });
   return new Promise((resolve) => {
     const res = { status: 0, headers: {}, writeHead(s, h) { this.status = s; this.headers = h; }, end(b) {
       const txt = Buffer.isBuffer(b) ? b.toString() : b; let json; try { json = JSON.parse(txt); } catch { json = txt; }
-      resolve({ status: this.status, body: json, headers: this.headers, cookie: (this.headers['set-cookie'] || '').split(';')[0] }); } };
+      const set = (this.headers['set-cookie'] || '').split(';')[0], email = String(body?.email || '').trim().toLowerCase();
+      if (this.status === 200 && set.length > 'aali_session='.length && ['/auth/login', '/setup'].includes(path) && email) { if (byEmail.has(email)) next.set(byEmail.get(email), set); byEmail.set(email, set); }
+      resolve({ status: this.status, body: json, headers: this.headers, cookie: set }); } };
     handle(req, res);
   });
 }
@@ -586,13 +593,17 @@ test('security: uploaded files cannot run as pages, sign-in is limited, your own
   assert.equal((await call('PATCH', '/users/' + idA, { photo: (await up('me.svg', 'image/svg+xml', '<svg/>')).id }, A)).status, 400, 'an SVG cannot be a profile photo');
   assert.equal((await get(pic.id, '')).status, 401, 'files need a sign-in');
 
-  // Your own password: the current one is always asked, an admin too; other devices are signed out, this one stays in.
-  const other = (await login('ops@test.in', 'password123')).cookie;
+  // One device at a time (16 Oct 2026): signing in on another device signs the earlier one out, and it is told why.
+  const before = follow(admin); await login('ops@test.in', 'password123');
+  const old = await call('GET', '/me', null, before, { exact: true });
+  assert.equal(old.status, 401, 'the earlier device is signed out'); assert.match(old.body.error, /another device/);
+  assert.equal((await call('GET', '/me', null, admin)).status, 200, 'the new device is signed in');
+  // Your own password: the current one is always asked, an admin too; this device stays in.
   assert.equal((await call('PATCH', '/users/' + idA, { password: 'changed-by-admin1' }, admin)).status, 200, 'an admin sets a member\'s password without knowing the old one');
   const me = (await call('GET', '/me', null, admin)).body.user;
   assert.equal((await call('PATCH', '/users/' + me.id, { password: 'new-password-1' }, admin)).status, 400, 'not without the current password');
   assert.equal((await call('PATCH', '/users/' + me.id, { password: 'new-password-1', currentPassword: 'password123' }, admin)).status, 200);
-  assert.equal((await call('GET', '/me', null, admin)).status, 200, 'this device stays signed in'); assert.equal((await call('GET', '/me', null, other)).status, 401, 'the other device is signed out');
+  assert.equal((await call('GET', '/me', null, admin)).status, 200, 'this device stays signed in');
   assert.equal((await call('GET', '/me', null, A)).status, 401, 'a member whose password was reset is signed out everywhere');
   A = (await login('seca@test.in', 'changed-by-admin1')).cookie; assert.equal((await call('GET', '/me', null, A)).status, 200);
 

@@ -12,8 +12,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const server = spawn(process.execPath, ['server/dev.js', String(PORT)], { env: { ...process.env, DATABASE_URL: '', POSTGRES_URL: '', PGLITE_DIR: 'memory://', PORT: String(PORT) }, stdio: ['ignore', 'ignore', 'inherit'] });
 let browser, failed = 0;
 const stop = async (code) => { await browser?.close().catch(() => {}); server.kill(); process.exit(code); };
-const api = async (method, path, body, cookie = '') => { const r = await fetch(BASE + '/api' + path, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
-  return { status: r.status, body: await r.json().catch(() => ({})), cookie: (r.headers.get('set-cookie') || '').split(';')[0] }; };
+// One device at a time: a sign-in ends that person's earlier one. So the script shares one sign-in per person with the browser pages:
+// a cookie saved earlier follows the person's latest sign-in, and a script sign-in reuses a live one instead of signing a page out.
+const byEmail = new Map(), next = new Map();
+const follow = (c) => { while (next.has(c)) c = next.get(c); return c; };
+const fresh = (email, c) => { if (byEmail.has(email) && byEmail.get(email) !== c) next.set(byEmail.get(email), c); byEmail.set(email, c); };
+const api = async (method, path, body, cookie = '') => {
+  const email = String(body?.email || '').trim().toLowerCase();
+  if (path === '/auth/login' && byEmail.has(email) && body.password === PW) { const c = byEmail.get(email), me = await fetch(BASE + '/api/me', { headers: { cookie: c } });
+    if (me.ok) return { status: 200, body: await me.json(), cookie: c }; }
+  const r = await fetch(BASE + '/api' + path, { method, headers: { 'content-type': 'application/json', cookie: follow(cookie) }, body: body ? JSON.stringify(body) : undefined });
+  const set = (r.headers.get('set-cookie') || '').split(';')[0];
+  if (r.ok && email && ['/auth/login', '/setup'].includes(path) && set.length > 'aali_session='.length) fresh(email, set);
+  return { status: r.status, body: await r.json().catch(() => ({})), cookie: set }; };
 async function step(name, fn) { try { await fn(); console.log('  ✔', name); } catch (e) { failed++; console.log('  ✖', name, '\n     ', String(e.message || e).split('\n')[0]); } }
 const must = (ok, msg) => { if (!ok) throw new Error(msg); };
 
@@ -33,7 +44,8 @@ try {
     page.on('pageerror', (e) => errors.push('page error: ' + e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/401|favicon/.test(m.text())) errors.push('console: ' + m.text()); });
     return page; };
   const signIn = async (page, email) => { await page.goto(BASE); await page.locator('input[type=email]').fill(email); await page.locator('input[type=password]').fill(PW);
-    await page.getByRole('button', { name: 'Sign in' }).click(); await page.locator('.hero h1').waitFor({ timeout: 8000 }); };
+    await page.getByRole('button', { name: 'Sign in' }).click(); await page.locator('.hero h1').waitFor({ timeout: 8000 });
+    const c = (await page.context().cookies()).find((x) => x.name === 'aali_session'); if (c) fresh(email, 'aali_session=' + c.value); };
   // The first-day guide opens on a person's first sign-in on a device; most flows below close it first.
   const skipGuide = async (page) => { await page.getByRole('button', { name: 'Not now' }).click(); await page.locator('.modal').waitFor({ state: 'detached' }); };
   // Walk the whole guide with Next and note every page it opens.
@@ -205,7 +217,8 @@ try {
     await top.locator('.seg button', { hasText: /^IT$/ }).click(); await top.getByText('No people in this view').waitFor(); must(await top.locator('.repcard').count() === 0, 'IT shows the Sales team'); });
   await step('signing out and in again opens the dashboard, not the page left', async () => { await top.goto(BASE + '/daily'); await top.locator('.page h1').first().waitFor();
     await top.getByRole('button', { name: 'Sign out' }).click(); await top.locator('input[type=email]').waitFor(); must(new URL(top.url()).pathname === '/', 'still on ' + new URL(top.url()).pathname);
-    await top.locator('input[type=email]').fill('admin@e2e.test'); await top.locator('input[type=password]').fill(PW); await top.getByRole('button', { name: 'Sign in' }).click(); await top.locator('.hero h1').waitFor(); });
+    await top.locator('input[type=email]').fill('admin@e2e.test'); await top.locator('input[type=password]').fill(PW); await top.getByRole('button', { name: 'Sign in' }).click(); await top.locator('.hero h1').waitFor();
+    fresh('admin@e2e.test', 'aali_session=' + (await top.context().cookies()).find((x) => x.name === 'aali_session').value); });
   await step('the team report message is detailed: every task, the calls that matter; Short gives the totals', async () => { await top.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
     await top.goto(BASE + '/daily'); await top.getByRole('button', { name: 'Copy the message' }).first().click(); await toast(top, 'Report copied');
     const full = await top.evaluate(() => navigator.clipboard.readText()); must(full.includes('(detailed)') && full.includes('_Tasks_') && full.includes('Sent the brochure to 5 schools'), 'the detailed message lacks the tasks');
@@ -257,7 +270,7 @@ try {
 
   // ---------- agreements: made by the Operations Manager and the Sales Manager, a closure by the Operations Manager only ----------
   console.log('Agreements (Operations Manager on a laptop, Company Secretary, Sales Manager, BDE, phone)');
-  must((await person('Nikhil', 'Tummala', 'ops@e2e.test', 'ops', 'Operations Manager')).status === 200, 'could not add the Operations Manager');
+  { const r = await person('Nikhil', 'Tummala', 'ops@e2e.test', 'ops', 'Operations Manager'); must(r.status === 200, 'could not add the Operations Manager: ' + (r.body.error || r.status)); }
   must((await person('Harika', 'Amirineni', 'cs@e2e.test', 'cs', 'Company Secretary')).status === 200, 'could not add the Company Secretary');
   const agDeal = (await api('POST', '/records', { type: 'deal', data: { title: 'Lotus School website', contactName: 'Mr. Prasad', phone: '9876512345', value: 53100 } }, admin)).body.record;
   const ops = await open({ width: 1366, height: 768 }); let saUrl = '';
@@ -279,6 +292,9 @@ try {
   await step('the Company Secretary reads every agreement and cannot make one', async () => { const cs = await open({ width: 1366, height: 768 }); await signIn(cs, 'cs@e2e.test'); await skipGuide(cs);
     await cs.goto(BASE + '/agreements'); await cs.locator('tr', { hasText: 'SA/' }).waitFor(); await cs.locator('tr', { hasText: 'PCA/' }).waitFor();
     must(await cs.getByRole('link', { name: '+ Service agreement' }).count() === 0, 'the Company Secretary can make one'); await cs.context().close(); });
+  // One device at a time (16 Oct 2026): signing in on the phone signed the BDE out on the laptop, and the laptop says why.
+  await step('one device at a time: the laptop of the BDE was signed out by the phone sign-in, and says so', async () => { await bde.goto(BASE);
+    await bde.locator('.banner', { hasText: 'You signed in on another device' }).waitFor(); await signIn(bde, 'bde@e2e.test'); });
   await step('a BDE has no Agreements in the menu and cannot open the page', async () => { await bde.goto(BASE); await bde.locator('.hero').waitFor(); must(await bde.locator('.nav a', { hasText: 'Agreements' }).count() === 0, 'a BDE sees Agreements');
     await bde.goto(BASE + '/agreements'); await bde.getByText('This section is not part of your access').waitFor(); });
   await step('on a phone the agreement switches between the details and the A4 page, and nothing scrolls sideways', async () => { const ph = await open({ width: 390, height: 844 }, true); await signIn(ph, 'ops@e2e.test'); await skipGuide(ph);
@@ -316,7 +332,7 @@ try {
     await hrPage.getByRole('tab', { name: 'Months' }).click(); await hrPage.getByRole('button', { name: `Make payroll for ${lastMonth}` }).click(); await toast(hrPage, 'is made');
     await hrPage.locator('.banner', { hasText: 'Upload the attendance Excel' }).waitFor(); await hrPage.locator('tr', { hasText: 'Ravi Kumar' }).waitFor();
     must(await hrPage.locator('tr', { hasText: 'Vani Reddy' }).count() === 0, 'Aali staff are on a client month'); });
-  await step('the Operations Manager reads it as view only and writes a remark; a BDE has no Payroll', async () => { await ops.goto(BASE + '/payroll'); await ops.locator('tr', { hasText: 'Vani Reddy' }).waitFor();
+  await step('the Operations Manager reads it as view only and writes a remark; a BDE has no Payroll', async () => { await signIn(ops, 'ops@e2e.test'); /* the phone sign-in above signed the laptop out */ await ops.goto(BASE + '/payroll'); await ops.locator('tr', { hasText: 'Vani Reddy' }).waitFor();
     must(await ops.locator('.topbar .pill', { hasText: 'View only' }).count() === 1 && await ops.getByRole('button', { name: 'Reopen…' }).count() === 0, 'the Operations Manager can change payroll');
     await ops.getByLabel('Remark').fill('Checked, fine.'); await ops.getByRole('button', { name: 'Add remark' }).click(); await toast(ops, 'Remark added');
     await bde.goto(BASE); await bde.locator('.hero').waitFor(); must(await bde.locator('.nav a', { hasText: 'Payroll' }).count() === 0, 'a BDE sees Payroll or Client payroll'); await hrPage.context().close(); });

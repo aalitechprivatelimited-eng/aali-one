@@ -62,20 +62,25 @@ function verify(token, key) {
   if (h.alg !== 'HS256' || !c.sub || !c.sid || !(c.exp * 1000 > Date.now())) return null;
   return c;
 }
+// One device at a time (user, 16 Oct 2026): signing in ends that person's sign-in on every other device.
 export async function createSession(db, userId) {
   const sid = randomBytes(32).toString('base64url'), now = Math.floor(Date.now() / 1000);
+  await db.query('delete from sessions where user_id = $1', [userId]);
   await db.query(`insert into sessions (token_hash, user_id, expires_at, last_seen) values ($1, $2, now() + interval '${LIFE_HOURS} hours', now())`, [sha(sid), userId]);
   return sign({ sub: userId, sid, iat: now, exp: now + LIFE_HOURS * 3600 }, await jwtKey(db));
 }
 // The session's row in the sessions table (its key is a hash of the token's sid), for "sign out the other devices".
 export async function sessionKey(db, token) { const c = verify(token, await jwtKey(db)); return c ? sha(c.sid) : ''; }
-// token, and idle = seconds since the person last tapped or typed → { user } or { why: 'none' | 'ended' | 'idle' }.
+// token, and idle = seconds since the person last tapped or typed → { user } or { why: 'none' | 'ended' | 'elsewhere' | 'idle' }.
 export async function sessionUser(db, token, idle = 0) {
   if (!token) return { why: 'none' };
   const c = verify(token, await jwtKey(db)); if (!c) return { why: 'ended' };
   const u = (await db.query(`select u.*, s.last_seen from sessions s join users u on u.id = s.user_id
     where s.token_hash = $1 and s.user_id = $2 and s.expires_at > now() and u.active`, [sha(c.sid), c.sub])).rows[0];
-  if (!u) return { why: 'ended' };
+  if (!u) { // a sign-in ends the older ones, so if this person is signed in now, it is on another device
+    const later = (await db.query('select 1 from sessions where user_id = $1 and expires_at > now()', [c.sub])).rows.length;
+    return { why: later ? 'elsewhere' : 'ended' };
+  }
   // Ended when the page says nobody has tapped or typed for an hour, or when no real use has reached the server for an hour (a page
   // opened again after hours away starts its own idle count from zero, so the last use the server saw is checked too).
   const now = Date.now(), seen = u.last_seen ? Date.parse(u.last_seen) : now, idleMs = Math.min(86400, Math.max(0, +idle || 0)) * 1000, limit = (IDLE_MIN + 1) * 60000;

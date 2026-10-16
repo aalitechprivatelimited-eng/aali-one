@@ -199,7 +199,7 @@ export async function handle(req, res) {
     // ---------- signed in ----------
     // The JWT in the cookie and its session (server/auth.js); x-idle: seconds since the person last tapped or typed on the page.
     const signed = await sessionUser(db, readCookie(req, 'aali_session'), +req.headers['x-idle'] || 0), user = signed.user;
-    if (!user) throw new Rule(signed.why === 'idle' ? `You were signed out after ${IDLE_MIN} minutes without use. Please sign in again.` : signed.why === 'ended' ? 'Your sign-in has ended. Please sign in again.' : 'Please sign in.', 401);
+    if (!user) throw new Rule(signed.why === 'idle' ? `You were signed out after ${IDLE_MIN} minutes without use. Please sign in again.` : signed.why === 'ended' ? 'Your sign-in has ended. Please sign in again.' : signed.why === 'elsewhere' ? 'You signed in on another device, so you were signed out here.' : 'Please sign in.', 401);
     user.is_admin = isAdminUser(user); // the Operations Manager and Company Secretary always have the admin features
     const admin = user.is_admin, juniors = MANAGER_ADDS[user.title] || [];
     const leadSees = user.title === 'itlead' && !!(await getSetting(db, 'leadSeesReports', false));
