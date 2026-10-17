@@ -202,7 +202,6 @@ export function PayslipSheet({ run, i }) {
       <tr>{emp ? <><th>Employee code</th><td>{i.code || '—'}</td></> : <><th>Company</th><td>{i.company || '—'}</td></>}<th>Bank account</th><td className="num">{acct}</td></tr>
       <tr><th>IFSC</th><td className="num">{i.bank?.ifsc || '—'}</td><th>UAN (PF)</th><td>{i.uan || '—'}</td></tr>
       <tr><th>{daily ? 'Daily wage' : run.rules?.dayBasis ? 'Days for a full month' : 'Days in the month'}</th><td>{daily ? `₹${i.rate}` : i.days.total}</td><th>Paid days</th><td><b>{i.days.payable}</b>{i.days.typed ? ' (entered by HR)' : ''}</td></tr>
-      {a && <tr><th>Attendance</th><td colSpan={3}>Present {a.present}{a.half ? ` · half days ${a.half}` : ''}{a.double ? ` · double shifts ${a.double}` : ''} · paid leave {a.paidLeave} · unpaid leave {a.unpaidLeave} · absent {a.absent} · {emp ? 'weekly offs' : 'Sundays'} {a.sundays} · holidays {a.holidays}</td></tr>}
     </tbody></table>
     <div className="slip-two">
       <table><thead><tr><th>Earnings</th><th className="n">{daily ? '' : 'Full month'}</th><th className="n">This month</th></tr></thead><tbody>

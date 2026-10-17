@@ -136,6 +136,8 @@ function PersonPay({ run, item: i, hr, onClose }) {
     setBusy(true); const r = await attempt(() => update(run.id, { adj }), 'Saved. The pay is worked out again.'); setBusy(false); if (r) onClose();
   }
   const row = (k, v) => <tr key={k}><td>{k}</td><td className="n">{v}</td></tr>;
+  // Loss of pay (the user, 17 Oct 2026): what the days not paid cost against the full monthly salary, shown before the pay that is left.
+  const base = at?.basis || i.days.total, lopDays = Math.max(0, Math.round((base - i.days.payable) * 2) / 2), lop = i.payType === 'daily' ? 0 : Math.max(0, (i.full?.gross || 0) - (i.earned?.gross || 0));
   return <Modal wide title={`${i.name} – ${monthLabel(run.month)}`} onClose={onClose} footer={<><Link className="btn" to={`${run.pclientId ? '/client-payroll' : '/payroll'}/slips/${run.id}?u=${i.userId}`}>Payslip</Link><span className="grow" />
     <button className="btn" type="button" onClick={onClose}>Close</button>{hr && <button className="btn primary" type="button" disabled={busy} onClick={save}>Save changes</button>}</>}>
     {cal && <AttendanceMonth userId={i.userId} name={i.name} month={run.month} pc={client ? get(run.pclientId) : null} onClose={() => setCal(false)} />}
@@ -151,7 +153,9 @@ function PersonPay({ run, item: i, hr, onClose }) {
           {i.days.typed && <div className="small">Paid days typed by HR: <b>{i.days.payable}</b>{a.daysWhy ? ` – ${a.daysWhy}` : ''}</div>}</div>
         <div className="stack"><h3 style={{ margin: 0 }}>Pay</h3>
           <table className="kv"><tbody>{i.payType === 'daily' ? row(`Wages: ${inr(i.rate)} a day × ${i.days.payable} days`, inr(i.earned.gross))
-            : <>{row('Basic', inr(i.earned.basic))}{i.earned.hra ? row('HRA', inr(i.earned.hra)) : null}{row('Special allowance', inr(i.earned.special))}</>}{i.extra ? row(`Extra: ${i.extraWhy}`, inr(i.extra)) : null}
+            : <>{lop > 0 && <>{row('Monthly salary', inr(i.full.gross))}
+              {row(`Loss of pay: ${lopDays} ${lopDays === 1 ? 'day' : 'days'} of ${base}${at?.toCome ? ` (${at.toCome} still to come)` : ''}`, '− ' + inr(lop))}</>}
+              {row('Basic', inr(i.earned.basic))}{i.earned.hra ? row('HRA', inr(i.earned.hra)) : null}{row('Special allowance', inr(i.earned.special))}</>}{i.extra ? row(`Extra: ${i.extraWhy}`, inr(i.extra)) : null}
             {(i.earnExtras || []).map((x) => row(`${x.name}${x.note ? ` (${x.note})` : ''}`, inr(x.amount)))}
             <tr><td><b>Earned this month</b>{i.payType !== 'daily' && <> <span className="faint">(salary {inr(i.full.gross)})</span></>}</td><td className="n"><b>{inr(grossOf(i))}</b></td></tr>
             {i.ded.pf ? row(`PF (${run.rules?.pfEe ?? 12}% of ${i.payType === 'daily' ? 'the wage' : 'basic'})`, '− ' + inr(i.ded.pf)) : null}{i.ded.esi ? row('ESI', '− ' + inr(i.ded.esi)) : null}{i.ded.pt ? row('Professional Tax', '− ' + inr(i.ded.pt)) : null}{i.ded.tds ? row('TDS', '− ' + inr(i.ded.tds)) : null}
