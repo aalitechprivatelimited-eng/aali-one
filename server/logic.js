@@ -416,6 +416,10 @@ async function tellAgreement(t, titles, text, id, user, sample) {
 // ---------- payroll (shared/payroll.js does the arithmetic) ----------
 const NOT_ON_PAYROLL = ['chairman', 'admin']; // the Founder & Chairman, and the setup account
 const money = (v) => Math.max(0, Math.round(+v || 0));
+// The same value whatever the order of its fields: Postgres keeps an object's fields in its own order (shorter names first), so text
+// compared with what was just cleaned differed although nothing had changed – a locked payroll could not be reopened (17 Oct 2026).
+const stable = (v) => (Array.isArray(v) ? `[${v.map(stable).join(',')}]` : v && typeof v === 'object' ? `{${Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + stable(v[k])).join(',')}}` : JSON.stringify(v ?? null));
+const same = (a, b) => stable(a) === stable(b);
 const txt = (v, n) => String(v ?? '').trim().slice(0, n);
 const day = (v) => { if (!/^\d{4}-\d\d-\d\d$/.test(v || '')) return ''; const d = new Date(v + 'T00:00:00Z'); return !isNaN(d) && d.toISOString().slice(0, 10) === v ? v : ''; }; // a real date only
 const mon = (v) => (/^\d{4}-(0[1-9]|1[0-2])$/.test(v || '') ? v : '');
@@ -846,9 +850,9 @@ export async function beforeUpdate(t, rec, next, user) {
         next.remarks = [...(prev.remarks || []), { by: me, at: new Date().toISOString(), text, userId: about }].slice(-300);
         await tellPayroll(t, canEdit(user, 'payroll') ? 'ops' : 'hr', `${user.name} remarked on payroll ${label}: "${text.slice(0, 90)}"`, rec.id, user, rec.sample, rel);
       }
-      const adj = want.adj === undefined ? prev.adj || {} : cleanAdj(want.adj), adjChanged = JSON.stringify(adj) !== JSON.stringify(prev.adj || {});
+      const adj = want.adj === undefined ? prev.adj || {} : cleanAdj(want.adj), adjChanged = !same(adj, prev.adj || {});
       if (adjChanged && user.title === 'chairman') { // the Chairman stepped in: written in the month's history, and HR and the Operations Manager are told
-        const who = Object.keys({ ...adj, ...(prev.adj || {}) }).filter((k) => JSON.stringify(adj[k] || null) !== JSON.stringify(prev.adj?.[k] || null)).map((k) => (prev.items || []).find((i) => i.userId === k)?.name || 'someone');
+        const who = Object.keys({ ...adj, ...(prev.adj || {}) }).filter((k) => !same(adj[k] || null, prev.adj?.[k] || null)).map((k) => (prev.items || []).find((i) => i.userId === k)?.name || 'someone');
         log(next, me, `Changed by the Founder & Chairman for ${who.join(', ')}`);
         await tellPayroll(t, 'hr', `${user.name} changed payroll ${label} for ${who.join(', ')}.`, rec.id, user, rec.sample, rel);
       }

@@ -721,7 +721,7 @@ test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; th
   assert.ok(pd.warn.some((w) => /Not found in Aali HRM/.test(w)), 'the developer is not in Aali HRM');
   // It cannot be locked while someone has no paid days; HR types them (with why), then it locks and the Operations Manager is told.
   assert.equal((await patch(CS, run.id, { status: 'locked' })).status, 400);
-  assert.equal((await patch(CS, run.id, { adj: { u_pd: { days: 30, daysWhy: 'Works from the client site; no face check-in' } } })).status, 200);
+  assert.equal((await patch(CS, run.id, { adj: { u_pd: { days: 30, daysWhy: 'Works from the client site; no face check-in', tds: 200 } } })).status, 200); // tds: the database keeps these fields in another order – reopening must still work (17 Oct 2026)
   assert.equal((await patch(OPS, run.id, { status: 'locked' })).status, 403, 'the Operations Manager does not run payroll');
   const locked = await patch(CS, run.id, { status: 'locked' }); assert.equal(locked.status, 200, JSON.stringify(locked.body));
   assert.ok((await recs(OPS)).records.some((r) => r.type === 'notice' && /ready/.test(r.text)), 'the Operations Manager is told');
