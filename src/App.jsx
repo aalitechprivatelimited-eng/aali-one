@@ -4,6 +4,7 @@ import { boot, useStore, store, login, logout, http, list, idleFor } from './api
 import { Toaster, In, Field, Empty, Avatar, Modal, attempt, toast, lockPage } from './ui.jsx';
 import { isTop, can, desig } from './lib.js';
 import { sectionCounts } from './tiles.jsx';
+import { appOf, myApps, SEC, secLabel } from './apps.jsx';
 import { SECTIONS } from '../shared/access.js';
 import { ThemeToggle } from './theme.jsx';
 import { Motion, Page, ScrollLine, ToTop, m, AnimatePresence, SPRING, EASE } from './motion.jsx';
@@ -165,7 +166,7 @@ function Shell() {
   useReminders();
   const cnt = sectionCounts(); // the same numbers as the tiles on Home (src/tiles.jsx)
   // Which section is open: the gold mark in the sidebar slides to it, and the page changes with a short movement.
-  const path = loc.pathname, seg = path.split('/')[1] || 'home';
+  const path = loc.pathname, seg = path.split('/')[1] || 'home', app = appOf(path);
   const on = (k, to) => (to === '/' ? path === '/' : k === 'settings' ? path.startsWith('/settings') && !path.startsWith('/settings/people') : path === to || path.startsWith(to + '/'));
   return (
     <div className={'shell' + (mini ? ' mini' : '')}>
@@ -176,15 +177,19 @@ function Shell() {
           <button type="button" className="btn ghost sm shut" onClick={() => setOpen(false)} aria-label="Close the menu">Close</button>
           <button type="button" className="collapse" onClick={() => flip(true)} title="Collapse the sidebar" aria-label="Collapse the sidebar"><Ico k="side" /></button></div>
         <button type="button" className="side-search" onClick={openSearch} data-tip="Search" aria-label="Search (Ctrl + K)"><Ico k="search" /><span className="lab">Search</span><kbd>Ctrl K</kbd></button>
-        <m.nav className="nav" layoutScroll aria-label="Sections">
-          {['', 'Overview', 'Sales', 'Delivery', 'Money', 'Management', 'Account'].map((g) => { const items = SECTIONS.filter((s) => s[3] === g && can(s[0])); if (!items.length) return null;
-            return <Fragment key={g}>{g && <div className="sec">{g === 'Management' && !isTop() ? 'My team' : g}</div>}
-              {items.map(([k, label, to]) => { const text = k === 'people' && !isTop() ? 'My team members' : label;
-                // "rest" = every section outside the everyday group; the collapsed strip leaves these out (except the page that is open).
-                return <Link key={k} to={to} data-tip={text} aria-label={text} aria-current={on(k, to) ? 'page' : undefined} className={(g ? 'rest ' : '') + (on(k, to) ? 'active' : '')}>
-                  {on(k, to) && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}
-                  <Ico k={k} /><span className="lab">{text}</span>{cnt[k] ? <span className="cnt">{cnt[k]}</span> : null}</Link>; })}</Fragment>; })}
-          <button type="button" className="more" data-tip="All sections" aria-label="Open the sidebar to see all sections" onClick={() => flip(false)}><Ico k="more" /></button>
+        <m.nav className="nav" layoutScroll aria-label={app ? app.name : 'Apps'}>
+          {/* Like Zoho One (17 Oct 2026): inside an app, only its sections and the 9-dot button back to all apps; on the launcher, the apps. */}
+          <Link to="/" data-tip="All apps" aria-label="All apps" aria-current={path === '/' ? 'page' : undefined} className={path === '/' ? 'active' : ''}>
+            {path === '/' && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="apps" /><span className="lab">All apps</span>{!app && cnt.today ? <span className="cnt">{cnt.today}</span> : null}</Link>
+          {app ? <><div className="sec">{app.name}</div>
+            {app.items.map((k) => { const to = SEC[k].to, text = secLabel(k);
+              return <Link key={k} to={to} data-tip={text} aria-label={text} aria-current={on(k, to) ? 'page' : undefined} className={on(k, to) ? 'active' : ''}>
+                {on(k, to) && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k={k} /><span className="lab">{text}</span>{cnt[k] ? <span className="cnt">{cnt[k]}</span> : null}</Link>; })}</>
+            : <><div className="sec">Apps</div>
+              {myApps().map((x) => { const n = x.items.reduce((t, k) => t + (cnt[k] || 0), 0);
+                return <Link key={x.k} to={SEC[x.items[0]].to} data-tip={x.name} aria-label={x.name}><Ico k={x.icon} /><span className="lab">{x.name}</span>{n ? <span className="cnt">{n}</span> : null}</Link>; })}
+              {can('settings') && <Link to="/settings/me" data-tip="Settings" aria-label="Settings" aria-current={on('settings', '/settings') ? 'page' : undefined} className={on('settings', '/settings') ? 'active' : ''}>
+                {on('settings', '/settings') && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="settings" /><span className="lab">Settings</span></Link>}</>}
         </m.nav>
         <div className="me"><Link to="/settings/me" className="me-who" title="My profile: photo, display name, password"><Avatar u={me} /><div className="grow"><b className="ell">{me.name}</b><div className="faint ell" title={desig(me)}>{desig(me)}</div><div className="faint ell">{me.company}</div></div></Link>
           <div className="me-act"><ThemeToggle label /><button className="btn sm" type="button" onClick={signOut}>Sign out</button></div></div>
