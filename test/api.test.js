@@ -94,7 +94,7 @@ test('advance gate, receipt unlocks project, sign-off makes it live', async () =
   const deal = (await add(bde1, 'deal', { title: 'App – Kaveri', stage: 'won', handoff: { advance: false } })).record;
   const proj = (await add(bde1, 'project', { name: 'App – Kaveri', dealId: deal.id, stage: 'awaiting', deadline: '2026-11-30', templateId: 'pt-amc' })).record;
   const recs0 = (await call('GET', '/bootstrap', null, it0)).body.records;
-  assert.equal(recs0.filter((r) => r.type === 'task' && r.projectId === proj.id).length, 2, 'the template tasks are made at handoff');
+  assert.equal(recs0.filter((r) => r.type === 'task' && r.projectId === proj.id).length, 0, 'no template: IT writes its own tasks (17 Oct 2026)');
   assert.ok(!recs0.some((r) => r.id === deal.id), 'the IT team cannot open the deal');
   assert.equal((await patch(bde1, proj.id, { stage: 'planning' })).status, 403, 'the BDE only views the project after handing it over');
   const blocked = await patch(it0, proj.id, { stage: 'planning' }); assert.equal(blocked.status, 400); assert.match(blocked.body.error, /No advance/);
@@ -788,6 +788,28 @@ test('an interested business on a call becomes the BDE\'s lead at once (Warm, fo
   const r2 = await patch(B, rep.id, { calls: [...r1.body.record.calls, { ...call1, id: 'k2', services: ['website  – 5 PAGES'] }, { id: 'k3', org: 'Quiet Shop', phone: '9000099902', resp: 'Interested' }] });
   assert.equal(r2.status, 200); assert.equal(r2.body.record.calls[1].leadId, leadId, 'the repeat joins the same lead'); assert.equal(r2.body.record.calls[2].leadId, undefined);
   assert.equal((await recs()).filter((r) => r.type === 'lead' && ['9000099901', '9000099902'].includes(r.mobile10)).length, 1);
+});
+
+test('lead rules by service send website enquiries to the chosen BDEs in turn; old template tasks nobody took up are removed by IT', async () => {
+  const db = await getDb();
+  for (const [id, email] of [['u_lr1', 'lr1@test.in'], ['u_lr2', 'lr2@test.in']]) await db.query("insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$2,'bde','sales',$3)", [id, email, hashPassword('password123')]);
+  const B = (await call('POST', '/auth/login', { email: 'lr1@test.in', password: 'password123' })).cookie;
+  assert.equal((await call('PUT', '/settings/leadRules', { value: [{ service: 'X' , bdes: ['u_lr1'] }] }, B)).status, 403, 'a BDE cannot set lead rules');
+  assert.equal((await call('PUT', '/settings/leadRules', { value: [{ service: 'Restaurant POS', bdes: ['u_lr1', 'u_lr2'] }, { service: 'empty', bdes: [] }] }, sm)).status, 200, 'the Sales Manager can');
+  const rows = (await getDb()).query("select value from settings where key = 'leadRules'"); assert.equal((await rows).rows[0].value.length, 1, 'a rule with no BDE is dropped');
+  const owners = [];
+  for (const [n, m] of [['POS one', '9000077771'], ['POS two', '9000077772']]) {
+    const r = await call('POST', '/public/enquiry', { name: n, mobile: m, service: 'restaurant pos', message: 'x' }); assert.equal(r.status, 200, JSON.stringify(r.body));
+    owners.push((await db.query("select data->>'owner' o from records where type = 'lead' and data->>'mobile10' = $1", [m])).rows[0].o);
+  }
+  assert.deepEqual([...owners].sort(), ['u_lr1', 'u_lr2'], 'the two BDEs of the rule, in turn');
+  // Project templates are gone; the steps old templates made and nobody took up are removed by the IT Manager in one go.
+  const p = (await add(it0, 'project', { name: 'Template check', deadline: '2026-12-31' })).record;
+  for (const [title, owner] of [['Design home page', ''], ['Build all pages', 'u_it'], ['Our own task', '']]) await add(it0, 'task', { title, projectId: p.id, team: 'it', status: 'todo', ...(owner ? { owner } : {}) });
+  const mine = async () => (await db.query("select data->>'title' t from records where deleted_at is null and type = 'task' and data->>'projectId' = $1 order by 1", [p.id])).rows.map((r) => r.t);
+  assert.equal((await patch(B, p.id, { _clearTemplate: true })).status, 403);
+  assert.equal((await patch(it0, p.id, { _clearTemplate: true })).status, 200);
+  assert.deepEqual(await mine(), ['Build all pages', 'Our own task'], 'only the old step nobody took up is removed');
 });
 
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {

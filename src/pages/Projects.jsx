@@ -52,10 +52,9 @@ function Board() {
 }
 
 function NewProject({ onClose }) {
-  const nav = useNavigate(), [f, setF] = useState({ name: '', clientId: '', deadline: addDays(today(), 30), template: '' });
+  const nav = useNavigate(), [f, setF] = useState({ name: '', clientId: '', deadline: addDays(today(), 30) });
   async function go() {
-    const tpl = settings().projectTemplates.find((t) => t.id === f.template);
-    const r = await attempt(() => create('project', { name: f.name, clientId: f.clientId, clientName: clientName(f.clientId), stage: 'planning', deadline: f.deadline, start: today(), lead: '', people: [store.me.id], template: tpl?.name || '', templateId: tpl?.id || '' }));
+    const r = await attempt(() => create('project', { name: f.name, clientId: f.clientId, clientName: clientName(f.clientId), stage: 'planning', deadline: f.deadline, start: today(), lead: '', people: [store.me.id] }));
     if (!r) return;
     onClose(); nav('/projects/' + r.record.id);
   }
@@ -63,7 +62,7 @@ function NewProject({ onClose }) {
     <div className="form"><Field label="Project name *" full><In value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
       <Field label="Client (blank for internal work)"><Pick value={f.clientId} onChange={(v) => setF({ ...f, clientId: v })} options={list('client').map((c) => [c.id, c.name, c.city])} blank="Internal" /></Field>
       <Field label="Deadline"><In type="date" value={f.deadline} onChange={(e) => setF({ ...f, deadline: e.target.value })} /></Field>
-      <Field label="Start from template" full><Sel value={f.template} onChange={(v) => setF({ ...f, template: v })} options={settings().projectTemplates.map((t) => [t.id, `${t.name} (${t.tasks.length} tasks)`])} blank="Empty project" /></Field>
+
       <p className="small muted full" style={{ margin: 0 }}>Client projects normally come from a won deal (Deal → Handoff), which also brings the advance rule.</p></div></Modal>;
 }
 
@@ -107,7 +106,8 @@ function ProjectView({ id }) {
       </div></div>}
     <RO when={!edit}>
     {tab === 'tasks' && <div className="stack"><div className="row"><button className="btn primary" type="button" onClick={() => setTask({ preset: { projectId: id, team: 'it', owner: p.lead || store.me.id } })}>+ Task</button>
-      <button className="btn" type="button" onClick={() => setTask({ preset: { projectId: id, team: 'it', owner: p.lead || store.me.id, milestone: true, clientVisible: true } })}>+ Milestone</button></div>
+      <button className="btn" type="button" onClick={() => setTask({ preset: { projectId: id, team: 'it', owner: p.lead || store.me.id, milestone: true, clientVisible: true } })}>+ Milestone</button>
+      {(store.me.isAdmin || ['itmgr', 'itlead', 'ops'].includes(store.me.title)) && <OldTemplateTasks p={p} tasks={tasks} />}</div>
       {tasks.length ? <div className="list">{tasks.sort((a, b) => (a.status === 'done') - (b.status === 'done') || (a.due || '9').localeCompare(b.due || '9')).map((t) => <TaskRow key={t.id} t={t} onOpen={(x) => setTask({ task: x })} />)}</div> : <Empty>No tasks yet.</Empty>}</div>}
     {tab === 'board' && <div className="board"><div className="cols">{TSTATUS.map(([k, l]) => <div className="col" key={k} onDragOver={(e) => e.preventDefault()} onDrop={(e) => edit && attempt(() => update(e.dataTransfer.getData('text'), { status: k }))}>
       <div className="col-h"><b>{l}<span className="num">{tasks.filter((t) => t.status === k).length}</span></b></div>
@@ -191,4 +191,12 @@ function TimeTab({ tasks }) {
   return <div className="grid2"><div className="card stack"><h2>Planned vs actual</h2><div className="stats"><div className="stat"><span className="l">Planned</span><span className="v">{plan} h</span></div><div className={'stat' + (act > plan && plan ? ' warm' : '')}><span className="l">Actual</span><span className="v">{act} h</span></div></div>
     <div className="tbl"><table><thead><tr><th>Task</th><th className="n">Planned</th><th className="n">Actual</th></tr></thead><tbody>{rows.filter((r) => r.spent || r.t.estimate).map((r) => <tr key={r.t.id}><td>{r.t.title}</td><td className="n">{r.t.estimate || '—'}</td><td className="n">{r.spent}</td></tr>)}</tbody></table></div></div>
     <div className="card stack"><h2>Hours by person</h2>{Object.entries(byPerson).map(([u, h]) => <div key={u} className="row"><span className="grow">{uname(u)}</span><span className="num">{h} h</span></div>)}{!Object.keys(byPerson).length && <p className="small muted">Log time from any task.</p>}</div></div>;
+}
+
+// Project templates are gone (17 Oct 2026). The steps the old templates made, still at To do with nobody on them, are removed in one go.
+const oldSteps = () => new Set(['Collect content and logo from client', 'Design home page', 'Design approved by client', 'Build all pages', 'Contact form + WhatsApp button',
+  'Testing on mobile and desktop', 'Website ready for client review', 'Go live + domain connect', ...(settings().projectTemplates || []).flatMap((x) => (x.tasks || []).map((k) => k.title))]);
+function OldTemplateTasks({ p, tasks }) {
+  const OLD_STEPS = oldSteps(), idle = tasks.filter((t) => OLD_STEPS.has(t.title) && t.status === 'todo' && !t.owner && !(t.people || []).length).length;
+  return idle > 0 ? <button className="btn ghost" type="button" onClick={() => attempt(() => update(p.id, { _clearTemplate: true }), `${idle} old template tasks removed.`)}>Remove the {idle} template tasks nobody has taken up</button> : null;
 }

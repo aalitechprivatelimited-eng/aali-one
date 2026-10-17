@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useStore, list, get, create, update, remove, store, http, poll } from '../api.js';
-import { settings, uname, fmtDate, today, addDays, mobile10, isManager, canEdit, scope } from '../lib.js';
+import { useStore, list, get, create, update, remove, store, http, poll, saveSetting } from '../api.js';
+import { settings, uname, fmtDate, today, addDays, mobile10, isManager, canEdit, scope, activeUsers } from '../lib.js';
 import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, attempt, toast, Seg, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
 import { Activities } from '../activity.jsx';
 import { useId } from '../App.jsx';
@@ -38,7 +38,7 @@ export default function Leads() {
 
 function LeadList() {
   const nav = useNavigate();
-  const [f, setF] = useState({ q: '', status: 'open', source: '', owner: '', company: '', score: '' }), [add, setAdd] = useState(false), [imp, setImp] = useState(false);
+  const [f, setF] = useState({ q: '', status: 'open', source: '', owner: '', company: '', score: '' }), [add, setAdd] = useState(false), [imp, setImp] = useState(false), [rules, setRules] = useState(false);
   const rows = list('lead').filter((l) => (f.status === 'open' ? !['converted', 'junk'].includes(l.status) : !f.status || l.status === f.status)
     && (!f.source || l.source === f.source) && byTeam(l.owner, f) && (!f.score || l.score === f.score)
     && (!f.q || `${l.name} ${l.mobile} ${l.company} ${l.service}`.toLowerCase().includes(f.q.toLowerCase())))
@@ -47,7 +47,7 @@ function LeadList() {
   return (
     <>
       <div className="topbar"><h1>{own ? 'My leads & enquiries' : 'Leads & enquiries'} <small>{rows.length} shown</small> <ViewOnly when={!edit} /></h1>
-        <div className="row"><a className="btn" href="/enquire" target="_blank" rel="noreferrer">Website form ↗</a>{edit && <button className="btn" type="button" onClick={() => setImp(true)}>Import from Excel</button>}{edit && <button className="btn primary" type="button" onClick={() => setAdd(true)}>+ New enquiry</button>}</div></div>
+        <div className="row">{(store.me.isAdmin || store.me.title === 'salesmgr') && <button className="btn" type="button" onClick={() => setRules(true)}>Lead rules{settings().leadRules?.length ? ` (${settings().leadRules.length})` : ''}</button>}<a className="btn" href="/enquire" target="_blank" rel="noreferrer">Website form ↗</a>{edit && <button className="btn" type="button" onClick={() => setImp(true)}>Import from Excel</button>}{edit && <button className="btn primary" type="button" onClick={() => setAdd(true)}>+ New enquiry</button>}</div></div>
       <div className="row" style={{ marginBottom: 12 }}>
         <In placeholder="Search name, mobile, company, service" value={f.q} onChange={up('q')} style={{ maxWidth: 280 }} />
         <Sel value={f.status} onChange={up('status')} options={[['open', 'Open leads'], ...Object.entries(STATUS)]} blank="All statuses" style={{ width: 'auto' }} />
@@ -64,6 +64,7 @@ function LeadList() {
       </tbody></table></div> : <Empty>No leads match. Use “+ New enquiry”, import a sheet, or share the website form.</Empty>}
       {add && <NewEnquiry onClose={() => setAdd(false)} />}
       {imp && <ImportLeads onClose={() => setImp(false)} />}
+      {rules && <LeadRules onClose={() => setRules(false)} />}
     </>
   );
 }
@@ -222,4 +223,25 @@ function Convert({ lead, onClose }) {
       </div>
     </Modal>
   );
+}
+
+// Lead rules by service (17 Oct 2026): an enquiry from the website or from management for this service goes to these BDEs, in turn.
+// A BDE's own find stays theirs and a known client stays with their BDE; with no rule, every BDE in turn. Sales Manager and admins.
+export function LeadRules({ onClose }) {
+  const [rows, setRows] = useState(() => structuredClone(settings().leadRules || [])), [busy, setBusy] = useState(false);
+  const bdeList = activeUsers().filter((u) => u.title === 'bde'), set = (i, v) => setRows(rows.map((r, j) => (j === i ? { ...r, ...v } : r)));
+  async function save() { setBusy(true); if (await attempt(() => saveSetting('leadRules', rows.filter((r) => r.service.trim() && r.bdes.length)), 'Lead rules saved.')) onClose(); setBusy(false); }
+  return <Modal wide title="Lead rules by service" onClose={onClose} footer={<><span className="small muted grow">Only enquiries that are shared out (website form, management). A BDE's own find stays theirs; a known client stays with their BDE.</span>
+    <button className="btn primary" type="button" disabled={busy} onClick={save}>Save rules</button></>}>
+    <div className="stack">
+      {!rows.length && <p className="muted" style={{ margin: 0 }}>No rules yet: every enquiry goes to the BDEs in turn.</p>}
+      {rows.map((r, i) => <div key={i} className="card stack gap4">
+        <div className="row"><In value={r.service} onChange={(e) => set(i, { service: e.target.value })} placeholder="Service, e.g. Software / ERP" list="rule-services" style={{ flex: '1 1 220px' }} aria-label="Service" />
+          <button className="btn ghost sm" type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))}>Remove</button></div>
+        <div className="row small" style={{ gap: 6 }}><span className="muted">Goes to{r.bdes.length > 1 ? ', in turn' : ''}:</span>
+          {bdeList.map((u) => { const on = r.bdes.includes(u.id); return <button key={u.id} type="button" className={'chip' + (on ? ' on' : '')} aria-pressed={on} onClick={() => set(i, { bdes: on ? r.bdes.filter((x) => x !== u.id) : [...r.bdes, u.id] })}>{on ? '✓ ' : ''}{u.name}</button>; })}</div>
+      </div>)}
+      <datalist id="rule-services">{services().map((x) => <option key={x} value={x} />)}</datalist>
+      <div><button className="btn sm" type="button" onClick={() => setRows([...rows, { service: '', bdes: [] }])}>+ Add a rule</button></div>
+    </div></Modal>;
 }

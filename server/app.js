@@ -519,10 +519,12 @@ export async function handle(req, res) {
     // ---------- admin ----------
     m = path.match(/^\/settings\/(\w+)$/);
     if (m && method === 'PUT') {
-      if (m[1] === 'payroll' ? !canEdit(user, 'payroll') : m[1] === 'leadSeesReports' ? user.title !== 'ops' : m[1] === 'waReports' ? !(admin || user.title === 'ops') : !admin) throw new Rule(m[1] === 'payroll' ? 'Payroll rules are set by HR.' : m[1] === 'leadSeesReports' ? 'Only the Operations Manager can change this switch.' : 'Only an admin can change settings.', 403);
+      if (m[1] === 'payroll' ? !canEdit(user, 'payroll') : m[1] === 'leadSeesReports' ? user.title !== 'ops' : m[1] === 'waReports' ? !(admin || user.title === 'ops') : m[1] === 'leadRules' ? !(admin || user.title === 'salesmgr') : !admin) throw new Rule(m[1] === 'payroll' ? 'Payroll rules are set by HR.' : m[1] === 'leadSeesReports' ? 'Only the Operations Manager can change this switch.' : 'Only an admin can change settings.', 403);
       if (!SETTING_KEYS.includes(m[1])) throw new Rule('Unknown setting.');
       if (m[1] === 'agreements' && user.title !== 'ops') throw new Rule('The standard wording of agreements is set by the Operations Manager.', 403);
       const b = await readBody(req); if (m[1] === 'payroll') b.value = cleanRules(b.value);
+      if (m[1] === 'leadRules') b.value = (Array.isArray(b.value) ? b.value : []).slice(0, 40).map((r) => ({ service: String(r?.service || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+        bdes: (Array.isArray(r?.bdes) ? r.bdes : []).map((x) => String(x).slice(0, 40)).filter((x) => /^[\w-]+$/.test(x)).slice(0, 20) })).filter((r) => r.service && r.bdes.length);
       const before = m[1] === 'business' ? await getSetting(db, 'business', DEFAULT_SETTINGS.business) : null;
       await setSetting(db, m[1], b.value);
       if (before) { // what changed in the business details; the bank / UPI / GST details printed on papers are written out and management is told

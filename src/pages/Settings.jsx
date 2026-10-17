@@ -20,11 +20,11 @@ export default function Settings() {
   return <>
     <div className="topbar"><h1>Settings</h1></div>
     <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{people && <L to="people">{top ? 'People & teams' : 'My team members'}</L>}{top && <L to="access">Who can see what</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales & report setup</L>}
-      {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{admin && <L to="projects">Project templates</L>}{top && <L to="connections">Connections</L>}
+      {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{top && <L to="connections">Connections</L>}
       {top && <L to="audit">Audit log</L>}{top && <L to="staff">Staff register</L>}{admin && <L to="trash">Recycle bin</L>}{admin && <L to="data">Sample data</L>}<L to="help">Help</L></div>
     <Routes>
       <Route path="me" element={<Me />} /><Route path="people" element={only(people, <People />)} /><Route path="access" element={only(top, <AccessChart />)} /><Route path="business" element={only(admin, <Business />)} /><Route path="sales" element={only(admin, <Sales />)} />
-      <Route path="templates" element={only(admin, <Templates />)} /><Route path="plans" element={only(admin, <Plans />)} /><Route path="projects" element={only(admin, <ProjTemplates />)} /><Route path="connections" element={only(top, <Connections />)} />
+      <Route path="templates" element={only(admin, <Templates />)} /><Route path="plans" element={only(admin, <Plans />)} /><Route path="connections" element={only(top, <Connections />)} />
       <Route path="audit" element={only(top, <Audit />)} /><Route path="staff" element={only(top, <Staff />)} /><Route path="trash" element={only(admin, <Trash />)} /><Route path="data" element={only(admin, <Data />)} /><Route path="help" element={<Help />} /><Route path="payslip/:month" element={<MyPayslip />} /><Route path="*" element={<Navigate to="me" replace />} />
     </Routes>
   </>;
@@ -315,31 +315,6 @@ function Plans() {
   </div>;
 }
 
-function ProjTemplates() {
-  const [p, setP, save] = useDraft('projectTemplates');
-  const toText = (ts) => ts.map((t) => `${t.days} | ${t.title}${t.milestone ? ' | milestone' : ''}`).join('\n');
-  const fromText = (txt) => txt.split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((x) => x[1]).map(([d, title, m]) => ({ days: +d || 0, title, milestone: /mile/i.test(m || '') }));
-  return <div className="card stack" style={{ maxWidth: 820 }}><h2>Project templates</h2><p className="small muted" style={{ margin: 0 }}>Each line: <code>day from start | task | milestone (optional)</code>. Picked at handoff; tasks are created with due dates.</p>
-    {p.map((x, i) => <div key={x.id} className="stack gap4"><In value={x.name} onChange={(e) => setP(p.map((y, j) => (j === i ? { ...y, name: e.target.value } : y)))} />
-      <Area defaultValue={toText(x.tasks)} onBlur={(e) => setP(p.map((y, j) => (j === i ? { ...y, tasks: fromText(e.target.value) } : y)))} style={{ fontFamily: 'var(--num)', fontSize: 12, minHeight: 140 }} /></div>)}
-    <div className="row"><button className="btn sm" type="button" onClick={() => setP([...p, { id: 'pt-' + Date.now().toString(36), name: 'New template', tasks: [{ days: 1, title: 'First task' }] }])}>+ Template</button><button className="btn primary" type="button" onClick={save}>Save</button></div></div>;
-}
-
-const CONNECT = [
-  ['More automatic WhatsApp', 'Daily lists, payment reminders and follow-ups sent by themselves (daily reports already go – see WhatsApp above).', 'The same WhatsApp Cloud API link, and one more Meta-approved template for each kind of message. Meta charges per message.'],
-  ['Phone calls (click to call, recordings)', 'Tap a number to call; the call is logged with its length and recording.', 'A cloud telephony provider (e.g. Exotel, Knowlarity, MyOperator) and their API key.'],
-  ['Email enquiries → leads', 'Emails to info@ become leads automatically; send and track email from Aali One.', 'Access to the company mailbox (IMAP / Google Workspace / Zoho Mail) or an email service.'],
-  ['Facebook / Instagram lead ads', 'People who fill an ad form become leads with source “Facebook / Instagram”.', 'A Meta Business account with lead ads and a connected page.'],
-  ['Website chat', 'A chat box on aaliconssultancy.com; chats become leads.', 'Adding one script to the website. (The website enquiry form already works: /enquire.)'],
-  ['Visiting card scanner', 'Photo of a business card fills the enquiry form.', 'An OCR service (e.g. Google Vision) and its API key.'],
-  ['Google / Outlook calendar', 'Meetings and deadlines show in your phone calendar.', 'Google Workspace or Microsoft 365 access.'],
-  ['Tally / Zoho Books', 'Receipts and invoices go straight into the accounts.', 'Tally connector or Zoho Books API access. (CSV export already works: Payments → Export.)'],
-  ['Online payment links (UPI / cards)', 'Send a pay link; the receipt is made by itself when paid.', 'A payment gateway account (Razorpay / Cashfree).'],
-  ['E-invoicing (IRN)', 'Tax invoices registered with the GST portal.', 'Needed only above ₹5 crore turnover; GST IRP credentials. CA to confirm.'],
-  ['AI assistant', 'Best time to call, lead scoring and email drafts.', 'Enough past data (months of use) and an AI service key.'],
-  ['Single sign-on and 2-step login', 'Sign in with Google and a code on the phone.', 'Google Workspace or an authenticator app setup.'],
-  ['Offline use', 'Keep working without internet; sync later.', 'Planned for the VPS version.'],
-];
 function Connections() {
   return <div className="stack"><WhatsApp /><div className="banner info">These features need an outside account before they can work. Nothing here is switched on yet. Everything else in Aali One works today.</div>
     <div className="grid2">{CONNECT.map(([t, what, need]) => <div key={t} className="card stack gap4"><div className="row between"><h3>{t}</h3><Pill k="warn">Connect later</Pill></div><p style={{ margin: 0 }}>{what}</p><p className="small muted" style={{ margin: 0 }}><b>Needs:</b> {need}</p></div>)}</div></div>;

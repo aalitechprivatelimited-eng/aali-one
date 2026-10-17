@@ -144,13 +144,21 @@ async function leadIntake(t, data, user, sample) {
   if (known) { data.owner = data.owner || known.data.owner; data.existingClient = true; data.clientId = known.type === 'client' ? known.id : known.data.clientId || ''; }
   // The sales team finds its own potential clients: a lead a salesperson enters is theirs. Only enquiries that come from outside
   // (the website form, or entered by management) are shared out in turns.
-  else if (!data.owner) data.owner = user && user.team === 'sales' ? user.id : (await holderOf(t, m)) || await roundRobin(t); // the BDE who already calls this business keeps it
+  else if (!data.owner) { // the BDE who already calls this business keeps it; then the lead rule for its service; then every BDE in turn
+    data.owner = user && user.team === 'sales' ? user.id : (await holderOf(t, m)) || '';
+    if (!data.owner) { const rule = (await getSetting(t, 'leadRules', [])).find((r) => Array.isArray(r?.bdes) && r.bdes.length && sameSvc([r.service], svcs));
+      if (rule) { data.owner = await roundRobin(t, rule.bdes); if (data.owner) data.byRule = rule.service; } }
+    data.owner ||= await roundRobin(t);
+  }
   data.status ||= 'new'; data.score ||= ''; data.enquiries = [enquiry]; data.followUp ||= today();
-  log(data, user?.id || null, known ? `Existing client asked about ${svcs.join(', ')}; given to their BDE` : data.owner === user?.id ? `New potential client (${enquiry.source}); found by ${user.name}` : `New enquiry (${enquiry.source}); auto-assigned`);
+  log(data, user?.id || null, known ? `Existing client asked about ${svcs.join(', ')}; given to their BDE` : data.owner === user?.id ? `New potential client (${enquiry.source}); found by ${user.name}`
+    : data.byRule ? `New enquiry (${enquiry.source}); given by the lead rule for ${data.byRule}` : `New enquiry (${enquiry.source}); auto-assigned`);
   return { merged: false };
 }
-async function roundRobin(t) {
-  const bdes = (await t.query("select id from users where active and title = 'bde' order by created_at")).rows.map((r) => r.id);
+// among: only these BDEs (a lead rule); none of them active → every BDE in turn, as before.
+async function roundRobin(t, among = null) {
+  let bdes = (await t.query("select id from users where active and removed_at is null and title = 'bde' order by created_at")).rows.map((r) => r.id);
+  if (among) { const some = bdes.filter((id) => among.includes(id)); if (!some.length) return ''; bdes = some; }
   if (!bdes.length) return '';
   const rr = await getSetting(t, 'rr', {});
   bdes.sort((a, b) => (rr[a] || '').localeCompare(rr[b] || ''));
@@ -418,17 +426,6 @@ export async function afterCreate(t, type, id, data, user, sample) {
     if (deal && type === 'quote') { deal.data.quoteNo = data.number; deal.data.quoteId = id; deal.data.value = data.totals.total; log(deal.data, me, `Quotation ${data.number} made (${data.totals.total})`); await putRec(t, deal, user); }
   }
   if (type === 'receipt') await applyReceipt(t, id, data, user);
-  // Starting from a template: the server makes the tasks, so a BDE handing a deal over needs no access to IT's tasks.
-  if (type === 'project' && data.templateId) {
-    const tpl = (await getSetting(t, 'projectTemplates', DEFAULT_SETTINGS.projectTemplates)).find((x) => x.id === data.templateId);
-    // A template's day counts are for a typical project. The steps are spread between the start and the delivery date in the same order
-    // and proportions, so the last one falls on the delivery date and no step ever lands after it (the user's report: Guntur 99 Store was
-    // due on 10 October, and its template steps ran to 21 October). Without a delivery date the day counts are used as they are.
-    const steps = tpl?.tasks || [], start = data.start || today(), end = data.deadline && data.deadline > start ? data.deadline : '';
-    const last = Math.max(1, ...steps.map((k) => +k.days || 0)), span = end ? Math.round((Date.parse(end) - Date.parse(start)) / 864e5) : 0;
-    for (const k of steps) await insertRec(t, 'task', { title: k.title, projectId: id, due: end ? addDays(start, Math.round(span * (+k.days || 0) / last)) : addDays(start, +k.days || 0),
-      milestone: !!k.milestone, team: 'it', status: 'todo', priority: 'medium' }, user, { sample });
-  }
   if (type === 'signoff') {
     const p = await getRec(t, data.projectId, 'project');
     if (p) { const go = p.data.stage !== 'live'; p.data.signoffId = id; if (go) { p.data.stage = 'live'; p.data.liveAt = today(); }
@@ -755,6 +752,10 @@ async function applyReceipt(t, id, r, user) {
   }
 }
 
+// The steps the old project templates made (5-page website, mobile app, AMC setup) – only to recognise them for removal.
+export const OLD_TEMPLATE_STEPS = new Set(['Collect content and logo from client', 'Design home page', 'Design approved by client', 'Build all pages', 'Contact form + WhatsApp button',
+  'Testing on mobile and desktop', 'Website ready for client review', 'Go live + domain connect', ...DEFAULT_SETTINGS.projectTemplates.flatMap((x) => (x.tasks || []).map((k) => k.title))]);
+
 // ---------- update ----------
 // ---------- agreements and quotations: a manager makes them, a BDE takes them to the client (the user, 16 Oct 2026) ----------
 // draft → submitted and given to a BDE ('sent') → the client asks for changes ('changes') → a manager changes it: a new version, which
@@ -1000,6 +1001,19 @@ export async function beforeUpdate(t, rec, next, user) {
       break;
     }
     case 'project': {
+      // Project templates are gone (the user, 17 Oct 2026: IT writes its own tasks). The steps the old templates made and that nobody has
+      // taken up can be removed in one go by the IT Manager or the Team Lead.
+      const clearTpl = next._clearTemplate === true; delete next._clearTemplate; delete next.templateId;
+      if (clearTpl) {
+        if (!(user.is_admin || ['itmgr', 'itlead', 'ops'].includes(user.title))) throw new Rule('The IT Manager or the Team Lead removes these tasks.', 403);
+        for (const k of Object.keys(next)) delete next[k]; Object.assign(next, JSON.parse(JSON.stringify(prev)));
+        const gone = (await t.query("select id, data from records where deleted_at is null and type = 'task' and data->>'projectId' = $1", [rec.id])).rows
+          .filter((r) => OLD_TEMPLATE_STEPS.has(r.data.title) && r.data.status === 'todo' && !r.data.owner && !(r.data.people || []).length);
+        if (!gone.length) throw new Rule('No template task is left that nobody has taken up.');
+        await t.query("update records set deleted_at = now(), deleted_by = $2, delete_reason = 'Old template task removed by IT' where id = any($1)", [gone.map((r) => r.id), me]);
+        log(next, me, `${gone.length} old template tasks nobody had taken up were removed`);
+        break;
+      }
       // Set by the server only: the advance, the deal it came from, the client's sign-off and its time, the progress link (security review).
       for (const k of ['advance', 'dealId', 'signoffId', 'liveAt', 'progressToken']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
       if (next.stage !== prev.stage && WORK.includes(next.stage) && next.dealId && !next.startApproved) {

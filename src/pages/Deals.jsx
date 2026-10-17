@@ -181,7 +181,7 @@ function ServicesMode({ d }) {
 function Handoff({ d, set, projects, pays, received, client }) {
   const project = projects[0], many = svcList(d).length > 1;
   // Several services: each its own deadline, and IT gets one project for each (AS Group: the POS by 21 Oct, the websites by 1 Nov).
-  const nav = useNavigate(), h = d.handoff || {}, [f, setF] = useState({ scope: h.scope || d.notes || '', deadline: h.deadline || addDays(today(), 30), agreement: !!h.agreement, template: settings().projectTemplates[0]?.id || '',
+  const nav = useNavigate(), h = d.handoff || {}, [f, setF] = useState({ scope: h.scope || d.notes || '', deadline: h.deadline || addDays(today(), 30), agreement: !!h.agreement,
     dates: Object.fromEntries(svcList(d).map((x) => [x, h.dates?.[x] || h.deadline || addDays(today(), 30)])) });
   const [pay, setPay] = useState(null);
   if (d.stage !== 'won') return <Empty>The handoff to IT opens when the deal is marked Won.</Empty>;
@@ -189,11 +189,11 @@ function Handoff({ d, set, projects, pays, received, client }) {
     if (!f.scope.trim()) return toast('Write what was promised (scope) first, so IT knows what to build.', true);
     const last = many ? Object.values(f.dates).sort().at(-1) : f.deadline;
     await set({ handoff: { ...h, scope: f.scope, deadline: last, agreement: f.agreement, ...(many ? { dates: f.dates } : {}) } });
-    const tpl = settings().projectTemplates.find((t) => t.id === f.template), who = client?.name || d.contactName || d.title;
+    const who = client?.name || d.contactName || d.title; // the tasks are IT's to decide: no template at the handover (17 Oct 2026)
     let p = null;
     for (const [name, deadline] of many ? svcList(d).map((x) => [`${x} – ${who}`, f.dates[x]]) : [[d.title, f.deadline]]) {
       const r = await attempt(() => create('project', { name, clientId: d.clientId, clientName: client?.name || '', dealId: d.id, stage: h.advance ? 'planning' : 'awaiting', deadline, start: today(),
-        scope: f.scope, lead: '', people: [d.owner, ...(d.people || [])].filter(Boolean), priority: !!d.priority, template: tpl?.name || '', templateId: tpl?.id || '' }));
+        scope: f.scope, lead: '', people: [d.owner, ...(d.people || [])].filter(Boolean), priority: !!d.priority }));
       if (!r) return; p ||= r;
     }
     if (canEdit('money') && !h.advance && !pays.some((x) => x.kind === 'advance')) await create('payment', { title: 'Advance', kind: 'advance', clientId: d.clientId, dealId: d.id, amount: Math.round((+d.value || 0) / 2), due: addDays(today(), 2), owner: d.owner, repeat: 'none' });
@@ -206,7 +206,7 @@ function Handoff({ d, set, projects, pays, received, client }) {
       <Field label="What exactly was promised (scope) *"><Area style={{ minHeight: 120 }} value={f.scope} onChange={(e) => setF({ ...f, scope: e.target.value })} placeholder="Pages, features, and what is NOT included" disabled={!!project} /></Field>
       {many && <div className="stack gap4"><b className="small">Deadline promised for each service – IT gets one project for each</b>{svcList(d).map((x) => <Field key={x} label={x}><In type="date" value={f.dates[x] || ''} onChange={(e) => setF({ ...f, dates: { ...f.dates, [x]: e.target.value } })} disabled={!!project} /></Field>)}</div>}
       <div className="form">{!many && <Field label="Deadline promised to client"><In type="date" value={f.deadline} onChange={(e) => setF({ ...f, deadline: e.target.value })} disabled={!!project} /></Field>}
-        <Field label="Project template"><Sel value={f.template} onChange={(v) => setF({ ...f, template: v })} options={settings().projectTemplates.map((t) => [t.id, t.name])} blank="No template" disabled={!!project} /></Field></div>
+</div>
       <label className="check"><input type="checkbox" checked={f.agreement} onChange={(e) => setF({ ...f, agreement: e.target.checked })} /> Service agreement signed with the client</label>
       <div className={'banner ' + (h.advance ? 'ok' : '')}>{h.advance ? 'Advance received – IT can start work.' : 'No advance yet. IT can see the project but cannot start work (not even planning) until the advance receipt is made.'}</div>
       {!project && <button className="btn primary" type="button" onClick={handOver}>Save & hand over to IT</button>}

@@ -81,6 +81,8 @@ export const DEFAULT_SETTINGS = {
   industries: ['School / college', 'Hospital / clinic', 'Pharmacy', 'Hotel / restaurant', 'Retail shop', 'Textiles / garments', 'Real estate / builder', 'Manufacturing', 'Hostel / PG',
     'Salon / beauty', 'Gym / fitness', 'Jewellery', 'Automobile', 'Travel / transport', 'Finance / insurance', 'Professional services', 'Government / NGO', 'Other'],
   escalateDays: 3,
+  // Lead rules by service (17 Oct 2026): an enquiry for this service goes to these BDEs, in turn. [{ service, bdes: [user ids] }]
+  leadRules: [],
   templates: [
     { id: 'tp-first', name: 'First follow-up', text: 'Hi {client}, this is {me} from Aali Conssultancy. Thank you for your enquiry about {service}. When is a good time to talk?' },
     { id: 'tp-quote', name: 'Quotation sent', text: 'Hi {client}, please find our quotation {quote} for {service} (total {amount}). Happy to answer any questions. – {me}, Aali Conssultancy' },
