@@ -129,6 +129,17 @@ async function roundRobin(t) {
   return bdes[0];
 }
 
+// ---------- B2B / B2C tax invoices (the user, 17 Oct 2026) ----------
+export const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+// B2B: the client is GST-registered, so its GSTIN is on the invoice. B2C: an unregistered buyer – name and place of supply, no GSTIN.
+function invoiceParty(d) {
+  d.gstin = String(d.gstin || '').trim().toUpperCase(); d.kind = d.kind === 'b2c' ? 'b2c' : d.kind === 'b2b' ? 'b2b' : d.gstin ? 'b2b' : 'b2c';
+  if (!String(d.clientName || '').trim()) throw new Rule('Enter the client name.');
+  if (d.kind === 'b2b' && !GSTIN.test(d.gstin)) throw new Rule('A B2B invoice needs the client\'s GSTIN (15 characters, e.g. 37AAACL1234M1Z2).');
+  if (d.kind === 'b2c') delete d.gstin;
+  if (!String(d.placeOfSupply || '').trim()) throw new Rule('Enter the place of supply (the client\'s state).');
+}
+
 // ---------- create ----------
 export async function beforeCreate(t, type, data, user, sample) {
   const me = user?.id || null;
@@ -147,7 +158,7 @@ export async function beforeCreate(t, type, data, user, sample) {
       await quoteApproval(t, data, user, null, sample); break;
     }
     case 'invoice': {
-      const fy = fyLabel(data.date || today()), b = await brandSetting(t);
+      const fy = fyLabel(data.date || today()), b = await brandSetting(t); invoiceParty(data);
       data.seq = await counter(t, 'invoice:' + fy); data.number = `${b.invoicePrefix || 'AI'}/${fy}/${String(data.seq).padStart(3, '0')}`;
       data.totals = docTotals(data); data.status ||= 'issued'; break;
     }
@@ -763,7 +774,7 @@ export async function beforeUpdate(t, rec, next, user) {
       if (next._askApproval) { delete next._askApproval; await askDiscount(t, rec.id, next, user, rec.sample); }
       if (next.dealId) { const deal = await getRec(t, next.dealId, 'deal'); if (deal) { deal.data.value = next.totals.total; deal.data.quoteNo = next.number; await putRec(t, deal, user); } }
       break;
-    case 'invoice': next.number = prev.number; next.seq = prev.seq; next.totals = docTotals(next); break;
+    case 'invoice': next.number = prev.number; next.seq = prev.seq; invoiceParty(next); next.totals = docTotals(next); break;
     case 'receipt':
       if (next.date !== prev.date) throw new Rule(`The date is part of receipt number ${prev.number} and can't change. Delete it with a reason and make a new one.`);
       next.number = prev.number; next.seq = prev.seq; next.totals = receiptTotals(next); break;

@@ -663,6 +663,23 @@ test('agreements: the Operations and Sales Managers make them, only Operations m
   assert.equal((await call('POST', '/records/' + sa.id + '/restore', null, OPS)).status, 200);
 });
 
+test('tax invoices are B2B (the client\'s real GSTIN) or B2C (no GSTIN); both take the next number of the one series', async () => {
+  const db = await getDb();
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_invops','invops@test.in','invops','ops','management',$1)", [hashPassword('password123')]);
+  const O = (await call('POST', '/auth/login', { email: 'invops@test.in', password: 'password123' })).cookie;
+  const line = { date: '2025-06-01', items: [{ desc: 'Website design', qty: 1, rate: 20000 }], taxMode: 'intra', taxRate: 18, discountType: 'none', roundOff: true };
+  const mk = (data) => call('POST', '/records', { type: 'invoice', data: { ...line, ...data } }, O);
+  assert.equal((await mk({ kind: 'b2b', clientName: 'X', gstin: '12345', placeOfSupply: 'Andhra Pradesh' })).status, 400, 'B2B needs a real GSTIN');
+  assert.equal((await mk({ kind: 'b2c', clientName: 'Ravi Kumar', placeOfSupply: '' })).status, 400, 'the place of supply is needed');
+  const b2b = await mk({ kind: 'b2b', clientName: 'Lakshmi Traders', gstin: '37aaacl1234m1z2', placeOfSupply: 'Andhra Pradesh' }); assert.equal(b2b.status, 200, JSON.stringify(b2b.body));
+  assert.equal(b2b.body.record.kind, 'b2b'); assert.equal(b2b.body.record.gstin, '37AAACL1234M1Z2'); assert.match(b2b.body.record.number, /\/2025-26\/001$/);
+  const b2c = await mk({ kind: 'b2c', clientName: 'Ravi Kumar', gstin: '37AAACL1234M1Z2', placeOfSupply: 'Andhra Pradesh' }); assert.equal(b2c.status, 200, JSON.stringify(b2c.body));
+  assert.equal(b2c.body.record.kind, 'b2c'); assert.equal(b2c.body.record.gstin, undefined, 'a B2C invoice carries no GSTIN'); assert.match(b2c.body.record.number, /\/2025-26\/002$/, 'one series for both');
+  const old = await mk({ clientName: 'Old Client', gstin: '37AAACL1234M1Z2', placeOfSupply: 'Andhra Pradesh' }); assert.equal(old.body.record.kind, 'b2b', 'no kind given: B2B when a GSTIN is on it');
+  const ch = await call('PATCH', '/records/' + b2b.body.record.id, { data: { ...b2b.body.record, kind: 'b2c' } }, O); assert.equal(ch.status, 200, JSON.stringify(ch.body));
+  assert.equal(ch.body.record.gstin, undefined); assert.equal(ch.body.record.number, b2b.body.record.number, 'the number stays');
+});
+
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {
   const { setHrmSource } = await import('../server/hrm.js'), { PGlite } = await import('@electric-sql/pglite');
   const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;

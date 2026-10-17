@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom'
 import { useStore, list, get, create, update, store } from '../api.js';
 import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney, canEdit, csvCell } from '../lib.js';
 import { receiptTotals, docTotals, fyLabel } from '../../shared/money.js';
-import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
+import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs, Seg, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
 import { ReceiptSheet, QuoteSheet } from '../doc.jsx';
 
 export default function Payments() {
@@ -92,8 +92,8 @@ function Export() {
     <div className="row"><Field label="From"><In type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field><Field label="To"><In type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field></div>
     <div className="row"><button className="btn" type="button" onClick={() => dl(`receipts_${from}_${to}.csv`, [['Receipt No', 'Date', 'Payer', 'GSTIN', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total', 'Received', 'Balance', 'Mode', 'Reference'],
       ...list('receipt').filter((r) => inRange(r.date)).map((r) => [r.number, r.date, r.payerName, r.payerGstin, r.totals.subtotal, r.totals.cgst, r.totals.sgst, r.totals.igst, r.totals.total, r.totals.received, r.totals.balance, r.mode, r.reference])])}>Download receipts</button>
-      <button className="btn" type="button" onClick={() => dl(`invoices_${from}_${to}.csv`, [['Invoice No', 'Date', 'Client', 'GSTIN', 'Taxable', 'CGST', 'SGST', 'IGST', 'Round off', 'Total'],
-        ...list('invoice').filter((r) => inRange(r.date)).map((r) => [r.number, r.date, r.clientName, r.gstin, r.totals.taxable, r.totals.cgst, r.totals.sgst, r.totals.igst, r.totals.roundOff, r.totals.total])])}>Download invoices</button></div>
+      <button className="btn" type="button" onClick={() => dl(`invoices_${from}_${to}.csv`, [['Invoice No', 'Type', 'Date', 'Client', 'GSTIN', 'Taxable', 'CGST', 'SGST', 'IGST', 'Round off', 'Total'],
+        ...list('invoice').filter((r) => inRange(r.date)).map((r) => [r.number, gstrType(r), r.date, r.clientName, r.gstin || '', r.totals.taxable, r.totals.cgst, r.totals.sgst, r.totals.igst, r.totals.roundOff, r.totals.total])])}>Download invoices</button></div>
     <div className="banner info">A direct connection to Tally / Zoho Books can be switched on later (Settings → Connections).</div></div>;
 }
 
@@ -146,6 +146,10 @@ function ReceiptEditor({ id }) {
   </>;
 }
 
+// B2B (the client's GSTIN is on the invoice) or B2C (an unregistered buyer) – the user, 17 Oct 2026. Older invoices: B2B when a GSTIN is on them.
+const kindOf = (q) => (q.kind === 'b2b' || q.kind === 'b2c' ? q.kind : q.gstin ? 'b2b' : 'b2c');
+// For the CA's GSTR-1: B2B, B2C large (inter-state above ₹1,00,000) or B2C small.
+const gstrType = (r) => (kindOf(r) === 'b2b' ? 'B2B' : r.taxMode === 'inter' && (r.totals?.total || 0) > 100000 ? 'B2CL' : 'B2CS');
 function InvoiceEditor({ id }) {
   const nav = useNavigate(), [sp] = useSearchParams(), saved = id ? get(id) : null;
   const [q, setQ] = useState(() => {
@@ -167,9 +171,10 @@ function InvoiceEditor({ id }) {
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
       <RO when={!canEdit('money')}><div className="stack"><div className="card form">
         {!saved && <Field label="Copy from quotation" full><Sel value={q.quoteId} onChange={(v) => nav('/payments/invoice/new?quote=' + v)} options={list('quote').map((x) => [x.id, `${x.number} – ${x.clientName}`])} blank="None" /></Field>}
-        <Field label="Client"><In value={q.clientName || ''} onChange={up('clientName')} /></Field><Field label="GSTIN"><In value={q.gstin || ''} onChange={up('gstin')} /></Field>
+        <Field label="Kind of invoice" full hint={kindOf(q) === 'b2b' ? 'The client is GST-registered: its GSTIN goes on the invoice.' : 'An unregistered buyer (a person or a small shop): no GSTIN.'}><Seg value={kindOf(q)} onChange={(v) => setQ({ ...q, kind: v })} options={[['b2b', 'B2B – has GSTIN'], ['b2c', 'B2C – no GSTIN']]} /></Field>
+        <Field label="Client *"><In value={q.clientName || ''} onChange={up('clientName')} /></Field>{kindOf(q) === 'b2b' && <Field label="Client's GSTIN *"><In value={q.gstin || ''} onChange={(e) => setQ({ ...q, gstin: e.target.value.toUpperCase() })} maxLength={15} /></Field>}
         <Field label="Date"><In type="date" value={q.date} onChange={up('date')} disabled={!!saved} /></Field><Field label="Due date"><In type="date" value={q.dueDate} onChange={up('dueDate')} /></Field>
-        <Field label="Place of supply"><In value={q.placeOfSupply || ''} onChange={up('placeOfSupply')} /></Field>
+        <Field label="Place of supply *" hint="The client's state"><In value={q.placeOfSupply || ''} onChange={up('placeOfSupply')} /></Field>
         <Field label="GST"><Sel value={q.taxMode} onChange={up('taxMode')} options={[['intra', 'CGST + SGST'], ['inter', 'IGST'], ['export', 'Export (LUT)'], ['none', 'No GST']]} /></Field>
         <Field label="Address" full><Area value={q.address || ''} onChange={up('address')} /></Field></div>
         <div className="card stack"><h3>Lines</h3>{q.items.map((it, i) => <div key={i} className="form"><Field label="Description" full><In value={it.desc} onChange={(e) => item(i, 'desc', e.target.value)} /></Field>
