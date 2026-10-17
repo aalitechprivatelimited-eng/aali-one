@@ -6,6 +6,7 @@ import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSwe
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP, TITLES } from '../shared/defaults.js';
 import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE } from '../shared/access.js';
 import { payslipPdf, payslipsZip, slipName } from './payslip-pdf.js';
+import { readDocument, extract } from './importdoc.js';
 import { hrmConnected, hrmMonth, hrmPeople, hrmEmailOf, hrmEnv, hrmFind } from './hrm.js';
 import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE, REPORT_BUTTON, TEMPLATE_SAMPLES } from './whatsapp.js';
 // WhatsApp sending: in the background on the VPS; waited for on Vercel, which may stop a function once it has answered (server/whatsapp.js).
@@ -356,6 +357,17 @@ export async function handle(req, res) {
       }
       await audit(db, user, { id: rec.id, type: 'payrun' }, 'download', `All payslips (${(rec.data.items || []).length} PDFs), ${label}`);
       return send(res, 200, await payslipsZip(run, rec.data.items || [], biz), { 'content-type': 'application/zip', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`Payslips ${label}.zip`)}` });
+    }
+    // An old document read for checking (the user, 17 Oct 2026): the Word file or a PDF saved from Word (no OCR). Nothing is saved here – the person checks the details and then saves the record, which carries the file (server/logic.js).
+    if (path === '/imports/read' && method === 'POST') {
+      const b = await readBody(req), kind = ['service', 'closure', 'quote', 'invoice'].includes(b.kind) ? b.kind : '';
+      const may = kind === 'closure' ? user.title === 'ops' || user.is_admin : kind === 'service' ? canEdit(user, 'agreements') : kind === 'quote' ? canEdit(user, 'quotes') : kind === 'invoice' ? canEdit(user, 'money') : false;
+      if (!may) throw new Rule('Your access does not allow adding this kind of document.', 403);
+      const f = (await db.query('select id, name, mime, data from files where id = $1 and created_by = $2', [String(b.fileId || '').slice(0, 40), user.id])).rows[0];
+      if (!f) throw new Rule('Upload the document again.', 404);
+      let r; try { r = await readDocument(Buffer.from(f.data), f.mime, f.name); } catch (e) { throw new Rule(e instanceof Rule ? e.message : `This file could not be read: ${String(e.message || e).slice(0, 120)}`); }
+      const biz = await getSetting(db, 'business', DEFAULT_SETTINGS.business), x = extract(kind, r.text, { ownGstin: biz.gstin });
+      return send(res, 200, { how: r.how, pages: r.pages || 0, of: r.of || 0, text: r.text.slice(0, 40000), fields: x.fields, found: x.found });
     }
     // My own payslip as a PDF, for a month marked paid.
     m = path.match(/^\/payroll\/mine\/(\d{4}-\d\d)$/);

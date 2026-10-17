@@ -166,6 +166,35 @@ async function roundRobin(t, among = null) {
   return bdes[0];
 }
 
+// ---------- old documents and B2B / B2C tax invoices (the user, 17 Oct 2026) ----------
+// An old agreement, quotation or tax invoice uploaded and checked by the person (server/importdoc.js reads it): the uploaded file is kept on
+// the record, it is saved as signed / accepted / issued, and the number printed on it is kept – a tax invoice never takes a new number
+// from the series, so the GST invoice numbering stays continuous.
+const DOC_FILE = /^(application\/pdf|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document)$/;
+async function takeImport(t, type, data, user) {
+  const imp = data._import; delete data._import; delete data.imported; if (!imp) return null;
+  const f = (await t.query('select id, name, mime, size from files where id = $1 and created_by = $2', [String(imp.fileId || '').slice(0, 40), user.id])).rows[0];
+  if (!f) throw new Rule('Upload the old document again.');
+  if (!DOC_FILE.test(f.mime)) throw new Rule('The old document must be the Word file or a PDF saved from Word.');
+  const old = String(data.oldNumber || '').trim().slice(0, 40); delete data.oldNumber;
+  if (old && (await t.query('select 1 from records where deleted_at is null and type = $1 and data->>\'number\' = $2', [type, old])).rowCount) throw new Rule(`Number ${old} is already in Aali One.`);
+  return { file: { id: f.id, name: f.name, mime: f.mime, size: +f.size, at: new Date().toISOString(), by: user.id }, old, how: String(imp.how || '').slice(0, 10) };
+}
+// The number of an old document: the one printed on it, or – for an agreement or quotation that had none – the next in the series.
+async function oldOrNext(t, imp, data, key, make) {
+  if (imp?.old) { data.number = imp.old; data.fy = fyLabel(data.date || today()); delete data.seq; return; }
+  data.seq = await counter(t, key); data.fy = fyLabel(data.date || today()); data.number = make(data.seq);
+}
+export const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+// B2B: the client is GST-registered, so its GSTIN is on the invoice. B2C: an unregistered buyer – name and place of supply, no GSTIN.
+function invoiceParty(d) {
+  d.gstin = String(d.gstin || '').trim().toUpperCase(); d.kind = d.kind === 'b2c' ? 'b2c' : d.kind === 'b2b' ? 'b2b' : d.gstin ? 'b2b' : 'b2c';
+  if (!String(d.clientName || '').trim()) throw new Rule('Enter the client name.');
+  if (d.kind === 'b2b' && !GSTIN.test(d.gstin)) throw new Rule('A B2B invoice needs the client\'s GSTIN (15 characters, e.g. 37AAACL1234M1Z2).');
+  if (d.kind === 'b2c') delete d.gstin;
+  if (!String(d.placeOfSupply || '').trim()) throw new Rule('Enter the place of supply (the client\'s state).');
+}
+
 // ---------- create ----------
 export async function beforeCreate(t, type, data, user, sample) {
   const me = user?.id || null;
@@ -177,17 +206,25 @@ export async function beforeCreate(t, type, data, user, sample) {
     case 'deal': if (!data.title?.trim()) throw new Rule('Enter a deal name.'); data.mobile10 = mobile10(data.phone); await callerCheck(t, user, data.phone, data.title); cleanServices(data);
       data.stage ||= 'lead'; data.stageHistory = [{ stage: data.stage, at: new Date().toISOString() }]; log(data, me, 'Deal created'); break;
     case 'quote': {
-      const fy = fyLabel(data.date || today()), b = await brandSetting(t);
-      data.seq = await counter(t, 'quote:' + fy); data.fy = fy;
-      data.number = `${b.quotePrefix || 'AC'}/${fy}/${String(data.seq).padStart(3, '0')}`;
+      const fy = fyLabel(data.date || today()), b = await brandSetting(t), imp = await takeImport(t, 'quote', data, user);
+      await oldOrNext(t, imp, data, 'quote:' + fy, (n) => `${b.quotePrefix || 'AC'}/${fy}/${String(n).padStart(3, '0')}`);
       for (const k of FLOW_KEYS) delete data[k]; delete data.discountApprovedAt; delete data.discountApprovedBy; delete data.discountApprovedPct;
       data.totals = docTotals(data); data.status = 'draft';
+      if (imp) { // an old quotation the client signed on paper: accepted, the uploaded file is its signed copy
+        Object.assign(data, { status: 'accepted', imported: { at: imp.file.at, by: me, file: imp.file, how: imp.how },
+          signed: { how: 'paper', name: String(data.contactName || data.clientName || '').slice(0, 120), role: '', signature: '', files: [imp.file], at: imp.file.at, by: me, v: 1, date: data.date || today(), imported: true } });
+        log(data, me, `Old quotation uploaded (${imp.file.name})`); break;
+      }
       await quoteApproval(t, data, user, null, sample); break;
     }
     case 'invoice': {
-      const fy = fyLabel(data.date || today()), b = await brandSetting(t);
-      data.seq = await counter(t, 'invoice:' + fy); data.number = `${b.invoicePrefix || 'AI'}/${fy}/${String(data.seq).padStart(3, '0')}`;
-      data.totals = docTotals(data); data.status ||= 'issued'; break;
+      const fy = fyLabel(data.date || today()), b = await brandSetting(t), imp = await takeImport(t, 'invoice', data, user);
+      if (imp && !imp.old) throw new Rule('Enter the invoice number printed on the old invoice.');
+      invoiceParty(data);
+      await oldOrNext(t, imp, data, 'invoice:' + fy, (n) => `${b.invoicePrefix || 'AI'}/${fy}/${String(n).padStart(3, '0')}`);
+      data.totals = docTotals(data); data.status ||= 'issued';
+      if (imp) { data.imported = { at: imp.file.at, by: me, file: imp.file, how: imp.how }; log(data, me, `Old tax invoice uploaded (${imp.file.name})`); }
+      break;
     }
     case 'receipt': {
       data.date ||= today(); const day = dayLabel(data.date), b = await brandSetting(t);
@@ -206,12 +243,17 @@ export async function beforeCreate(t, type, data, user, sample) {
       // Only the two plain words – never a list, an object or a built-in name (review of the agreements feature).
       if (!(typeof data.kind === 'string' && Object.hasOwn(AGREEMENT, data.kind))) throw new Rule('Choose the kind of agreement.');
       if (!String(data.clientName || '').trim()) throw new Rule('Enter the client name.');
-      if (data.kind === 'closure' && !data.projectId) throw new Rule('Choose the project this closure agreement is for.');
+      const imp = await takeImport(t, 'agreement', data, user); // an old signed agreement may be for a project made before Aali One
+      if (data.kind === 'closure' && !data.projectId && !imp) throw new Rule('Choose the project this closure agreement is for.');
       data.date ||= today(); if (!/^\d{4}-\d\d-\d\d$/.test(data.date)) throw new Rule('Enter a proper agreement date.');
       const fy = fyLabel(data.date);
-      data.seq = await counter(t, `agreement:${data.kind}:${fy}`); data.fy = fy;
-      data.number = `${AGREEMENT[data.kind].prefix}/${fy}/${String(data.seq).padStart(3, '0')}`;
-      data.status = 'draft'; for (const k of ['signedOn', 'signedAt', 'signedBy', 'signedCopy', 'sentOn', 'log', ...FLOW_KEYS]) delete data[k];
+      await oldOrNext(t, imp, data, `agreement:${data.kind}:${fy}`, (n) => `${AGREEMENT[data.kind].prefix}/${fy}/${String(n).padStart(3, '0')}`);
+      const signedOn = data.signedOn; data.status = 'draft'; for (const k of ['signedOn', 'signedAt', 'signedBy', 'signedCopy', 'sentOn', 'log', ...FLOW_KEYS]) delete data[k];
+      if (imp) { // an old agreement both sides signed on paper: signed and locked, the uploaded file is its signed copy
+        Object.assign(data, { status: 'signed', signedOn: /^\d{4}-\d\d-\d\d$/.test(signedOn || '') && signedOn <= today() ? signedOn : data.date, signedAt: imp.file.at, signedBy: me, signedCopy: imp.file,
+          imported: { at: imp.file.at, by: me, file: imp.file, how: imp.how } });
+        log(data, me, `Old signed ${AGREEMENT[data.kind].name.toLowerCase()} uploaded (${imp.file.name})`); break;
+      }
       log(data, me, `${AGREEMENT[data.kind].name} made`); break;
     }
     case 'pclient': {
@@ -1036,6 +1078,7 @@ export async function beforeUpdate(t, rec, next, user) {
       if (await docFlow(t, rec, next, user)) break;
       if (prev.signed) throw new Rule(`Quotation ${prev.number} is signed by the client and cannot be changed. If something is wrong, delete it with a reason and make a new one.`);
       if (prev.number) { next.number = prev.number; next.seq = prev.seq; next.fy = prev.fy; }
+      if ('imported' in prev) next.imported = prev.imported; else delete next.imported;
       keepFlow(prev, next);
       // The steps (with the BDE, changes asked, signed = accepted) move only through docFlow; a manager may still mark it declined or expired.
       if (next.status !== prev.status && !['declined', 'expired'].includes(next.status)) next.status = prev.status;
@@ -1044,7 +1087,7 @@ export async function beforeUpdate(t, rec, next, user) {
       if (next.dealId) { const deal = await getRec(t, next.dealId, 'deal'); if (deal) { deal.data.value = next.totals.total; deal.data.quoteNo = next.number; await putRec(t, deal, user); } }
       await docVersion(t, rec, next, user);
       break;
-    case 'invoice': next.number = prev.number; next.seq = prev.seq; next.totals = docTotals(next); break;
+    case 'invoice': next.number = prev.number; next.seq = prev.seq; if ('imported' in prev) next.imported = prev.imported; else delete next.imported; invoiceParty(next); next.totals = docTotals(next); break;
     case 'receipt':
       if (next.date !== prev.date) throw new Rule(`The date is part of receipt number ${prev.number} and can't change. Delete it with a reason and make a new one.`);
       next.number = prev.number; next.seq = prev.seq; next.totals = receiptTotals(next); break;
@@ -1052,7 +1095,7 @@ export async function beforeUpdate(t, rec, next, user) {
     case 'agreement': {
       if (await docFlow(t, rec, next, user)) break;
       // Kept by the server: the kind, the number, the date in the number, who signed – and the history, which only Aali One writes.
-      for (const k of ['kind', 'number', 'seq', 'fy', 'date', 'signedAt', 'signedBy', 'signedOn', 'sentOn', 'log']) if (k in prev) next[k] = prev[k]; else delete next[k];
+      for (const k of ['kind', 'number', 'seq', 'fy', 'date', 'signedAt', 'signedBy', 'signedOn', 'sentOn', 'log', 'imported']) if (k in prev) next[k] = prev[k]; else delete next[k];
       keepFlow(prev, next);
       const word = AGREEMENT[prev.kind].name;
       // A signed agreement is final: only the scanned signed copy can still be added. A mistake is fixed by deleting it with a reason and making a new one.

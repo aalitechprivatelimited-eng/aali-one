@@ -12,6 +12,7 @@ import { Field, In, Sel, Pick, Area, Pill, Seg, Empty, Modal, Sample, Log, Delet
 import { AgreementSheet, agreementTotal, agreementSub, agreementGst } from '../doc.jsx';
 import { useId } from '../App.jsx';
 import { DocFlow } from '../flow.jsx';
+import { ImportOld } from '../importdoc.jsx';
 
 export const KIND = { service: 'Client service agreement', closure: 'Project closure agreement' };
 // sent: with the BDE, who takes it to the client; changes: the client asked for changes (src/flow.jsx).
@@ -30,14 +31,14 @@ export default function Agreements() {
 }
 
 function Register() {
-  const nav = useNavigate(), [f, setF] = useState({ kind: '', q: '', status: '' }), all = list('agreement');
+  const nav = useNavigate(), [f, setF] = useState({ kind: '', q: '', status: '' }), all = list('agreement'), [imp, setImp] = useState(false);
   const rows = all.filter((a) => (!f.kind || a.kind === f.kind) && (!f.status || a.status === f.status)
     && (!f.q || `${a.number} ${a.clientName} ${a.title} ${a.project}`.toLowerCase().includes(f.q.toLowerCase())))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.seq || 0) - (a.seq || 0));
   const count = (k) => all.filter((a) => a.kind === k), signed = (k) => count(k).filter((a) => a.status === 'signed').length;
   return <>
     <div className="topbar"><h1>Agreements <small>{rows.length}</small> <ViewOnly when={!canEdit('agreements')} /></h1>
-      <div className="row">{canEdit('agreements') && <Link className="btn primary" to="/agreements/new?kind=service">+ Service agreement</Link>}
+      <div className="row">{canEdit('agreements') && <button className="btn" type="button" onClick={() => setImp(true)}>Upload an old agreement</button>}{canEdit('agreements') && <Link className="btn primary" to="/agreements/new?kind=service">+ Service agreement</Link>}
         {canClose(store.me) && <Link className="btn" to="/agreements/new?kind=closure">+ Closure agreement</Link>}</div></div>
     <div className="stats">
       <div className="stat"><span className="l">Client service agreements</span><span className="v">{count('service').length}</span><span className="small muted">{signed('service')} signed</span></div>
@@ -54,6 +55,7 @@ function Register() {
         <td className="n">{inr(a.kind === 'closure' ? a.value : agreementTotal(a))}</td><td><Status s={a.status} /></td><td>{uname(a.createdBy)}</td></tr>)}
     </tbody></table></div>
       : <Empty>{all.length ? 'No agreement matches.' : canEdit('agreements') ? 'No agreements yet. Make one with “+ Service agreement”, or from a deal or a quotation.' : 'No agreements yet.'}</Empty>}
+    {imp && <ImportOld kinds={canClose(store.me) ? ['service', 'closure'] : ['service']} onClose={() => setImp(false)} />}
   </>;
 }
 
@@ -126,6 +128,7 @@ function Editor({ id }) {
         {a.dealId && can('deals') && <Link className="btn" to={'/deals/' + a.dealId}>Deal</Link>}{a.projectId && <Link className="btn" to={'/projects/' + a.projectId}>Project</Link>}
         {saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}
         {change && <button className="btn primary" type="button" disabled={busy} onClick={() => save()}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
+    {saved?.imported && <div className="banner info no-print" style={{ marginBottom: 12 }}>An old agreement, uploaded on {fmtDate(saved.imported.at.slice(0, 10))} by {uname(saved.imported.by)}. The uploaded file is the real document: <a href={'/api/files/' + saved.imported.file.id} target="_blank" rel="noreferrer">{saved.imported.file.name}</a>.</div>}
     {locked && <div className="banner ok no-print" style={{ marginBottom: 12 }}><b>Signed on {fmtDate(saved.signedOn)}.</b> A signed agreement cannot be changed. If something is wrong, the Operations Manager deletes it with a reason and a new one is made.</div>}
     {saved && <div style={{ marginBottom: 12 }}><DocFlow doc={saved} type="agreement" boss={mayChange(saved)} onSaved={(rec) => setA({ ...rec })} /></div>}
     <div className="seg-phone no-print"><Seg value={tab} onChange={setTab} options={[['form', 'Details'], ['paper', 'The agreement']]} /></div>

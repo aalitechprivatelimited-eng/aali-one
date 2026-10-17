@@ -7,6 +7,7 @@ import { Field, In, Sel, Pick, Area, Pill, Empty, Sample, DeleteButton, Message,
 import { QuoteSheet } from '../doc.jsx';
 import { useId } from '../App.jsx';
 import { DocFlow } from '../flow.jsx';
+import { ImportOld } from '../importdoc.jsx';
 
 export const STATUS = ['draft', 'needs approval', 'sent', 'changes', 'accepted', 'declined', 'expired'];
 const tone = { accepted: 'ok', 'needs approval': 'warn', changes: 'warn', declined: 'bad', expired: 'bad', sent: 'info' };
@@ -16,12 +17,12 @@ const Status = ({ q }) => <span className={'pill ' + (tone[q.status] || '')}>{(q
 export default function Quotes() { useStore(); const id = useId(); if (!can('quotes')) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>; return id ? <Editor id={id === 'new' ? null : id} /> : <Register />; }
 
 function Register() {
-  const nav = useNavigate(), [f, setF] = useState({ q: '', status: '', fy: fyLabel(today()) });
+  const nav = useNavigate(), [f, setF] = useState({ q: '', status: '', fy: fyLabel(today()) }), [imp, setImp] = useState(false);
   const rows = list('quote').filter((q) => (!f.status || q.status === f.status) && (!f.fy || q.fy === f.fy) && (!f.q || `${q.number} ${q.clientName} ${q.subject}`.toLowerCase().includes(f.q.toLowerCase()))).sort((a, b) => (b.seq || 0) - (a.seq || 0));
   const fys = [...new Set(list('quote').map((q) => q.fy))];
   const sum = (s) => rows.filter((q) => !s || q.status === s).reduce((a, q) => a + (q.totals?.total || 0), 0);
   return <>
-    <div className="topbar"><h1>Quotations <small>{rows.length}</small> <ViewOnly when={!canEdit('quotes')} /></h1>{canEdit('quotes') && <Link className="btn primary" to="/quotes/new">+ New quotation</Link>}</div>
+    <div className="topbar"><h1>Quotations <small>{rows.length}</small> <ViewOnly when={!canEdit('quotes')} /></h1>{canEdit('quotes') && <div className="row"><button className="btn" type="button" onClick={() => setImp(true)}>Upload an old quotation</button><Link className="btn primary" to="/quotes/new">+ New quotation</Link></div>}</div>
     <div className="stats"><div className="stat"><span className="l">Quoted</span><span className="v">{inr(sum())}</span></div><div className="stat"><span className="l">Accepted</span><span className="v">{inr(sum('accepted'))}</span></div>
       <div className="stat"><span className="l">Waiting for approval</span><span className="v">{rows.filter((q) => q.status === 'needs approval').length}</span></div></div>
     <div className="row" style={{ marginBottom: 12 }}><In placeholder="Search number, client, subject" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} style={{ maxWidth: 280 }} />
@@ -30,6 +31,7 @@ function Register() {
       {rows.map((q) => <tr key={q.id} className="click" onClick={() => nav('/quotes/' + q.id)}><td className="num"><b>{q.number}</b></td><td>{q.clientName}<Sample on={q.sample} /></td><td>{q.subject}</td><td>{fmtDate(q.date)}</td>
         <td className="n">{inr(q.totals?.total)}</td><td><Status q={q} /></td><td>{uname(q.createdBy)}</td></tr>)}
     </tbody></table></div> : <Empty>No quotations yet. Make one from a deal, or with “+ New quotation”.</Empty>}
+    {imp && <ImportOld kinds={['quote']} onClose={() => setImp(false)} />}
   </>;
 }
 
@@ -73,6 +75,7 @@ function Editor({ id }) {
         {saved && canEdit('agreements') && <Link className="btn" to={`/agreements/new?kind=service&quote=${saved.id}`}>Make agreement</Link>}
         {saved && edit && <button className="btn" type="button" onClick={() => { const c = { ...q }; ['id', 'number', 'seq', 'fy', 'status', 'createdAt', 'discountApprovedAt'].forEach((k) => delete c[k]); setQ({ ...c, date: today(), validUntil: addDays(today(), 15) }); nav('/quotes/new'); }}>Duplicate</button>}
         {edit && <button className="btn primary" type="button" disabled={busy} onClick={() => save()}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
+    {saved?.imported && <div className="banner info no-print" style={{ marginBottom: 12 }}>An old quotation, uploaded on {fmtDate(saved.imported.at.slice(0, 10))} by {uname(saved.imported.by)}. The uploaded file is the real document: <a href={'/api/files/' + saved.imported.file.id} target="_blank" rel="noreferrer">{saved.imported.file.name}</a>.</div>}
     {saved && <div style={{ marginBottom: 12 }}><DocFlow doc={saved} type="quote" boss={canEdit('quotes')} onSaved={(rec) => setQ({ ...rec })} /></div>}
     {saved?.status === 'needs approval' && <div className="banner no-print" style={{ marginBottom: 12 }}>Discount {saved.totals?.discountPct}% is above the {limit}% limit. It waits for a manager's approval before it can be sent.</div>}
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>

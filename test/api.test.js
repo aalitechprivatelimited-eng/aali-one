@@ -812,6 +812,35 @@ test('lead rules by service send website enquiries to the chosen BDEs in turn; o
   assert.deepEqual(await mine(), ['Build all pages', 'Our own task'], 'only the old step nobody took up is removed');
 });
 
+test('old documents: a Word agreement or invoice is read, checked and saved as signed with its file; tax invoices are B2B or B2C', async () => {
+  const db = await getDb(), { default: JSZip } = await import('jszip');
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_imops','imops@test.in','imops','ops','management',$1)", [hashPassword('password123')]);
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_imb','imb@test.in','imb','bde','sales',$1)", [hashPassword('password123')]);
+  const O = (await call('POST', '/auth/login', { email: 'imops@test.in', password: 'password123' })).cookie, IB = (await call('POST', '/auth/login', { email: 'imb@test.in', password: 'password123' })).cookie;
+  const docx = async (paras) => { const z = new JSZip(); z.file('word/document.xml', `<w:document><w:body>${paras.map((p) => `<w:p><w:r><w:t>${p}</w:t></w:r></w:p>`).join('')}</w:body></w:document>`); return (await z.generateAsync({ type: 'nodebuffer' })).toString('base64'); };
+  const up = async (c, name, data) => (await call('POST', '/files', { name, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', data }, c)).body;
+  const f1 = await up(O, 'Lotus Service Agreement.docx', await docx(['CLIENT SERVICE AGREEMENT', 'This Client Service Agreement is made on 24-09-2026 between:', 'AALITECH PRIVATE LIMITED, having its registered office at Guntur;', 'AND',
+    'LOTUS TRADERS, having its office at Main Road, Tenali (hereinafter Client).', 'WHEREAS the Client wishes to engage the Service Provider for the design and development of a 5-page website, as more particularly described in Annexure A;',
+    'Annexure B — Fees', 'Item | Amount |', 'Website Designing — 5 pages | ₹ 20,000 |', 'Total Payable | ₹ 20,000 |', 'GST: No GST applicable.', 'Payment Terms: 50% advance to start; 50% before go-live.']));
+  assert.equal((await call('POST', '/imports/read', { kind: 'service', fileId: f1.id }, IB)).status, 403, 'a BDE cannot add agreements');
+  const read = await call('POST', '/imports/read', { kind: 'service', fileId: f1.id }, O); assert.equal(read.status, 200, JSON.stringify(read.body));
+  const x = read.body.fields; assert.equal(read.body.how, 'word'); assert.equal(x.clientName, 'LOTUS TRADERS'); assert.equal(x.date, '2026-09-24'); assert.equal(x.gst, 'none');
+  assert.deepEqual(x.lines, [{ text: 'Website Designing — 5 pages', amount: 20000 }]); assert.deepEqual(x.schedule.map((r) => r.pct), [50, 50]);
+  const saved = await call('POST', '/records', { type: 'agreement', data: { kind: 'service', ...x, _import: { fileId: f1.id, how: 'word' } } }, O); assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  const ag = saved.body.record; assert.equal(ag.status, 'signed'); assert.equal(ag.signedCopy.id, f1.id); assert.equal(ag.imported.file.id, f1.id); assert.match(ag.number, /^SA\//);
+  assert.equal((await call('PATCH', '/records/' + ag.id, { data: { title: 'changed' } }, O)).status, 400, 'an old signed agreement is locked');
+  // A tax invoice keeps the number printed on it (and does not take one from the series); B2B needs a real GSTIN; B2C has none.
+  const f2 = await up(O, 'Invoice.docx', await docx(['TAX INVOICE', 'Invoice No: AI/2025-26/014', 'Date: 12-03-2026', 'Bill To', 'Lakshmi Traders', 'GSTIN 37AAACL1234M1Z2', 'Place of Supply: Andhra Pradesh', 'Description | Amount |', 'Website design | ₹20,000 |', 'CGST @ 9% | ₹1,800 |', 'Total | ₹23,600 |']));
+  const inv = (await call('POST', '/imports/read', { kind: 'invoice', fileId: f2.id }, O)).body.fields; assert.equal(inv.kind, 'b2b'); assert.equal(inv.oldNumber, 'AI/2025-26/014');
+  const mk = (data) => call('POST', '/records', { type: 'invoice', data: { discountType: 'none', roundOff: true, ...data } }, O);
+  assert.equal((await mk({ ...inv, oldNumber: '', _import: { fileId: f2.id } })).status, 400, 'an old invoice needs its own number');
+  const i1 = await mk({ ...inv, _import: { fileId: f2.id } }); assert.equal(i1.status, 200, JSON.stringify(i1.body)); assert.equal(i1.body.record.number, 'AI/2025-26/014'); assert.equal(i1.body.record.kind, 'b2b');
+  assert.equal((await mk({ ...inv, _import: { fileId: f2.id } })).status, 400, 'the same number twice');
+  assert.equal((await mk({ kind: 'b2b', clientName: 'X', gstin: '12345', placeOfSupply: 'AP', date: '2026-10-01', items: [{ desc: 'a', qty: 1, rate: 100 }], taxMode: 'intra', taxRate: 18 })).status, 400, 'B2B needs a real GSTIN');
+  const b2c = await mk({ kind: 'b2c', clientName: 'Ravi Kumar', gstin: '37AAACL1234M1Z2', placeOfSupply: 'Andhra Pradesh', date: '2025-06-01', items: [{ desc: 'a', qty: 1, rate: 100 }], taxMode: 'intra', taxRate: 18 });
+  assert.equal(b2c.status, 200); assert.equal(b2c.body.record.kind, 'b2c'); assert.equal(b2c.body.record.gstin, undefined, 'a B2C invoice carries no GSTIN'); assert.match(b2c.body.record.number, /\/001$/, 'the first of its year: the old invoice did not use a number');
+});
+
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {
   const { setHrmSource } = await import('../server/hrm.js'), { PGlite } = await import('@electric-sql/pglite');
   const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
