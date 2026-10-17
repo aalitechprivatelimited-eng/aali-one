@@ -294,7 +294,7 @@ function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
         {resp === 'Call back' && <div className="row"><span className="small" style={{ fontWeight: 600 }}>Call back on</span>
           {[[1, 'Tomorrow'], [2, 'In 2 days'], [7, 'Next week']].map(([n, lab]) => <button key={n} type="button" className={'chip' + (d.back === addDays(today(), n) ? ' on' : '')} aria-pressed={d.back === addDays(today(), n)} onClick={() => setD({ ...d, back: addDays(today(), n) })}>{lab}</button>)}
           <In type="date" style={{ width: 'auto' }} min={today()} value={d.back} onChange={(e) => e.target.value && setD({ ...d, back: e.target.value })} aria-label="Call back on this date" /></div>}
-        {resp === 'Interested' && <div className="stack gap4"><span className="small" style={{ fontWeight: 600 }}>Which services do they want? It becomes your lead (Warm, follow-up tomorrow).</span>
+        {resp === 'Interested' && <div className="stack gap4"><span className="small" style={{ fontWeight: 600 }}>Which services do they want? Write them. It becomes your lead (Warm, follow-up tomorrow).</span>
           <ServicesPick value={d.services} onChange={(v) => setD({ ...d, services: v })} /></div>}
         <input className="in" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder={resp === 'Interested' ? 'What do they want? e.g. quotation for a 5-page website' : 'What did they say? e.g. owner is travelling, call after 4 pm'} maxLength={300} autoFocus />
         <div className="row"><input className="in" style={{ flex: '1 1 200px' }} value={d.meeting} onChange={(e) => setD({ ...d, meeting: e.target.value })} placeholder="Meeting fixed for… (if any)" maxLength={80} />

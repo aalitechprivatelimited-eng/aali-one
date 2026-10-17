@@ -785,7 +785,7 @@ test('an interested business on a call becomes the BDE\'s lead at once (Warm, fo
   const lead = (await recs()).find((r) => r.id === leadId);
   assert.equal(lead.owner, 'u_ilb'); assert.equal(lead.score, 'warm'); assert.deepEqual(lead.services, ['Website – 5 pages']); assert.equal(lead.source, 'Call list – Google Maps');
   // Interested again about the same service: no second lead; without a service: no lead at all.
-  const r2 = await patch(B, rep.id, { calls: [...r1.body.record.calls, { ...call1, id: 'k2' }, { id: 'k3', org: 'Quiet Shop', phone: '9000099902', resp: 'Interested' }] });
+  const r2 = await patch(B, rep.id, { calls: [...r1.body.record.calls, { ...call1, id: 'k2', services: ['website  – 5 PAGES'] }, { id: 'k3', org: 'Quiet Shop', phone: '9000099902', resp: 'Interested' }] });
   assert.equal(r2.status, 200); assert.equal(r2.body.record.calls[1].leadId, leadId, 'the repeat joins the same lead'); assert.equal(r2.body.record.calls[2].leadId, undefined);
   assert.equal((await recs()).filter((r) => r.type === 'lead' && ['9000099901', '9000099902'].includes(r.mobile10)).length, 1);
 });

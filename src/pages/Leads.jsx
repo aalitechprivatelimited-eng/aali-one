@@ -9,14 +9,26 @@ import { useId } from '../App.jsx';
 const SCORE = { hot: ['Hot', 'bad'], warm: ['Warm', 'warn'], cold: ['Cold', 'info'] };
 const STATUS = { new: 'New', contacted: 'Contacted', qualified: 'Qualified', converted: 'Converted', junk: 'Not a real lead' };
 export const services = () => settings().services.map((s) => s.name);
-// Several services under one client (the user, 17 Oct 2026): tick every service the client wants; the first one ticked is the main one.
+// Several services under one client (the user, 17 Oct 2026). The BDE writes them, separated by commas – "Restaurant POS, billing software".
+// A name written like one in the services list becomes that service (so it keeps its price); anything else is kept as written.
 export const svcList = (d) => (d?.services?.length ? d.services : d?.service ? [d.service] : []);
 export const svcText = (d) => svcList(d).join(', ');
-export function ServicesPick({ value = [], onChange, disabled }) {
-  const all = [...new Set([...services(), ...value])];
-  return <div className="row" role="group" aria-label="Services" style={{ gap: 8 }}>{all.map((x) => { const on = value.includes(x);
-    return <button key={x} type="button" className={'chip' + (on ? ' on' : '')} aria-pressed={on} disabled={disabled}
-      onClick={() => onChange(on ? value.filter((y) => y !== x) : [...value, x])}>{on ? '✓ ' : ''}{x}</button>; })}</div>;
+const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+export const parseServices = (text) => { const known = services(), out = [];
+  for (const raw of String(text || '').split(/[,\n;]+/)) { const t = raw.trim().replace(/\s+/g, ' ').slice(0, 80); if (!t) continue;
+    const x = known.find((k) => norm(k) === norm(t)) || t; if (!out.some((y) => norm(y) === norm(x))) out.push(x); }
+  return out.slice(0, 12); };
+// lazy: tell the page only when the person leaves the box (a saved lead or deal is not saved at every key press).
+export function ServicesPick({ value = [], onChange, disabled, lazy, autoFocus }) {
+  const [text, setText] = useState(() => value.join(', ')), list = parseServices(text), last = text.split(',').at(-1).trim().toLowerCase();
+  const hints = norm(last).length >= 2 ? services().filter((k) => norm(k).includes(norm(last)) && !list.includes(k)).slice(0, 4) : [];
+  const put = (t) => { setText(t); if (!lazy) onChange(parseServices(t)); };
+  const take = (k) => put([...text.split(',').slice(0, -1).map((x) => x.trim()).filter(Boolean), k].join(', ') + ', ');
+  return <div className="stack gap4" style={{ width: '100%' }}>
+    <input className="in" value={text} disabled={disabled} autoFocus={autoFocus} aria-label="Services" placeholder="Write the services, separated by commas – e.g. Restaurant POS, billing software, 5-page website"
+      onChange={(e) => put(e.target.value)} onBlur={() => { const v = parseServices(text); if (lazy && v.join('|') !== value.join('|')) onChange(v); }} />
+    {hints.length > 0 && <div className="row small" style={{ gap: 6 }}><span className="muted">Did you mean:</span>{hints.map((k) => <button key={k} type="button" className="chip" onMouseDown={(e) => e.preventDefault()} onClick={() => take(k)}>{k}</button>)}</div>}
+  </div>;
 }
 
 export default function Leads() {
@@ -80,7 +92,7 @@ export function NewEnquiry({ onClose, preset = {} }) {
       <div className="form">
         <Field label="Name *"><In value={f.name || ''} onChange={up('name')} autoFocus /></Field>
         <Field label="Mobile *"><In type="tel" value={f.mobile || ''} onChange={up('mobile')} placeholder="98765 43210" /></Field>
-        <Field label="Services wanted * (tick all)" full><ServicesPick value={svcList(f)} onChange={(v) => setF({ ...f, services: v, service: v[0] || '' })} /></Field>
+        <Field label="Services wanted *" full><ServicesPick value={svcList(f)} onChange={(v) => setF({ ...f, services: v, service: v[0] || '' })} /></Field>
         <Field label="Source *"><Sel value={f.source} onChange={up('source')} options={settings().sources} /></Field>
         <Field label="Company"><In value={f.company || ''} onChange={up('company')} /></Field>
         <Field label="Email"><In type="email" value={f.email || ''} onChange={up('email')} /></Field>
@@ -158,7 +170,7 @@ function LeadView({ id }) {
             <Field label="Mobile"><In defaultValue={l.mobile} onBlur={(e) => e.target.value !== l.mobile && set({ mobile: e.target.value, mobile10: mobile10(e.target.value) })} /></Field>
             <Field label="Company"><In defaultValue={l.company} onBlur={(e) => set({ company: e.target.value })} /></Field>
             <Field label="Email"><In defaultValue={l.email} onBlur={(e) => set({ email: e.target.value })} /></Field>
-            <Field label="Services" full><ServicesPick value={svcList(l)} onChange={(v) => v.length && set({ services: v })} /></Field>
+            <Field label="Services" full><ServicesPick lazy value={svcList(l)} onChange={(v) => v.length && set({ services: v })} /></Field>
             <Field label="Source"><Sel value={l.source} onChange={(v) => set({ source: v })} options={settings().sources} /></Field>
             <Field label="BDE" hint={own ? 'Only the Sales Manager can give a lead to someone else.' : ''}><Person value={l.owner} disabled={own} onChange={(v) => set({ owner: v, _note: `Lead given to ${uname(v)}` }, 'Reassigned.')} filter={(u) => u.team === 'sales'} /></Field>
             <Field label="Next follow-up"><In type="date" value={l.followUp || ''} onChange={(e) => set({ followUp: e.target.value })} /></Field>

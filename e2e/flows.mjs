@@ -109,7 +109,7 @@ try {
     await bde.locator('.modal').getByRole('button', { name: 'Interested', exact: true }).click(); await bde.getByPlaceholder(/What do they want/).fill('Wants a quotation for a pharmacy website');
     // Interested makes the lead (17 Oct 2026): not without the services the business wants
     must(await bde.getByRole('button', { name: 'Save the call and make the lead' }).isDisabled(), 'an interested call can be saved without a service');
-    await bde.locator('.modal .chip', { hasText: 'Website – 5 pages' }).click();
+    await bde.locator('.modal').getByLabel('Services').fill('Pharmacy website, billing software'); // the BDE writes them (17 Oct 2026)
     await bde.getByRole('button', { name: 'Save the call and make the lead' }).click(); await toast(bde, 'Written on your call sheet');
     // the second business asks to be called back: the day is asked, today is chosen so that it shows on the dashboard
     await bde.locator('.modal .li', { hasText: 'Lotus Clinic' }).click(); await bde.locator('.modal').getByRole('button', { name: 'Call back', exact: true }).click();

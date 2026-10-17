@@ -90,8 +90,13 @@ async function brandSetting(t) { return getSetting(t, 'business', {}); }
 // ---------- several services under one client (the user, 17 Oct 2026: AS Group wants a POS, billing software and two websites) ----------
 // A lead or a deal lists every service in `services`; `service` stays the first one, for everything that shows one.
 export const svcOf = (d) => (Array.isArray(d?.services) && d.services.length ? d.services : d?.service ? [d.service] : []);
+// The BDE writes services in their own words: "restaurant pos" and "Restaurant POS" are the same service.
+const svcKey = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const sameSvc = (a, b) => a.some((x) => b.some((y) => svcKey(x) === svcKey(y)));
 function cleanServices(d) {
-  const all = [...new Set((Array.isArray(d.services) && d.services.length ? d.services : [d.service]).map((x) => String(x || '').trim().slice(0, 80)).filter(Boolean))].slice(0, 12);
+  const all = [];
+  for (const x of Array.isArray(d.services) && d.services.length ? d.services : [d.service]) { const v = String(x || '').trim().replace(/\s+/g, ' ').slice(0, 80); if (v && !all.some((y) => svcKey(y) === svcKey(v))) all.push(v); }
+  all.splice(12);
   if (all.length) { d.services = all; d.service = all[0]; } else delete d.services;
   return all;
 }
@@ -126,10 +131,10 @@ async function leadIntake(t, data, user, sample) {
   const matches = (await t.query(`select * from records where deleted_at is null and type in ('lead','deal','client')
     and (data->>'mobile10' = $1 or data->'contacts' @> $2::jsonb) order by updated_at desc`, [m, JSON.stringify([{ mobile10: m }])])).rows;
   const enquiry = { at: new Date().toISOString(), source: data.source || 'Other', message: data.message || '' };
-  const open = !force && matches.find((r) => svcOf(r.data).some((x) => svcs.includes(x)) &&
+  const open = !force && matches.find((r) => sameSvc(svcOf(r.data), svcs) &&
     ((r.type === 'lead' && !['converted', 'junk'].includes(r.data.status)) || (r.type === 'deal' && !['won', 'lost'].includes(r.data.stage))));
   if (open) {
-    const d = open.data, same = svcs.filter((x) => svcOf(d).includes(x)).join(', '); d.enquiries = [enquiry, ...(d.enquiries || [])]; d.repeatPending = true;
+    const d = open.data, same = svcs.filter((x) => sameSvc([x], svcOf(d))).join(', '); d.enquiries = [enquiry, ...(d.enquiries || [])]; d.repeatPending = true;
     log(d, user?.id || null, `Asked again about ${same} (${enquiry.source}) – ask the client: earlier enquiry or new requirement?`);
     await putRec(t, open, user);
     await notify(t, d.owner, `${d.name || d.title} asked again about ${same}. Ask: earlier enquiry or new requirement?`, open.type, open.id, user, sample);
@@ -972,7 +977,7 @@ export async function beforeUpdate(t, rec, next, user) {
           if (!prev.clientId || o.data.clientId !== prev.clientId) throw new Rule('Only deals of the same client can be joined.');
           if (['won', 'lost'].includes(o.data.stage)) throw new Rule('A won or lost deal cannot be joined.');
           await dealIsBare(t, o.id, o.data.title);
-          next.services = [...new Set([...svcOf(prev), ...svcOf(o.data)])].slice(0, 12); next.service = next.services[0]; next.value = num(prev.value) + num(o.data.value);
+          next.services = [...svcOf(prev), ...svcOf(o.data)]; cleanServices(next); next.value = num(prev.value) + num(o.data.value);
           log(next, me, `Joined ${o.data.title} into this deal (${svcOf(o.data).join(', ')})`);
           await t.query('update records set deleted_at = now(), deleted_by = $2, delete_reason = $3 where id = $1', [o.id, me, `Joined into ${prev.title}`]);
         }

@@ -77,7 +77,7 @@ function DealForm() {
       <Field label="Client"><Pick value={f.clientId} onChange={up('clientId')} options={list('client').map((c) => [c.id, c.name, c.city])} blank="Choose (or add on Clients)" /></Field>
       <Field label="Contact person"><In value={f.contactName || ''} onChange={up('contactName')} /></Field>
       <Field label="Phone"><In value={f.phone || ''} onChange={up('phone')} /></Field>
-      <Field label="Services (tick all)" full><ServicesPick value={svcList(f)} onChange={(v) => setF({ ...f, services: v, service: v[0] || '', value: f.value || v.reduce((s, x) => s + (+settings().services.find((y) => y.name === x)?.rate || 0), 0) })} /></Field>
+      <Field label="Services" full><ServicesPick value={svcList(f)} onChange={(v) => setF({ ...f, services: v, service: v[0] || '', value: f.value || v.reduce((s, x) => s + (+settings().services.find((y) => y.name === x)?.rate || 0), 0) })} /></Field>
       <Field label="Value (₹)"><In type="number" value={f.value || ''} onChange={up('value')} /></Field>
       <Field label="Stage"><Sel value={f.stage} onChange={up('stage')} options={settings().pipeline.filter((s) => s.key !== 'lost').map((s) => [s.key, s.label])} /></Field>
       <Field label="Expected closing date"><In type="date" value={f.closeDate} onChange={up('closeDate')} /></Field>
@@ -125,7 +125,7 @@ function DealView({ id }) {
           <Field label="Client"><Pick value={d.clientId} onChange={(v) => set({ clientId: v })} options={list('client').map((c) => [c.id, c.name, c.city])} blank="None" /></Field>
           <Field label="Contact person"><In defaultValue={d.contactName} onBlur={(e) => set({ contactName: e.target.value })} /></Field>
           <Field label="Phone"><In defaultValue={d.phone} onBlur={(e) => set({ phone: e.target.value })} /></Field>
-          <Field label="Services" full><ServicesPick value={svcList(d)} onChange={(v) => v.length && set({ services: v })} /></Field>
+          <Field label="Services" full><ServicesPick lazy value={svcList(d)} onChange={(v) => v.length && set({ services: v })} /></Field>
           <Field label="Value (₹)"><In type="number" defaultValue={d.value} onBlur={(e) => +e.target.value !== +d.value && set({ value: +e.target.value || 0 })} /></Field>
           <Field label="Stage"><Sel value={d.stage} onChange={(v) => (v === 'lost' ? setLost(true) : set({ stage: v }))} options={settings().pipeline.map((s) => [s.key, `${s.label} (${s.p}%)`])} /></Field>
           <Field label="Expected closing date"><In type="date" value={d.closeDate || ''} onChange={(e) => set({ closeDate: e.target.value })} /></Field>
