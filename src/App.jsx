@@ -4,17 +4,18 @@ import { boot, useStore, store, login, logout, http, list, idleFor } from './api
 import { Toaster, In, Field, Empty, Avatar, Modal, attempt, toast, lockPage } from './ui.jsx';
 import { isTop, can, desig } from './lib.js';
 import { sectionCounts } from './tiles.jsx';
-import { appOf, myApps, SEC, secLabel } from './apps.jsx';
+import { appOf, appStart, rememberApp, myApps, SEC, secLabel } from './apps.jsx';
 import { SECTIONS } from '../shared/access.js';
 import { ThemeToggle } from './theme.jsx';
 import { Motion, Page, ScrollLine, ToTop, m, AnimatePresence, SPRING, EASE } from './motion.jsx';
 import { Ico } from './icons.jsx';
-import { Search, openSearch } from './search.jsx';
-import { Guide } from './guide.jsx';
+import { Search, openSearch, rememberPage } from './search.jsx';
+import { Guide, HelpButton } from './guide.jsx';
 import { Popups } from './popups.jsx';
 import { VisitPrompt } from './visit.jsx';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
+const Home = lazy(() => import('./pages/Today.jsx').then((x) => ({ default: x.Home })));
 const Leads = lazy(() => import('./pages/Leads.jsx'));
 const Calls = lazy(() => import('./pages/Calls.jsx'));
 const Assets = lazy(() => import('./pages/Assets.jsx'));
@@ -167,6 +168,10 @@ function Shell() {
   const cnt = sectionCounts(); // the same numbers as the tiles on Home (src/tiles.jsx)
   // Which section is open: the gold mark in the sidebar slides to it, and the page changes with a short movement.
   const path = loc.pathname, seg = path.split('/')[1] || 'home', app = appOf(path);
+  useEffect(() => { if (app) rememberApp(app, path); }, [path]); // eslint-disable-line react-hooks/exhaustive-deps -- the page decides the app
+  // Each page opened is remembered by its heading, for "Recent" in Ctrl + K (the heading's own words, without counts or badges).
+  useEffect(() => { const t = setTimeout(() => { const h = document.querySelector('.main .topbar h1');
+    if (h) rememberPage(path, [...h.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(' ').replace(/\s+/g, ' ').trim()); }, 700); return () => clearTimeout(t); }, [path]);
   const on = (k, to) => (to === '/' ? path === '/' : k === 'settings' ? path.startsWith('/settings') && !path.startsWith('/settings/people') : path === to || path.startsWith(to + '/'));
   return (
     <div className={'shell' + (mini ? ' mini' : '')}>
@@ -180,28 +185,30 @@ function Shell() {
         <m.nav className="nav" layoutScroll aria-label={app ? app.name : 'Apps'}>
           {/* Like Zoho One (17 Oct 2026): inside an app, only its sections and the 9-dot button back to all apps; on the launcher, the apps. */}
           <Link to="/" data-tip="All apps" aria-label="All apps" aria-current={path === '/' ? 'page' : undefined} className={path === '/' ? 'active' : ''}>
-            {path === '/' && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="apps" /><span className="lab">All apps</span>{!app && cnt.today ? <span className="cnt">{cnt.today}</span> : null}</Link>
-          {app ? <><div className="sec">{app.name}</div>
+            {path === '/' && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="apps" /><span className="lab">All apps</span></Link>
+          <Link to="/overview" data-tip="Overview" aria-label="Overview" aria-current={path === '/overview' ? 'page' : undefined} className={path === '/overview' ? 'active' : ''}>
+            {path === '/overview' && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="today" /><span className="lab">Overview</span>{cnt.today ? <span className="cnt">{cnt.today}</span> : null}</Link>
+          {app ? <><div className="app-h"><span className="app-ic"><Ico k={app.icon} size={15} /></span><span className="lab">{app.name}</span></div>
             {app.items.map((k) => { const to = SEC[k].to, text = secLabel(k);
               return <Link key={k} to={to} data-tip={text} aria-label={text} aria-current={on(k, to) ? 'page' : undefined} className={on(k, to) ? 'active' : ''}>
                 {on(k, to) && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k={k} /><span className="lab">{text}</span>{cnt[k] ? <span className="cnt">{cnt[k]}</span> : null}</Link>; })}</>
             : <><div className="sec">Apps</div>
               {myApps().map((x) => { const n = x.items.reduce((t, k) => t + (cnt[k] || 0), 0);
-                return <Link key={x.k} to={SEC[x.items[0]].to} data-tip={x.name} aria-label={x.name}><Ico k={x.icon} /><span className="lab">{x.name}</span>{n ? <span className="cnt">{n}</span> : null}</Link>; })}
+                return <Link key={x.k} to={appStart(x)} data-tip={x.name} aria-label={x.name}><Ico k={x.icon} /><span className="lab">{x.name}</span>{n ? <span className="cnt">{n}</span> : null}</Link>; })}
               {can('settings') && <Link to="/settings/me" data-tip="Settings" aria-label="Settings" aria-current={on('settings', '/settings') ? 'page' : undefined} className={on('settings', '/settings') ? 'active' : ''}>
                 {on('settings', '/settings') && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="settings" /><span className="lab">Settings</span></Link>}</>}
         </m.nav>
         <div className="me"><Link to="/settings/me" className="me-who" title="My profile: photo, display name, password"><Avatar u={me} /><div className="grow"><b className="ell">{me.name}</b><div className="faint ell" title={desig(me)}>{desig(me)}</div><div className="faint ell">{me.company}</div></div></Link>
-          <div className="me-act"><ThemeToggle label /><button className="btn sm" type="button" onClick={signOut}>Sign out</button></div></div>
+          <div className="me-act"><HelpButton className="btn sm help" label={false} hotkey /><ThemeToggle label /><button className="btn sm" type="button" onClick={signOut}>Sign out</button></div></div>
       </aside>
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
       <div style={{ minWidth: 0 }}>
-        <div className="mobilebar"><button className="btn sm" type="button" onClick={() => setOpen(true)} aria-label="Open menu">☰ Menu</button><b style={{ fontFamily: 'var(--doc)' }} className="grow">Aali One</b><button type="button" className="eye theme" onClick={openSearch} aria-label="Search" title="Search"><Ico k="search" /></button><ThemeToggle /></div>
+        <div className="mobilebar"><button className="btn sm" type="button" onClick={() => setOpen(true)} aria-label="Open menu">☰ Menu</button><b style={{ fontFamily: 'var(--doc)' }} className="grow">Aali One</b><button type="button" className="eye theme" onClick={openSearch} aria-label="Search" title="Search"><Ico k="search" /></button><HelpButton className="eye theme" label={false} /><ThemeToggle /></div>
         <main className="main">
           <AnimatePresence mode="wait" onExitComplete={() => scrollTo(0, 0)}>
             <Page key={seg}><PageGuard key={path}><Suspense fallback={<Waiting />}>
             <Routes location={loc}>
-              <Route path="/" element={<Today />} /><Route path="/inbox" element={<Inbox />} /><Route path="/approvals" element={<Gate s="approvals"><Approvals /></Gate>} />
+              <Route path="/" element={<Home />} /><Route path="/overview" element={<Today />} /><Route path="/inbox" element={<Inbox />} /><Route path="/approvals" element={<Gate s="approvals"><Approvals /></Gate>} />
               <Route path="/leads/*" element={<Gate s="leads"><Leads /></Gate>} /><Route path="/calls" element={<Gate s="calls"><Calls /></Gate>} /><Route path="/deals/*" element={<Gate s="deals"><Deals /></Gate>} /><Route path="/clients/*" element={<Gate s="clients"><Clients /></Gate>} />
               <Route path="/quotes/*" element={<Gate s="quotes"><Quotes /></Gate>} /><Route path="/agreements/*" element={<Gate s="agreements"><Agreements /></Gate>} /><Route path="/projects/*" element={<Gate s="projects"><Projects /></Gate>} /><Route path="/tasks" element={<Tasks />} />
               <Route path="/support" element={<Gate s="support"><Support /></Gate>} /><Route path="/assets" element={<Gate s="assets"><Assets /></Gate>} /><Route path="/bills/*" element={<Gate s="bills"><Bills /></Gate>} /><Route path="/payments/*" element={<Gate s="money"><Payments /></Gate>} /><Route path="/payroll/*" element={<Gate s="payroll"><Payroll /></Gate>} /><Route path="/client-payroll/*" element={<Gate s="clientpay"><ClientPayrollPage /></Gate>} /><Route path="/calendar/*" element={<Calendar />} /><Route path="/daily/*" element={<Daily />} /><Route path="/collab" element={<Gate s="collab"><Collab /></Gate>} />

@@ -18,8 +18,9 @@ const still = () => typeof matchMedia === 'function' && matchMedia('(prefers-red
 // animations, so nothing is left on the element when they end (hover effects and dimmed rows stay as they were).
 const ARRIVE = '.stats > .stat, tbody > tr';
 function arrive(found) {
-  const els = found.filter((e) => e.isConnected && !e.closest('.paper')).slice(0, 24);
-  if (els.length) waapi.animate(els, { opacity: { from: 0 }, translate: { from: '0px 14px' }, delay: stagger(36), duration: 560, ease: 'outExpo', onComplete: (a) => a.revert() });
+  // At most 14 arrive one by one, and the whole wave is over in about half a second however long the list is (the user wants it smooth, 18 Oct 2026).
+  const els = found.filter((e) => e.isConnected && !e.closest('.paper')).slice(0, 14);
+  if (els.length) waapi.animate(els, { opacity: { from: 0 }, translate: { from: '0px 10px' }, delay: stagger(Math.min(30, 220 / els.length)), duration: 420, ease: 'outQuart', onComplete: (a) => a.revert() });
 }
 function useArrivals(ref) {
   useLayoutEffect(() => {
@@ -45,7 +46,7 @@ export function useDraw(again) {
 // A section's page: it rises in when opened and slips away when you leave it. Kept short, because people change section all day long.
 export function Page({ children }) {
   const ref = useRef(null); useArrivals(ref);
-  return <m.div ref={ref} className="page" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.08 } }} transition={{ duration: 0.26, ease: EASE }}>{children}</m.div>;
+  return <m.div ref={ref} className="page" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.06 } }} transition={{ duration: 0.22, ease: EASE }}>{children}</m.div>;
 }
 
 // Anything wrapped in Reveal fades up the first time it scrolls into view.

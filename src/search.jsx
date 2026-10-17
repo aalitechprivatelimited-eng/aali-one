@@ -4,19 +4,34 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useStore, list } from './api.js';
-import { can, inr, stageLabel, pStageLabel, clientName, uname } from './lib.js';
+import { can, canEdit, inr, stageLabel, pStageLabel, clientName, uname } from './lib.js';
 import { SECTIONS } from '../shared/access.js';
 import { m, AnimatePresence, EASE } from './motion.jsx';
 import { Ico } from './icons.jsx';
 
 export const openSearch = () => dispatchEvent(new Event('aali-search'));
+// The pages this person opened lately, newest first – kept on this device only, so Ctrl + K brings them back in one tap (18 Oct 2026).
+const RECENT = 'aali-recent';
+const recent = () => { try { return JSON.parse(localStorage.getItem(RECENT) || '[]').filter((r) => r && r.to && r.title); } catch { return []; } };
+const sectionOf = (path) => SECTIONS.filter(([, , to]) => to !== '/' && (path === to || path.startsWith(to + '/'))).sort((a, b) => b[2].length - a[2].length)[0];
+export function rememberPage(path, title) {
+  if (path === '/' || !title || !sectionOf(path)) return;
+  try { localStorage.setItem(RECENT, JSON.stringify([{ to: path, title: title.slice(0, 80) }, ...recent().filter((r) => r.to !== path)].slice(0, 8))); } catch {}
+}
 const EACH = 5; // results shown per kind
+// Things to start, for the people allowed to (18 Oct 2026): typing "new", "invoice" or "receipt" offers them, so nobody hunts for the button.
+const ACTIONS = [['quotes', 'New quotation', '/quotes/new', 'quotes'], ['agreements', 'New service agreement', '/agreements/new?kind=service', 'agreements'],
+  ['money', 'New tax invoice (B2B or B2C)', '/payments/invoice/new', 'money'], ['money', 'New receipt', '/payments/receipt/new', 'money']];
 
 function find(q) {
   const text = q.trim().toLowerCase(), digits = text.replace(/\D/g, ''), out = [];
   const hit = (...f) => f.some((x) => String(x || '').toLowerCase().includes(text)) || (digits.length >= 4 && f.some((x) => String(x || '').replace(/\D/g, '').includes(digits)));
   const add = (group, icon, rows) => rows.length && out.push({ group, icon, rows: rows.slice(0, EACH) });
-  add('Go to', 'today', SECTIONS.filter(([k, label]) => can(k) && (!text || label.toLowerCase().includes(text))).map(([k, label, to]) => ({ id: 's' + k, icon: k, title: label, to })).slice(0, text ? EACH : 20));
+  add('Recent', 'clock', recent().filter((r) => r.to !== location.pathname && (!text || r.title.toLowerCase().includes(text))).map((r) => { const sec = sectionOf(r.to);
+    return { id: 'r' + r.to, icon: sec && can(sec[0]) ? sec[0] : 'clock', title: r.title, sub: sec?.[1], to: r.to }; }).filter((r) => r.icon !== 'clock'));
+  add('Go to', 'today', [...SECTIONS, ['today', 'Overview', '/overview']].filter(([k, label]) => can(k) && (!text || label.toLowerCase().includes(text))).map(([k, label, to]) => ({ id: 's' + to, icon: k, title: label, to })).slice(0, text ? EACH : 21));
+  add('Start something new', 'check', ACTIONS.filter(([k, label]) => canEdit(k) && (!text || ['new', 'add', 'make', 'create'].some((w) => w.startsWith(text)) || label.toLowerCase().includes(text)))
+    .map(([k, title, to, icon]) => ({ id: 'a' + to, icon, title, to })));
   if (text.length < 2) return out;
   if (can('leads')) add('Leads', 'leads', list('lead').filter((x) => hit(x.name, x.mobile, x.company, x.service)).map((x) => ({ id: x.id, title: x.name, sub: [x.mobile, x.company, x.service].filter(Boolean).join(' · '), to: `/leads/${x.id}` })));
   if (can('clients')) add('Clients', 'clients', list('client').filter((x) => !x.card && hit(x.name, x.phone, x.city)).map((x) => ({ id: x.id, title: x.name, sub: [x.phone, x.city].filter(Boolean).join(' · '), to: `/clients/${x.id}` })));
@@ -34,7 +49,10 @@ export function Search() {
   useStore();
   const [open, setOpen] = useState(false), [q, setQ] = useState(''), [at, setAt] = useState(0), nav = useNavigate(), box = useRef(null);
   useEffect(() => {
-    const key = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setOpen((o) => !o); } }, show = () => setOpen(true);
+    // Ctrl + K anywhere; "/" too, when the cursor is not in a box.
+    const typing = (e) => e.target.closest?.('input, textarea, select, [contenteditable="true"]');
+    const key = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setOpen((o) => !o); }
+      else if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e) && !document.querySelector('.modal')) { e.preventDefault(); setOpen(true); } }, show = () => setOpen(true);
     addEventListener('keydown', key); addEventListener('aali-search', show);
     return () => { removeEventListener('keydown', key); removeEventListener('aali-search', show); };
   }, []);

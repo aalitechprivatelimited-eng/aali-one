@@ -43,7 +43,9 @@ export function Field({ label, children, full, hint }) {
   // The label is tied to its box, so a screen reader names the box and a click on the label puts the cursor in it.
   const id = useUid(), kids = Children.toArray(children), at = kids.findIndex((c) => isValidElement(c) && typeof c.type !== 'string' && !c.props.id);
   if (at >= 0) kids[at] = cloneElement(kids[at], { id }); // the first box inside the field is the one the label names
-  return <div className={'field' + (full ? ' full' : '')}><label htmlFor={at >= 0 ? id : undefined}>{label}</label>{kids}{hint && <span className="small muted">{hint}</span>}</div>;
+  // A label ending in " *" is a box that must be filled: the star is drawn in gold.
+  const must = typeof label === 'string' && label.endsWith(' *'), text = must ? label.slice(0, -2) : label;
+  return <div className={'field' + (full ? ' full' : '')}><label htmlFor={at >= 0 ? id : undefined}>{text}{must && <span className="req" title="Must be filled in"> *</span>}</label>{kids}{hint && <span className="small muted">{hint}</span>}</div>;
 }
 export const In = (p) => (p.type === 'date' ? <DateIn {...p} /> : <input className="in" {...p} />);
 

@@ -142,3 +142,24 @@ export function Guide() {
   </AnimatePresence>, document.body);
 }
 const pad = (b) => ({ top: b.top - 6, left: b.left - 6, width: b.width + 12, height: b.height + 12 });
+
+// "What is this page?" – one tap from anywhere, for someone new (the user, 18 Oct 2026: easy for a beginner, without hiding anything).
+// It says what the open page is for, in the words of this person's role, and can start the full guide.
+const sectionAt = (path) => (path === '/' ? 'today' : SECTIONS.filter(([, , to]) => to !== '/' && (path === to || path.startsWith(to + '/'))).sort((a, b) => b[2].length - a[2].length)[0]?.[0]);
+export function HelpButton({ className = 'btn sm', label = true, hotkey = false }) {
+  const [open, setOpen] = useState(false), { pathname } = useLocation(), me = store.me, k = sectionAt(pathname), name = pathname === '/overview' ? 'Overview' : SECTIONS.find((s) => s[0] === k)?.[1];
+  // "?" opens it from anywhere (only one of the Help buttons listens), unless the cursor is in a box or a pop-up is open.
+  useEffect(() => { if (!hotkey) return; const key = (e) => e.key === '?' && !e.ctrlKey && !e.metaKey && !e.target.closest?.('input, textarea, select, [contenteditable="true"]') && !document.querySelector('.modal, .search') && setOpen(true);
+    addEventListener('keydown', key); return () => removeEventListener('keydown', key); }, [hotkey]);
+  const text = pathname === '/overview' ? 'The Overview is today’s work in one place: your numbers, what is late, what is due today and in the next 7 days, and what waits for your approval. Each number opens its page.'
+    : (k && about(k, me)) || 'Each app on the Home page holds a few pages. Open one, and its pages are listed in the menu on the left. Press Ctrl + K to find anything by name or number.';
+  return <>
+    <button type="button" className={className} onClick={() => setOpen(true)} aria-label="What is this page?" title="What is this page?"><Ico k="help" size={16} />{label && <span>Help</span>}</button>
+    {open && <Modal title={name ? `${name}: what is this page?` : 'How Aali One works'} onClose={() => setOpen(false)} footer={<>
+      <button type="button" className="btn" onClick={() => setOpen(false)}>Got it</button>
+      <button type="button" className="btn primary" onClick={() => { setOpen(false); setTimeout(openGuide, 200); }}>Show me around</button></>}>
+      <p style={{ margin: 0 }}>{text}</p>
+      <p className="small muted" style={{ margin: '12px 0 0' }}>Shortcuts: <kbd>Ctrl</kbd> + <kbd>K</kbd> or <kbd>/</kbd> to search any name or number, open a recent page or start something new · <kbd>?</kbd> for this help · <kbd>Esc</kbd> to close a pop-up.</p>
+    </Modal>}
+  </>;
+}

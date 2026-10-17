@@ -10,6 +10,7 @@
   --e3:0 2px 8px rgba(70,50,10,.08),0 30px 60px -20px rgba(50,35,5,.38);
   --shadow:var(--e2); --ring:0 0 0 4px rgba(184,116,0,.16);
   --r:16px; --r-sm:10px; --ease:cubic-bezier(.22,1,.36,1);
+  --t-fast:140ms; --t-mid:220ms; --t-slow:360ms; --spring:cubic-bezier(.34,1.36,.64,1); --hi:inset 0 1px 0 rgba(255,255,255,.75);
   color-scheme:light;
 }
 @media screen{
@@ -21,7 +22,7 @@
   --e1:0 1px 2px rgba(0,0,0,.4);
   --e2:0 1px 2px rgba(0,0,0,.4),0 14px 28px -12px rgba(0,0,0,.6);
   --e3:0 2px 8px rgba(0,0,0,.5),0 30px 60px -18px rgba(0,0,0,.8);
-  --ring:0 0 0 4px rgba(224,165,46,.2);
+  --ring:0 0 0 4px rgba(224,165,46,.2); --hi:inset 0 1px 0 rgba(255,255,255,.05);
   color-scheme:dark;
 }
 [data-theme="dark"] .btn.primary,[data-theme="dark"] .chip.on,[data-theme="dark"] .step.cur,[data-theme="dark"] .pill.esc,[data-theme="dark"] .nav a .cnt,[data-theme="dark"] .toast.bad{color:#191305}
@@ -59,7 +60,7 @@ button{cursor:pointer}
 .ico{flex:none}
 
 /* ---------- shell ---------- */
-.shell{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh;min-height:100dvh;transition:grid-template-columns .28s var(--ease)}
+.shell{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh;min-height:100dvh}
 .side{background:color-mix(in srgb,var(--paper) 88%,transparent);backdrop-filter:saturate(1.3) blur(16px);border-right:1px solid var(--line);padding:16px 12px 14px;position:sticky;top:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;gap:2px}
 .brand{display:flex;gap:11px;align-items:center;padding:2px 6px 16px}
 .brand img{width:36px;height:36px;border-radius:10px;box-shadow:0 6px 14px -6px rgba(160,100,0,.6)}
@@ -103,7 +104,8 @@ a.me-who:hover{background:var(--gold-50)}
 .totop:hover{border-color:var(--gold);color:var(--gold-strong)}
 @media (min-width:901px){
   /* the page heading stays in view while you scroll, on frosted glass */
-  .topbar{position:sticky;top:0;z-index:15;margin:-24px -28px 18px;padding:20px 28px 14px;background:color-mix(in srgb,var(--desk) 80%,transparent);backdrop-filter:saturate(1.4) blur(14px)}
+  /* a plain see-through colour, no blur: a blurred bar is drawn again on every frame of a scroll (measured 18 Oct 2026) */
+  .topbar{position:sticky;top:0;z-index:15;margin:-24px -28px 18px;padding:20px 28px 14px;background:color-mix(in srgb,var(--desk) 95%,transparent)}
   /* collapsed: a calm strip. Logo on top (click to open), the few everyday sections, the person at the bottom. */
   .shell.mini{grid-template-columns:68px minmax(0,1fr)}
   .shell.mini .side{padding:16px 0 14px;overflow:visible;z-index:20;align-items:center}
@@ -125,7 +127,9 @@ a.me-who:hover{background:var(--gold-50)}
   .shell.mini .nav a .cnt{position:absolute;top:-3px;right:-5px;margin:0;font-size:9.5px;line-height:15px;min-width:15px;padding:0 4px;box-shadow:0 0 0 2px var(--paper)}
   .shell.mini .nav [data-tip]:hover::after,.shell.mini .nav [data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);background:var(--ink);color:var(--paper);font:600 12px/1 var(--ui);padding:8px 11px;border-radius:8px;white-space:nowrap;z-index:50;pointer-events:none;box-shadow:var(--e2);animation:tip-in .16s var(--ease)}
   .shell.mini .side .me{padding:12px 0 0;align-items:center;width:42px}
-  .shell.mini .me .grow,.shell.mini .me-act{display:none}
+  .shell.mini .me .grow,.shell.mini .me-act>:not(.help){display:none}
+  .shell.mini .me-act .help{width:42px;height:42px;padding:0;border-radius:12px}
+  .shell.mini .nav .app-h{display:none}
   .shell.mini a.me-who{padding:0;border-radius:50%}
 }
 @supports (animation-timeline:scroll()){@media (min-width:901px){.topbar{animation:bar-lift linear both;animation-timeline:scroll(root);animation-range:0 90px}}}
@@ -138,7 +142,7 @@ a.me-who:hover{background:var(--gold-50)}
   .brand .collapse{display:none}
   .brand .shut{display:inline-flex;margin-left:auto}
   .side-search kbd{display:none}
-  .mobilebar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--paper) 86%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:calc(9px + env(safe-area-inset-top)) 16px 9px}
+  .mobilebar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--paper) 96%,transparent);border-bottom:1px solid var(--line);padding:calc(9px + env(safe-area-inset-top)) 16px 9px}
   .main{padding:16px 16px calc(90px + env(safe-area-inset-bottom))}
 }
 
@@ -652,3 +656,67 @@ table.chart td,table.chart th{white-space:normal;vertical-align:top;min-width:10
 .tile-s{font-size:11.5px;color:var(--ink-faint);margin-top:-5px}
 .tile .cnt{position:absolute;top:8px;right:8px;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--gold);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
 @media (max-width:420px){.tiles{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.tile{min-height:104px;padding:12px 4px}.tile-ico{width:44px;height:44px}.tile-t{font-size:12.5px}}
+
+/* ---------- premium finish and smooth movement (the user, 18 Oct 2026) ----------
+   Movement uses only transform and opacity, so the graphics card does the work and nothing is laid out again on each frame.
+   Hover lifts with a soft spring; a press sinks a little. Surfaces get a faint light edge on top, like lifted glass. */
+.card,.list,.tbl,.stat,.tile,.kc,.act,.col,.modal,.search{box-shadow:var(--e1),var(--hi)}
+.btn,.chip,.act,a.stat,.kc,.tile,.rolecard,button.pill{-webkit-tap-highlight-color:transparent}
+.btn{transition:background-color var(--t-mid),border-color var(--t-mid),color var(--t-mid),box-shadow var(--t-mid),transform var(--t-slow) var(--spring),filter var(--t-mid)}
+.btn:not(:disabled):active,.chip:active,.act:active,a.stat:active,.tile:active,.kc:active{transform:scale(.97);transition-duration:var(--t-fast)}
+a.stat,.act,.kc,.chip{transition:border-color var(--t-mid),box-shadow var(--t-slow) var(--ease),transform var(--t-slow) var(--spring),background-color var(--t-mid),color var(--t-mid)}
+.nav a{transition:color var(--t-mid),background-color var(--t-mid),transform var(--t-mid) var(--ease)}
+.nav a:active{transform:scale(.97)}
+.li,tbody tr{transition:background-color var(--t-fast)}
+tr.click:hover td{background:color-mix(in srgb,var(--gold-50) 85%,transparent)}
+th{letter-spacing:.06em}
+.tbl{box-shadow:var(--e1),var(--hi)}
+
+/* the app's name and picture at the top of its menu */
+.nav .app-h{display:flex;align-items:center;gap:9px;padding:14px 10px 6px;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft)}
+.nav .app-h .app-ic{display:grid;place-items:center;width:24px;height:24px;border-radius:8px;background:linear-gradient(145deg,var(--gold-soft),color-mix(in srgb,var(--gold-soft) 55%,var(--gold)));color:var(--gold-strong);box-shadow:var(--hi)}
+.me-act .help{flex:none;padding-inline:9px}
+
+/* the app launcher: one card per app, with what it is for in plain words */
+.apps-h{display:flex;align-items:baseline;gap:6px 14px;flex-wrap:wrap}
+.apps-h h2{font-size:21px}
+.apps-h kbd{font-size:10.5px}
+.tiles.apps{grid-template-columns:repeat(auto-fill,minmax(244px,1fr));gap:14px}
+.tiles.apps .tile{flex-direction:row;align-items:flex-start;text-align:left;gap:14px;padding:16px 16px 15px;min-height:0;border-radius:18px;
+  background:linear-gradient(180deg,var(--raise),color-mix(in srgb,var(--raise) 82%,var(--gold-50)));
+  transition:transform var(--t-slow) var(--spring),border-color var(--t-mid),box-shadow var(--t-slow) var(--ease)}
+.tiles.apps .tile:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--gold) 55%,var(--line));box-shadow:var(--e2),var(--hi)}
+.tiles.apps .tile:active{transform:translateY(-1px) scale(.985)}
+.tiles.apps .tile-ico{position:relative;flex:none;width:48px;height:48px;border-radius:14px;color:var(--gold-strong);
+  background:linear-gradient(145deg,var(--gold-soft),color-mix(in srgb,var(--gold-soft) 50%,var(--gold)));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55),0 8px 16px -10px color-mix(in srgb,var(--gold) 80%,transparent);transition:transform var(--t-slow) var(--spring)}
+.tiles.apps .tile:hover .tile-ico{transform:scale(1.06) rotate(-3deg)}
+.tile-body{position:relative;display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.tiles.apps .tile-t{font-family:var(--doc);font-size:16.5px;font-weight:600;letter-spacing:-.01em;padding-right:26px}
+.tile-a{font-size:13px;color:var(--ink-soft);line-height:1.4}
+.tiles.apps .tile-s{margin:3px 0 0;font-size:11.5px;color:var(--ink-faint);line-height:1.45}
+.tiles.apps .tile .cnt{top:14px;right:14px;background:var(--bad)}
+.tile-go{position:absolute;right:16px;bottom:14px;font-size:15px;color:var(--gold-strong);opacity:0;transform:translateX(-6px);transition:opacity var(--t-mid),transform var(--t-slow) var(--spring)}
+.tiles.apps .tile:hover .tile-go,.tiles.apps .tile:focus-visible .tile-go{opacity:1;transform:none}
+[data-theme="dark"] .tiles.apps .tile .cnt{color:#fff}
+@media (max-width:520px){.tiles.apps{grid-template-columns:1fr 1fr;gap:10px}.tiles.apps .tile{flex-direction:column;gap:10px;padding:13px}.tiles.apps .tile-ico{width:42px;height:42px}
+  .tiles.apps .tile-t{font-size:15px}.tile-a{font-size:12px}.tiles.apps .tile-s{display:none}.tile-go{display:none}}
+@media (hover:none){.tiles.apps .tile:hover{transform:none}.tiles.apps .tile:hover .tile-ico{transform:none}}
+
+/* a box that must be filled: its star in gold */
+.field>label .req{color:var(--gold-strong);font-weight:700}
+@media (max-width:900px),(hover:none){.apps-h .keys{display:none}}
+
+/* Home: a short greeting over the apps (the Overview holds the full numbers) */
+.hero.slim{background:none;border:0;box-shadow:none;padding:2px 0 0;margin-bottom:18px;overflow:visible}
+.hero.slim::before,.hero.slim::after{display:none}
+.hero.slim h1{font-size:28px}
+.hero.slim .acts-row{margin-top:12px}
+/* the Overview card leads the apps, in Aali gold */
+.tiles.apps .tile.dash{border-color:color-mix(in srgb,var(--gold) 45%,var(--line));background:linear-gradient(145deg,color-mix(in srgb,var(--gold-soft) 70%,var(--raise)),var(--raise) 70%)}
+.tiles.apps .tile.dash .tile-ico{background:linear-gradient(145deg,var(--gold-fill),var(--gold-fill-h));color:#fff}
+/* the menu's words come in softly when the sidebar opens or another app's menu shows */
+@media (min-width:901px){.shell:not(.mini) .nav .lab,.shell:not(.mini) .brand-t,.shell:not(.mini) .nav .app-h{animation:lab-in .26s var(--ease) both}}
+@keyframes lab-in{from{opacity:0;transform:translateX(-4px)}}
+@media (prefers-reduced-motion:reduce){.nav .lab,.brand-t,.nav .app-h{animation:none!important}}
+

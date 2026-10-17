@@ -55,13 +55,13 @@ function Numbers() {
 }
 
 // The welcome card: who you are, what today is, and the one thing to do next.
-function Hero() {
+function Hero({ slim }) {
   const me = store.me, t = today(), month = t.slice(0, 7), hour = new Date().getHours(), top = isTop(), mgr = isManager(), writes = !NO_REPORT.includes(me.title);
   const rep = list('report').find((r) => r.owner === me.id && r.date === t), caller = me.team === 'sales' && level('leads') === 'own';
   const won = can('leads') ? list('deal').filter((d) => d.stage === 'won' && (d.wonAt || '').startsWith(month)).reduce((s, d) => s + (+d.value || 0), 0) : 0;
   const target = can('leads') ? list('target').filter((x) => x.month === month).reduce((s, x) => s + (+x.amount || 0), 0) : 0;
   const next = !writes ? 'Here is how the group is doing today.' : !rep ? 'Your day has not started yet. Start it and add each task as you take it up.' : rep.status === 'submitted' ? 'Your report for today is submitted. Well done.' : 'Your day is running. Keep adding each task as you take it up.';
-  return <m.section className="hero" data-guide="hero" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, ease: EASE }}>
+  return <m.section className={'hero' + (slim ? ' slim' : '')} data-guide="hero" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, ease: EASE }}>
     <button type="button" className="btn sm guide-btn" data-guide="guide-btn" onClick={openGuide} title="A guided walk through every section your login can open"><Ico k="help" size={16} />Guide</button>
     <div><h1>Good {hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, {me.display || me.name.split(' ')[0]}</h1>
       <div className="sub">{desig(me)} · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
@@ -73,7 +73,7 @@ function Hero() {
         {mgr && <Link className="btn" to="/daily"><Ico k="daily" size={16} />{top ? 'Read today’s reports' : 'My team’s reports'}</Link>}
         {can('reports') && <Link className="btn" to="/reports"><Ico k="reports" size={16} />Full reports</Link>}
       </div></div>
-    {target > 0 && <div className="hero-side"><Ring pct={Math.round(100 * won / target)} label="of target" />
+    {!slim && target > 0 && <div className="hero-side"><Ring pct={Math.round(100 * won / target)} label="of target" />
       <div className="cap"><b>{inr(won)}</b>won in {MONTHS[+month.slice(5) - 1]}, of a {inr(target)} target</div></div>}
   </m.section>;
 }
@@ -88,6 +88,13 @@ function OutNow() {
 
 const KIND = { task: 'Task', lead: 'Lead', deal: 'Deal', cadence: 'Follow-up plan', activity: 'Call / meeting', payment: 'Payment', project: 'Project', ticket: 'Support', callback: 'Call back' };
 
+// Home (the user, 18 Oct 2026): a short greeting with the day's main buttons, then only the apps – the Overview is one of them.
+export function Home() {
+  useStore();
+  return <><Hero slim /><AppLauncher /></>;
+}
+
+// The Overview: today's work – the numbers that matter to this person and what needs attention.
 export default function Today() {
   useStore();
   const me = store.me, [scope, setScope] = useState('mine'), wide = reach('today');
@@ -98,7 +105,6 @@ export default function Today() {
   const notes = list('notice').filter((n) => n.to === me.id && !n.read).slice(0, 5);
   return (
     <>
-      <AppLauncher />
       <Hero />
       <OutNow />
       <Numbers />
