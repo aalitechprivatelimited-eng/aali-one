@@ -42,9 +42,41 @@ export function useDraw(again) {
   }, [again]);
   return ref;
 }
+// When the page area changes width – the sidebar folds or opens, the window is resized, a phone is turned – the tiles and cards that
+// land in a new place glide there instead of jumping (the user, 16 Oct 2026, from a video of a smooth dashboard). Each is measured
+// before and after and eased from where it was (FLIP). Small shifts while a column only stretches are left alone, so nothing wobbles.
+const GLIDE = '.stats > *, .grid2 > *, .grid3 > *, .roles > *, .acts > *, .bigrow > *, .tiles > *';
+function useGlide(ref) {
+  useLayoutEffect(() => {
+    const root = ref.current; if (!root || still() || typeof ResizeObserver !== 'function') return;
+    const runs = new WeakMap();
+    const measure = () => { const b = root.getBoundingClientRect(), out = new Map();
+      for (const el of root.querySelectorAll(GLIDE)) if (!el.closest('.paper, .modal')) { const r = el.getBoundingClientRect(); out.set(el, { x: r.left - b.left, y: r.top - b.top }); }
+      return out; };
+    let prev = measure(), width = root.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (root.clientWidth === width) { prev = measure(); return; } // only taller or shorter: remember where things are
+      width = root.clientWidth;
+      const from = measure(); // where each one is seen now (a glide still running included)
+      const moving = new Set(); for (const el of from.keys()) { const a = runs.get(el); if (a) { a.cancel(); runs.delete(el); moving.add(el); } }
+      const to = measure(); let n = 0;
+      for (const [el, b] of to) {
+        const a = moving.has(el) ? from.get(el) : prev.get(el) || from.get(el); if (!a) continue;
+        const dx = a.x - b.x, dy = a.y - b.y;
+        if ((Math.abs(dx) < 24 && Math.abs(dy) < 4) || ++n > 60) continue;
+        const run = el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 460, easing: 'cubic-bezier(.22,1,.36,1)' });
+        runs.set(el, run); run.onfinish = () => runs.delete(el);
+      }
+      prev = to;
+    });
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, []);
+}
+
 // A section's page: it rises in when opened and slips away when you leave it. Kept short, because people change section all day long.
 export function Page({ children }) {
-  const ref = useRef(null); useArrivals(ref);
+  const ref = useRef(null); useArrivals(ref); useGlide(ref);
   return <m.div ref={ref} className="page" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.08 } }} transition={{ duration: 0.26, ease: EASE }}>{children}</m.div>;
 }
 
