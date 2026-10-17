@@ -4,7 +4,7 @@ import { useStore, list, get, create, update, store } from '../api.js';
 import { settings, uname, fmtDate, today, addDays, inr, stageLabel, stageProb, isManager, dealReceived, diff, clientName, canMoney, canEdit, scope } from '../lib.js';
 import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, Log, Comments, Attachments, Message, DeleteButton, Person, People, attempt, toast, Seg, Avs, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
 import { Activities } from '../activity.jsx';
-import { services } from './Leads.jsx';
+import { svcList, svcText, ServicesPick } from './Leads.jsx';
 import { useId } from '../App.jsx';
 
 export default function Deals() { useStore(); const id = useId(); return id === 'new' ? <DealForm /> : id ? <DealView id={id} /> : <Pipeline />; }
@@ -77,7 +77,7 @@ function DealForm() {
       <Field label="Client"><Pick value={f.clientId} onChange={up('clientId')} options={list('client').map((c) => [c.id, c.name, c.city])} blank="Choose (or add on Clients)" /></Field>
       <Field label="Contact person"><In value={f.contactName || ''} onChange={up('contactName')} /></Field>
       <Field label="Phone"><In value={f.phone || ''} onChange={up('phone')} /></Field>
-      <Field label="Service"><Sel value={f.service} onChange={(v) => setF({ ...f, service: v, value: f.value || settings().services.find((s) => s.name === v)?.rate })} options={services()} blank="Choose…" /></Field>
+      <Field label="Services (tick all)" full><ServicesPick value={svcList(f)} onChange={(v) => setF({ ...f, services: v, service: v[0] || '', value: f.value || v.reduce((s, x) => s + (+settings().services.find((y) => y.name === x)?.rate || 0), 0) })} /></Field>
       <Field label="Value (₹)"><In type="number" value={f.value || ''} onChange={up('value')} /></Field>
       <Field label="Stage"><Sel value={f.stage} onChange={up('stage')} options={settings().pipeline.filter((s) => s.key !== 'lost').map((s) => [s.key, s.label])} /></Field>
       <Field label="Expected closing date"><In type="date" value={f.closeDate} onChange={up('closeDate')} /></Field>
@@ -94,7 +94,7 @@ function DealView({ id }) {
   if (!d) return <Empty>This deal was not found. <Link to="/deals">Back to the pipeline</Link></Empty>;
   const set = (data, ok) => attempt(() => update(id, data), ok), edit = canEdit('deals'), own = scope('deals') === 'own';
   const client = get(d.clientId), quotes = list('quote').filter((q) => q.dealId === id), pays = list('payment').filter((p) => p.dealId === id);
-  const project = list('project').find((p) => p.dealId === id), received = dealReceived(id);
+  const projects = list('project').filter((p) => p.dealId === id), project = projects[0], received = dealReceived(id);
   const days = (d.stageHistory || []).map((h, i, a) => ({ ...h, days: Math.max(0, Math.round(((i + 1 < a.length ? new Date(a[i + 1].at) : new Date()) - new Date(h.at)) / 864e5)) }));
   function macro(m) {
     const data = { followUp: addDays(today(), m.followDays || 1), _note: m.note };
@@ -115,6 +115,7 @@ function DealView({ id }) {
           <button className="btn sm" type="button" onClick={async () => { await attempt(() => create('lead', { name: d.contactName || d.title, mobile: d.phone, service: d.service, source: 'Existing client', owner: d.owner, _new: true })); set({ repeatPending: false, _note: 'Client said: new requirement – new lead made' }, 'New lead made for the new requirement.'); }}>New requirement</button></div></div>}
       <div className="row" style={{ marginBottom: 12 }}><span className="lbl">Quick actions</span>{settings().macros.map((m) => <button key={m.id} className="btn sm" type="button" onClick={() => macro(m)}>{m.name}</button>)}</div>
       </RO>
+      <ServicesMode d={d} />
       <div className="tabs" role="tablist">{[['work', 'Details & follow-up'], ['handoff', 'Handoff & payments'], ['talk', 'Calls, messages & comments'], ['history', 'History']].map(([k, l]) =>
         <button key={k} role="tab" type="button" aria-selected={tab === k} onClick={() => setTab(k)}>{l}</button>)}</div>
       <RO when={!edit}>
@@ -124,7 +125,7 @@ function DealView({ id }) {
           <Field label="Client"><Pick value={d.clientId} onChange={(v) => set({ clientId: v })} options={list('client').map((c) => [c.id, c.name, c.city])} blank="None" /></Field>
           <Field label="Contact person"><In defaultValue={d.contactName} onBlur={(e) => set({ contactName: e.target.value })} /></Field>
           <Field label="Phone"><In defaultValue={d.phone} onBlur={(e) => set({ phone: e.target.value })} /></Field>
-          <Field label="Service"><Sel value={d.service} onChange={(v) => set({ service: v })} options={services()} blank="Choose…" /></Field>
+          <Field label="Services" full><ServicesPick value={svcList(d)} onChange={(v) => v.length && set({ services: v })} /></Field>
           <Field label="Value (₹)"><In type="number" defaultValue={d.value} onBlur={(e) => +e.target.value !== +d.value && set({ value: +e.target.value || 0 })} /></Field>
           <Field label="Stage"><Sel value={d.stage} onChange={(v) => (v === 'lost' ? setLost(true) : set({ stage: v }))} options={settings().pipeline.map((s) => [s.key, `${s.label} (${s.p}%)`])} /></Field>
           <Field label="Expected closing date"><In type="date" value={d.closeDate || ''} onChange={(e) => set({ closeDate: e.target.value })} /></Field>
@@ -150,7 +151,7 @@ function DealView({ id }) {
             {canEdit('quotes') && <Link className="btn sm" to={`/quotes/new?deal=${id}`}>+ New quotation</Link>}</div>}
           <div className="card stack"><h2>Time in each stage</h2>{days.map((h, i) => <div key={i} className="row small"><span className="grow">{stageLabel(h.stage)}</span><span className="num">{fmtDate(h.at.slice(0, 10))}</span><span className="num">{h.days} days</span></div>)}</div>
         </div></div>}
-      {tab === 'handoff' && <Handoff d={d} set={set} project={project} pays={pays} received={received} client={client} />}
+      {tab === 'handoff' && <Handoff d={d} set={set} projects={projects} pays={pays} received={received} client={client} />}
       {tab === 'talk' && <div className="grid2">
         <div className="card stack"><h2>Calls & meetings</h2><Activities dealId={id} clientId={d.clientId} subject={d.title} /></div>
         <div className="card stack"><h2>Message the client</h2><Message phone={d.phone} vars={{ client: (d.contactName || clientName(d.clientId)).split(' ')[0], service: d.service, quote: d.quoteNo, amount: inr(d.value) }} /></div>
@@ -163,26 +164,48 @@ function DealView({ id }) {
   );
 }
 
-function Handoff({ d, set, project, pays, received, client }) {
-  const nav = useNavigate(), h = d.handoff || {}, [f, setF] = useState({ scope: h.scope || d.notes || '', deadline: h.deadline || addDays(today(), 30), agreement: !!h.agreement, template: settings().projectTemplates[0]?.id || '' });
+// One deal with several services, or one deal for each: only the Operations Manager and the Company Secretary decide (17 Oct 2026),
+// and only before a quotation, payment, agreement or project hangs on the deal (the server checks).
+function ServicesMode({ d }) {
+  const all = svcList(d), boss = ['ops', 'cs'].includes(store.me.title), [to, setTo] = useState(''), nav = useNavigate();
+  const others = list('deal').filter((x) => x.id !== d.id && x.clientId && x.clientId === d.clientId && open(x));
+  if (all.length < 2 && !(boss && others.length)) return null;
+  return <div className="card row" style={{ marginBottom: 12 }}>
+    <span className="grow"><b>{all.length > 1 ? `One deal · ${all.length} services` : 'One service'}</b>{all.length > 1 && <span className="small muted"> – {all.join(', ')}</span>}</span>
+    {boss && all.length > 1 && <button className="btn sm" type="button" onClick={async () => { if (await attempt(() => update(d.id, { _split: true }), `Split into ${all.length} deals.`)) nav('/clients/' + d.clientId); }}>Split into separate deals</button>}
+    {boss && others.length > 0 && <><Sel value={to} onChange={setTo} options={others.map((x) => [x.id, `${x.title} (${svcText(x)})`])} blank="Join another deal of this client…" style={{ width: 'auto', maxWidth: 280 }} aria-label="Deal to join" />
+      <button className="btn sm" type="button" disabled={!to} onClick={async () => { if (await attempt(() => update(d.id, { _join: to }), 'Joined into this deal.')) setTo(''); }}>Join</button></>}
+  </div>;
+}
+
+function Handoff({ d, set, projects, pays, received, client }) {
+  const project = projects[0], many = svcList(d).length > 1;
+  // Several services: each its own deadline, and IT gets one project for each (AS Group: the POS by 21 Oct, the websites by 1 Nov).
+  const nav = useNavigate(), h = d.handoff || {}, [f, setF] = useState({ scope: h.scope || d.notes || '', deadline: h.deadline || addDays(today(), 30), agreement: !!h.agreement, template: settings().projectTemplates[0]?.id || '',
+    dates: Object.fromEntries(svcList(d).map((x) => [x, h.dates?.[x] || h.deadline || addDays(today(), 30)])) });
   const [pay, setPay] = useState(null);
   if (d.stage !== 'won') return <Empty>The handoff to IT opens when the deal is marked Won.</Empty>;
   async function handOver() {
     if (!f.scope.trim()) return toast('Write what was promised (scope) first, so IT knows what to build.', true);
-    await set({ handoff: { ...h, scope: f.scope, deadline: f.deadline, agreement: f.agreement } });
-    const tpl = settings().projectTemplates.find((t) => t.id === f.template);
-    const p = await attempt(() => create('project', { name: d.title, clientId: d.clientId, clientName: client?.name || '', dealId: d.id, stage: h.advance ? 'planning' : 'awaiting', deadline: f.deadline, start: today(),
-      scope: f.scope, lead: '', people: [d.owner, ...(d.people || [])].filter(Boolean), priority: !!d.priority, template: tpl?.name || '', templateId: tpl?.id || '' }));
-    if (!p) return;
+    const last = many ? Object.values(f.dates).sort().at(-1) : f.deadline;
+    await set({ handoff: { ...h, scope: f.scope, deadline: last, agreement: f.agreement, ...(many ? { dates: f.dates } : {}) } });
+    const tpl = settings().projectTemplates.find((t) => t.id === f.template), who = client?.name || d.contactName || d.title;
+    let p = null;
+    for (const [name, deadline] of many ? svcList(d).map((x) => [`${x} – ${who}`, f.dates[x]]) : [[d.title, f.deadline]]) {
+      const r = await attempt(() => create('project', { name, clientId: d.clientId, clientName: client?.name || '', dealId: d.id, stage: h.advance ? 'planning' : 'awaiting', deadline, start: today(),
+        scope: f.scope, lead: '', people: [d.owner, ...(d.people || [])].filter(Boolean), priority: !!d.priority, template: tpl?.name || '', templateId: tpl?.id || '' }));
+      if (!r) return; p ||= r;
+    }
     if (canEdit('money') && !h.advance && !pays.some((x) => x.kind === 'advance')) await create('payment', { title: 'Advance', kind: 'advance', clientId: d.clientId, dealId: d.id, amount: Math.round((+d.value || 0) / 2), due: addDays(today(), 2), owner: d.owner, repeat: 'none' });
     toast(h.advance ? 'Handed over. The IT Manager will assign a lead.' : canEdit('money') ? 'Handed over. It waits for the advance – a “Collect advance” payment was added.' : 'Handed over. It waits for the advance. The Sales Manager records the payment.');
-    nav('/projects/' + p.record.id);
+    nav(many ? '/projects' : '/projects/' + p.record.id);
   }
   return <div className="grid2">
     <div className="card stack"><h2>Handoff note for IT</h2>
-      {project ? <div className="banner ok">Handed over: <Link to={'/projects/' + project.id}>{project.name}</Link></div> : null}
+      {project ? <div className="banner ok">Handed over: {projects.map((x, i) => <span key={x.id}>{i ? ', ' : ''}<Link to={'/projects/' + x.id}>{x.name}</Link></span>)}</div> : null}
       <Field label="What exactly was promised (scope) *"><Area style={{ minHeight: 120 }} value={f.scope} onChange={(e) => setF({ ...f, scope: e.target.value })} placeholder="Pages, features, and what is NOT included" disabled={!!project} /></Field>
-      <div className="form"><Field label="Deadline promised to client"><In type="date" value={f.deadline} onChange={(e) => setF({ ...f, deadline: e.target.value })} disabled={!!project} /></Field>
+      {many && <div className="stack gap4"><b className="small">Deadline promised for each service – IT gets one project for each</b>{svcList(d).map((x) => <Field key={x} label={x}><In type="date" value={f.dates[x] || ''} onChange={(e) => setF({ ...f, dates: { ...f.dates, [x]: e.target.value } })} disabled={!!project} /></Field>)}</div>}
+      <div className="form">{!many && <Field label="Deadline promised to client"><In type="date" value={f.deadline} onChange={(e) => setF({ ...f, deadline: e.target.value })} disabled={!!project} /></Field>}
         <Field label="Project template"><Sel value={f.template} onChange={(v) => setF({ ...f, template: v })} options={settings().projectTemplates.map((t) => [t.id, t.name])} blank="No template" disabled={!!project} /></Field></div>
       <label className="check"><input type="checkbox" checked={f.agreement} onChange={(e) => setF({ ...f, agreement: e.target.checked })} /> Service agreement signed with the client</label>
       <div className={'banner ' + (h.advance ? 'ok' : '')}>{h.advance ? 'Advance received – IT can start work.' : 'No advance yet. IT can see the project but cannot start work (not even planning) until the advance receipt is made.'}</div>

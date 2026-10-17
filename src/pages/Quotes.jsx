@@ -34,10 +34,11 @@ function Register() {
 }
 
 function blankFrom(deal) {
-  const c = deal && get(deal.clientId), svc = deal && settings().services.find((s) => s.name === deal.service);
+  // One line for each service of the deal (several services under one client, 17 Oct 2026).
+  const c = deal && get(deal.clientId), svcs = deal ? (deal.services?.length ? deal.services : [deal.service]).map((x) => settings().services.find((s) => s.name === x)).filter(Boolean) : [];
   return { dealId: deal?.id || '', clientId: deal?.clientId || '', clientName: c?.name || deal?.contactName || '', contactName: deal?.contactName || '', phone: deal?.phone || c?.phone || '',
     email: c?.email || '', address: c?.address || '', gstin: c?.gstin || '', subject: deal?.title || '', date: today(), validUntil: addDays(today(), 15),
-    items: svc ? [{ desc: svc.name, note: svc.note, qty: 1, unit: svc.unit, rate: svc.rate }] : [{ desc: '', note: '', qty: 1, unit: 'Nos', rate: 0 }],
+    items: svcs.length ? svcs.map((svc) => ({ desc: svc.name, note: svc.note, qty: 1, unit: svc.unit, rate: svc.rate })) : [{ desc: '', note: '', qty: 1, unit: 'Nos', rate: 0 }],
     discountType: 'none', discountValue: 0, taxMode: 'intra', taxRate: 18, roundOff: true, showTds: false, terms: settings().business.quoteTerms };
 }
 

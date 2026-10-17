@@ -9,6 +9,15 @@ import { useId } from '../App.jsx';
 const SCORE = { hot: ['Hot', 'bad'], warm: ['Warm', 'warn'], cold: ['Cold', 'info'] };
 const STATUS = { new: 'New', contacted: 'Contacted', qualified: 'Qualified', converted: 'Converted', junk: 'Not a real lead' };
 export const services = () => settings().services.map((s) => s.name);
+// Several services under one client (the user, 17 Oct 2026): tick every service the client wants; the first one ticked is the main one.
+export const svcList = (d) => (d?.services?.length ? d.services : d?.service ? [d.service] : []);
+export const svcText = (d) => svcList(d).join(', ');
+export function ServicesPick({ value = [], onChange, disabled }) {
+  const all = [...new Set([...services(), ...value])];
+  return <div className="row" role="group" aria-label="Services" style={{ gap: 8 }}>{all.map((x) => { const on = value.includes(x);
+    return <button key={x} type="button" className={'chip' + (on ? ' on' : '')} aria-pressed={on} disabled={disabled}
+      onClick={() => onChange(on ? value.filter((y) => y !== x) : [...value, x])}>{on ? '✓ ' : ''}{x}</button>; })}</div>;
+}
 
 export default function Leads() {
   useStore(); const id = useId();
@@ -38,7 +47,7 @@ function LeadList() {
         {rows.map((l) => <tr key={l.id} className="click" onClick={() => nav('/leads/' + l.id)}>
           <td><Link to={'/leads/' + l.id}><b>{l.name}</b></Link><div className="small muted num">{l.mobile}{l.company ? ' · ' + l.company : ''}</div>
             <div className="row">{l.repeatPending && <Pill k="warn">Asked again</Pill>}{l.existingClient && <Pill k="gold">Existing client</Pill>}<Sample on={l.sample} /></div></td>
-          <td>{l.service}</td><td>{l.source}</td><td>{l.score ? <Pill k={SCORE[l.score][1]}>{SCORE[l.score][0]}</Pill> : '—'}</td>
+          <td>{svcText(l)}</td><td>{l.source}</td><td>{l.score ? <Pill k={SCORE[l.score][1]}>{SCORE[l.score][0]}</Pill> : '—'}</td>
           <td>{uname(l.owner)}</td><td>{l.followUp ? <Due date={l.followUp} /> : '—'}</td><td>{STATUS[l.status] || l.status}</td></tr>)}
       </tbody></table></div> : <Empty>No leads match. Use “+ New enquiry”, import a sheet, or share the website form.</Empty>}
       {add && <NewEnquiry onClose={() => setAdd(false)} />}
@@ -71,13 +80,13 @@ export function NewEnquiry({ onClose, preset = {} }) {
       <div className="form">
         <Field label="Name *"><In value={f.name || ''} onChange={up('name')} autoFocus /></Field>
         <Field label="Mobile *"><In type="tel" value={f.mobile || ''} onChange={up('mobile')} placeholder="98765 43210" /></Field>
-        <Field label="Service wanted *"><Sel value={f.service} onChange={up('service')} options={services()} blank="Choose…" /></Field>
+        <Field label="Services wanted * (tick all)" full><ServicesPick value={svcList(f)} onChange={(v) => setF({ ...f, services: v, service: v[0] || '' })} /></Field>
         <Field label="Source *"><Sel value={f.source} onChange={up('source')} options={settings().sources} /></Field>
         <Field label="Company"><In value={f.company || ''} onChange={up('company')} /></Field>
         <Field label="Email"><In type="email" value={f.email || ''} onChange={up('email')} /></Field>
         <Field label="Message / requirement" full><Area value={f.message || ''} onChange={up('message')} /></Field>
         {stop && <div className="banner bad full">{chk.msg}</div>}
-        {existing.length > 0 && <div className="banner info full">This mobile is already known: {existing.map((e) => `${e.name || e.title} (${e.service || ''}, ${uname(e.owner)})`).join('; ')}.</div>}
+        {existing.length > 0 && <div className="banner info full">This mobile is already known: {existing.map((e) => `${e.name || e.title} (${svcText(e)}, ${uname(e.owner)})`).join('; ')}.</div>}
       </div>
     </Modal>
   );
@@ -129,7 +138,7 @@ function LeadView({ id }) {
   const set = (data, ok) => attempt(() => update(id, data), ok), edit = canEdit('leads'), own = scope('leads') === 'own';
   return (
     <>
-      <div className="topbar"><h1>{l.name} <small>{l.service} · {l.source}</small> <ViewOnly when={!edit} /></h1>
+      <div className="topbar"><h1>{l.name} <small>{svcText(l)} · {l.source}</small> <ViewOnly when={!edit} /></h1>
         <div className="row"><Link className="btn" to="/leads">All leads</Link>
           {edit && l.status !== 'converted' && <button className="btn primary" type="button" onClick={() => setConv(true)}>Convert to client + deal</button>}
           {l.status === 'converted' && l.dealId && <Link className="btn primary" to={'/deals/' + l.dealId}>Open deal</Link>}</div></div>
@@ -149,7 +158,7 @@ function LeadView({ id }) {
             <Field label="Mobile"><In defaultValue={l.mobile} onBlur={(e) => e.target.value !== l.mobile && set({ mobile: e.target.value, mobile10: mobile10(e.target.value) })} /></Field>
             <Field label="Company"><In defaultValue={l.company} onBlur={(e) => set({ company: e.target.value })} /></Field>
             <Field label="Email"><In defaultValue={l.email} onBlur={(e) => set({ email: e.target.value })} /></Field>
-            <Field label="Service"><Sel value={l.service} onChange={(v) => set({ service: v })} options={services()} /></Field>
+            <Field label="Services" full><ServicesPick value={svcList(l)} onChange={(v) => v.length && set({ services: v })} /></Field>
             <Field label="Source"><Sel value={l.source} onChange={(v) => set({ source: v })} options={settings().sources} /></Field>
             <Field label="BDE" hint={own ? 'Only the Sales Manager can give a lead to someone else.' : ''}><Person value={l.owner} disabled={own} onChange={(v) => set({ owner: v, _note: `Lead given to ${uname(v)}` }, 'Reassigned.')} filter={(u) => u.team === 'sales'} /></Field>
             <Field label="Next follow-up"><In type="date" value={l.followUp || ''} onChange={(e) => set({ followUp: e.target.value })} /></Field>
@@ -177,13 +186,13 @@ function LeadView({ id }) {
 function Convert({ lead, onClose }) {
   const nav = useNavigate(), clients = list('client');
   const match = clients.find((c) => c.mobile10 === lead.mobile10 || (lead.company && c.name.toLowerCase() === lead.company.toLowerCase()));
-  const svc = settings().services.find((s) => s.name === lead.service);
-  const [f, setF] = useState({ clientId: match?.id || '', clientName: lead.company || lead.name, title: `${lead.service} – ${lead.company || lead.name}`, value: svc?.rate || 0, closeDate: addDays(today(), 21), stage: 'contacted' });
+  const all = svcList(lead), rate = all.reduce((s, x) => s + (+settings().services.find((y) => y.name === x)?.rate || 0), 0);
+  const [f, setF] = useState({ clientId: match?.id || '', clientName: lead.company || lead.name, title: `${all.length > 1 ? `${all.length} services` : lead.service} – ${lead.company || lead.name}`, value: rate, closeDate: addDays(today(), 21), stage: 'contacted' });
   const up = (k) => (v) => setF({ ...f, [k]: v?.target ? v.target.value : v });
   async function go() {
     let clientId = f.clientId;
     if (!clientId) { const c = await attempt(() => create('client', { name: f.clientName, phone: lead.mobile, email: lead.email, owner: lead.owner, contacts: [{ name: lead.name, phone: lead.mobile, email: lead.email, role: '' }], source: lead.source })); if (!c) return; clientId = c.record.id; }
-    const d = await attempt(() => create('deal', { title: f.title, clientId, contactName: lead.name, phone: lead.mobile, service: lead.service, source: lead.source, value: +f.value || 0, stage: f.stage, closeDate: f.closeDate, owner: lead.owner, followUp: lead.followUp || today(), leadId: lead.id, notes: lead.message, files: lead.files || [] }));
+    const d = await attempt(() => create('deal', { title: f.title, clientId, contactName: lead.name, phone: lead.mobile, service: lead.service, services: all, source: lead.source, value: +f.value || 0, stage: f.stage, closeDate: f.closeDate, owner: lead.owner, followUp: lead.followUp || today(), leadId: lead.id, notes: lead.message, files: lead.files || [] }));
     if (!d) return;
     await update(lead.id, { status: 'converted', clientId, dealId: d.record.id, _note: 'Converted to client + deal' });
     toast('Converted. The client and deal are ready.'); onClose(); nav('/deals/' + d.record.id);

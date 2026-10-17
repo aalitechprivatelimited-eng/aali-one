@@ -739,6 +739,43 @@ test('quotations: a manager makes it and gives it to a BDE; the client asks for 
   assert.equal((await patch(sm, q.id, { status: 'declined' })).status, 400);
 });
 
+test('several services under one client: one deal with all of them, or one deal each – only the Operations Manager or the Company Secretary decides', async () => {
+  const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  for (const [id, email, title, team] of [['u_svops', 'svops@test.in', 'ops', 'management'], ['u_svcs', 'svcs@test.in', 'cs', 'management'], ['u_svb', 'svb@test.in', 'bde', 'sales']])
+    await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$2,$3,$4,$5)', [id, email, title, team, hashPassword('password123')]);
+  const OPS = await login('svops@test.in'), CS = await login('svcs@test.in'), B = await login('svb@test.in'), recs = async (c) => (await call('GET', '/bootstrap', null, c)).body.records;
+  // A lead with several services; asking again about one of them joins it; a different service is a new lead.
+  const four = ['Software / ERP', 'Website – 5 pages', 'E-commerce website', 'Mobile app (Android + iOS)'];
+  const lead = (await add(B, 'lead', { name: 'AS Group', mobile: '9000088801', services: four, source: 'Walk-in' })).record;
+  assert.deepEqual(lead.services, four); assert.equal(lead.service, 'Software / ERP');
+  const again = await call('POST', '/records', { type: 'lead', data: { name: 'AS Group', mobile: '9000088801', service: 'E-commerce website', source: 'Call' } }, B);
+  assert.equal(again.body.merged, true, 'the same service joins the open lead');
+  const other = await call('POST', '/records', { type: 'lead', data: { name: 'AS Group', mobile: '9000088801', service: 'SEO & digital marketing', source: 'Call' } }, B);
+  assert.ok(!other.body.merged, 'another service is a new lead');
+  // One deal with the four services.
+  const client = (await add(B, 'client', { name: 'AS Group', phone: '9000088801' })).record;
+  const deal = (await add(B, 'deal', { title: 'AS Group – four services', clientId: client.id, phone: '9000088801', services: four, value: 300000 })).record;
+  assert.deepEqual(deal.services, four);
+  // Splitting: not the BDE, not the Sales Manager; the Company Secretary can. The deal keeps the first service, each other gets its own deal.
+  assert.equal((await patch(B, deal.id, { _split: true })).status, 403); assert.equal((await patch(sm, deal.id, { _split: true })).status, 403);
+  assert.equal((await patch(CS, deal.id, { _split: true })).status, 200);
+  let mine = (await recs(OPS)).filter((r) => r.type === 'deal' && r.clientId === client.id);
+  assert.equal(mine.length, 4); assert.deepEqual(mine.find((d) => d.id === deal.id).services, ['Software / ERP']);
+  assert.ok(mine.some((d) => d.service === 'E-commerce website' && d.value === 150000 && d.splitFrom === deal.id), 'each new deal has its service and rate');
+  // Joining them back: the Operations Manager joins each into the first; the joined deals go to the recycle bin with the reason.
+  for (const d of mine.filter((x) => x.id !== deal.id)) assert.equal((await patch(OPS, deal.id, { _join: d.id })).status, 200);
+  mine = (await recs(OPS)).filter((r) => r.type === 'deal' && r.clientId === client.id);
+  assert.equal(mine.length, 1); assert.deepEqual([...mine[0].services].sort(), [...four].sort());
+  // Once a quotation is made on the deal, its services can no longer be split.
+  await add(sm, 'quote', { clientName: 'AS Group', dealId: deal.id, items: [{ desc: 'POS', qty: 1, rate: 1000 }], discountType: 'none', taxMode: 'none' });
+  const no = await patch(OPS, deal.id, { _split: true }); assert.equal(no.status, 400); assert.match(no.body.error, /quotation/);
+  // Handed over as one project per service, each with its own deadline; the advance unlocks every one of them.
+  const p1 = (await add(OPS, 'project', { name: 'AS Group – POS', dealId: deal.id, deadline: '2026-10-21', stage: 'awaiting' })).record, p2 = (await add(OPS, 'project', { name: 'AS Group – Website', dealId: deal.id, deadline: '2026-11-01', stage: 'awaiting' })).record;
+  assert.equal(p1.stage, 'awaiting'); assert.equal(p2.stage, 'awaiting');
+  assert.equal((await patch(OPS, deal.id, { handoff: { advance: true } })).status, 200);
+  const ps = (await recs(OPS)).filter((r) => [p1.id, p2.id].includes(r.id)); assert.ok(ps.every((p) => p.advance && p.stage === 'planning'), 'every project of the deal can start');
+});
+
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {
   const { setHrmSource } = await import('../server/hrm.js'), { PGlite } = await import('@electric-sql/pglite');
   const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;

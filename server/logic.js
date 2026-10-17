@@ -87,6 +87,30 @@ export async function notify(t, to, text, relType, relId, user, sample = false) 
 }
 async function brandSetting(t) { return getSetting(t, 'business', {}); }
 
+// ---------- several services under one client (the user, 17 Oct 2026: AS Group wants a POS, billing software and two websites) ----------
+// A lead or a deal lists every service in `services`; `service` stays the first one, for everything that shows one.
+export const svcOf = (d) => (Array.isArray(d?.services) && d.services.length ? d.services : d?.service ? [d.service] : []);
+function cleanServices(d) {
+  const all = [...new Set((Array.isArray(d.services) && d.services.length ? d.services : [d.service]).map((x) => String(x || '').trim().slice(0, 80)).filter(Boolean))].slice(0, 12);
+  if (all.length) { d.services = all; d.service = all[0]; } else delete d.services;
+  return all;
+}
+// One deal with several services, or one deal per service: only the Operations Manager and the Company Secretary decide, and only
+// while no quotation, invoice, payment, receipt, agreement or project hangs on the deal – the money must never be split by guesswork.
+const SPLITTERS = ['ops', 'cs'];
+async function dealIsBare(t, id, title) {
+  const r = (await t.query("select type from records where deleted_at is null and data->>'dealId' = $1 and type = any($2) limit 1", [id, ['quote', 'invoice', 'payment', 'receipt', 'agreement', 'project']])).rows[0];
+  if (r) throw new Rule(`${title} already has a ${({ quote: 'quotation', invoice: 'tax invoice', payment: 'payment', receipt: 'receipt', agreement: 'agreement', project: 'project' })[r.type]}, so its services can no longer be split or joined.`);
+}
+// The advance has come for a deal: every project of the deal (one per service) can start.
+async function advanceProjects(t, dealId, user, why) {
+  for (const pr of (await t.query("select * from records where deleted_at is null and type = 'project' and data->>'dealId' = $1", [dealId])).rows) {
+    if (pr.data.advance && pr.data.stage !== 'awaiting') continue;
+    pr.data.advance = true; if (pr.data.stage === 'awaiting') pr.data.stage = 'planning'; log(pr.data, user?.id, why); await putRec(t, pr, user);
+    await notify(t, pr.data.lead || '', `Advance received for ${pr.data.name}. Work can start.`, 'project', pr.id, user, pr.sample);
+  }
+}
+
 // ---------- leads: duplicate check on mobile + service, then assign ----------
 async function leadIntake(t, data, user, sample) {
   // Every field has a sensible length, so the public form cannot fill the database with huge text (audit DOS-1).
@@ -94,7 +118,7 @@ async function leadIntake(t, data, user, sample) {
   const m = mobile10(data.mobile);
   if (!data.name?.trim()) throw new Rule('Enter the name.');
   if (m.length !== 10) throw new Rule('Enter a 10-digit mobile number.');
-  if (!data.service?.trim()) throw new Rule('Choose the service they want.');
+  const svcs = cleanServices(data); if (!svcs.length) throw new Rule('Choose the service they want.');
   data.mobile10 = m;
   // One business, one caller: a BDE cannot enter a business that is with another BDE or on the Do Not Call list.
   if (user && scopeOf(user, 'leads') === 'own') { const [v] = await checkCalls(t, user, [{ phone: m, org: data.company || data.name, dupOk: true }]); if (!v.ok && ['held', 'dnc'].includes(v.kind)) throw new Rule(v.msg, 409); }
@@ -102,13 +126,13 @@ async function leadIntake(t, data, user, sample) {
   const matches = (await t.query(`select * from records where deleted_at is null and type in ('lead','deal','client')
     and (data->>'mobile10' = $1 or data->'contacts' @> $2::jsonb) order by updated_at desc`, [m, JSON.stringify([{ mobile10: m }])])).rows;
   const enquiry = { at: new Date().toISOString(), source: data.source || 'Other', message: data.message || '' };
-  const open = !force && matches.find((r) => r.data.service === data.service &&
+  const open = !force && matches.find((r) => svcOf(r.data).some((x) => svcs.includes(x)) &&
     ((r.type === 'lead' && !['converted', 'junk'].includes(r.data.status)) || (r.type === 'deal' && !['won', 'lost'].includes(r.data.stage))));
   if (open) {
-    const d = open.data; d.enquiries = [enquiry, ...(d.enquiries || [])]; d.repeatPending = true;
-    log(d, user?.id || null, `Asked again about ${data.service} (${enquiry.source}) – ask the client: earlier enquiry or new requirement?`);
+    const d = open.data, same = svcs.filter((x) => svcOf(d).includes(x)).join(', '); d.enquiries = [enquiry, ...(d.enquiries || [])]; d.repeatPending = true;
+    log(d, user?.id || null, `Asked again about ${same} (${enquiry.source}) – ask the client: earlier enquiry or new requirement?`);
     await putRec(t, open, user);
-    await notify(t, d.owner, `${d.name || d.title} asked again about ${data.service}. Ask: earlier enquiry or new requirement?`, open.type, open.id, user, sample);
+    await notify(t, d.owner, `${d.name || d.title} asked again about ${same}. Ask: earlier enquiry or new requirement?`, open.type, open.id, user, sample);
     return { merged: true, id: open.id, type: open.type };
   }
   const known = matches.find((r) => r.data.owner);
@@ -117,7 +141,7 @@ async function leadIntake(t, data, user, sample) {
   // (the website form, or entered by management) are shared out in turns.
   else if (!data.owner) data.owner = user && user.team === 'sales' ? user.id : (await holderOf(t, m)) || await roundRobin(t); // the BDE who already calls this business keeps it
   data.status ||= 'new'; data.score ||= ''; data.enquiries = [enquiry]; data.followUp ||= today();
-  log(data, user?.id || null, known ? `Existing client asked about ${data.service}; given to their BDE` : data.owner === user?.id ? `New potential client (${enquiry.source}); found by ${user.name}` : `New enquiry (${enquiry.source}); auto-assigned`);
+  log(data, user?.id || null, known ? `Existing client asked about ${svcs.join(', ')}; given to their BDE` : data.owner === user?.id ? `New potential client (${enquiry.source}); found by ${user.name}` : `New enquiry (${enquiry.source}); auto-assigned`);
   return { merged: false };
 }
 async function roundRobin(t) {
@@ -137,7 +161,7 @@ export async function beforeCreate(t, type, data, user, sample) {
     case 'client': if (!data.name?.trim()) throw new Rule('Enter the client name.'); data.mobile10 = mobile10(data.phone);
       data.contacts = (data.contacts || []).map((c) => ({ ...c, mobile10: mobile10(c.phone) }));
       for (const m of phones(data)) await callerCheck(t, user, m, data.name); break;
-    case 'deal': if (!data.title?.trim()) throw new Rule('Enter a deal name.'); data.mobile10 = mobile10(data.phone); await callerCheck(t, user, data.phone, data.title);
+    case 'deal': if (!data.title?.trim()) throw new Rule('Enter a deal name.'); data.mobile10 = mobile10(data.phone); await callerCheck(t, user, data.phone, data.title); cleanServices(data);
       data.stage ||= 'lead'; data.stageHistory = [{ stage: data.stage, at: new Date().toISOString() }]; log(data, me, 'Deal created'); break;
     case 'quote': {
       const fy = fyLabel(data.date || today()), b = await brandSetting(t);
@@ -703,9 +727,7 @@ async function applyReceipt(t, id, r, user) {
   if (d.kind === 'advance' && d.dealId) {
     const deal = await getRec(t, d.dealId, 'deal');
     if (deal) { deal.data.handoff = { ...(deal.data.handoff || {}), advance: true, advanceAmt: got }; log(deal.data, user?.id, `Advance received (${r.number})`); await putRec(t, deal, user); }
-    const pr = (await t.query("select * from records where deleted_at is null and type = 'project' and data->>'dealId' = $1", [d.dealId])).rows[0];
-    if (pr) { pr.data.advance = true; if (pr.data.stage === 'awaiting') pr.data.stage = 'planning'; log(pr.data, user?.id, 'Advance received – work can start'); await putRec(t, pr, user);
-      await notify(t, pr.data.lead || '', `Advance received for ${pr.data.name}. Work can start.`, 'project', pr.id, user, pr.sample); }
+    await advanceProjects(t, d.dealId, user, 'Advance received – work can start');
   }
 }
 
@@ -853,6 +875,9 @@ async function docFlow(t, rec, next, user) {
       await beforeCreate(t, 'receipt', r, user, rec.sample);
       const rid = await insertRec(t, 'receipt', r, user, { sample: rec.sample }); await afterCreate(t, 'receipt', rid, r, user, rec.sample);
       next.advance = { ...a, confirmed: { at, by: me, receiptId: rid, receiptNo: r.number } };
+      const deal = prev.dealId ? await getRec(t, prev.dealId, 'deal') : null; // the deal's advance has come: its projects can start
+      if (deal && !deal.data.handoff?.advance) { deal.data.handoff = { ...(deal.data.handoff || {}), advance: true, advanceAmt: a.amount }; log(deal.data, me, `Advance received with agreement ${no} (${r.number})`); await putRec(t, deal, user);
+        await advanceProjects(t, deal.id, user, 'Advance received – work can start'); }
       log(next, me, `Advance ${inr(a.amount)} confirmed – receipt ${r.number}`);
       await notify(t, a.by, `${user.name} confirmed the advance ${inr(a.amount)} for ${no} (receipt ${r.number}). The client can sign now.`, rec.type, rec.id, user, rec.sample);
       return true;
@@ -910,7 +935,35 @@ export async function beforeUpdate(t, rec, next, user) {
       next.mobile10 = mobile10(next.phone); next.contacts = (Array.isArray(next.contacts) ? next.contacts : []).map((c) => ({ ...c, mobile10: mobile10(c?.phone) }));
       for (const m of phones(next)) if (!phones(prev).includes(m)) await callerCheck(t, user, m, next.name);
       break;
-    case 'deal':
+    case 'deal': {
+      const split = next._split === true, join = String(next._join || '').slice(0, 40); delete next._split; delete next._join;
+      if (split || join) {
+        if (!SPLITTERS.includes(user.title)) throw new Rule('Only the Operations Manager or the Company Secretary decides whether services are one deal or separate deals.', 403);
+        for (const k of Object.keys(next)) delete next[k]; Object.assign(next, JSON.parse(JSON.stringify(prev))); // a split or a join changes nothing else
+        await dealIsBare(t, rec.id, prev.title);
+        if (split) { // one deal per service: this deal keeps the first, a new deal is made for each of the others
+          const all = svcOf(prev); if (all.length < 2) throw new Rule('This deal has only one service.');
+          const rates = await getSetting(t, 'services', DEFAULT_SETTINGS.services), who = prev.clientName || prev.contactName || prev.title;
+          for (const x of all.slice(1)) {
+            const d = { ...JSON.parse(JSON.stringify(prev)), title: `${x} – ${who}`, service: x, services: [x], value: num((rates || []).find((r) => r.name === x)?.rate),
+              stageHistory: [{ stage: prev.stage, at: new Date().toISOString() }], log: [], splitFrom: rec.id };
+            for (const k of ['quoteNo', 'quoteId', 'handoff', 'wonAt', 'repeatPending']) delete d[k];
+            log(d, me, `Split from ${prev.title}`); await insertRec(t, 'deal', d, user, { sample: rec.sample });
+          }
+          next.services = [all[0]]; next.service = all[0]; log(next, me, `Split into separate deals: ${all.join(', ')}`);
+        } else { // join another deal of the same client into this one
+          const o = await getRec(t, join, 'deal');
+          if (!o || o.id === rec.id) throw new Rule('Choose the other deal to join.');
+          if (!prev.clientId || o.data.clientId !== prev.clientId) throw new Rule('Only deals of the same client can be joined.');
+          if (['won', 'lost'].includes(o.data.stage)) throw new Rule('A won or lost deal cannot be joined.');
+          await dealIsBare(t, o.id, o.data.title);
+          next.services = [...new Set([...svcOf(prev), ...svcOf(o.data)])].slice(0, 12); next.service = next.services[0]; next.value = num(prev.value) + num(o.data.value);
+          log(next, me, `Joined ${o.data.title} into this deal (${svcOf(o.data).join(', ')})`);
+          await t.query('update records set deleted_at = now(), deleted_by = $2, delete_reason = $3 where id = $1', [o.id, me, `Joined into ${prev.title}`]);
+        }
+        break;
+      }
+      cleanServices(next);
       next.mobile10 = mobile10(next.phone);
       if (next.mobile10 !== (prev.mobile10 || mobile10(prev.phone))) await callerCheck(t, user, next.phone, next.title);
       if (next.stage !== prev.stage) {
@@ -919,11 +972,9 @@ export async function beforeUpdate(t, rec, next, user) {
         if (next.stage === 'won' && !next.wonAt) next.wonAt = today();
         log(next, me, `Moved to ${next.stage}${next.stage === 'lost' ? ` (${next.lostReason})` : ''}`);
       }
-      if (next.handoff?.advance && !prev.handoff?.advance) {
-        const pr = (await t.query("select * from records where deleted_at is null and type = 'project' and data->>'dealId' = $1", [rec.id])).rows[0];
-        if (pr) { pr.data.advance = true; if (pr.data.stage === 'awaiting') { pr.data.stage = 'planning'; log(pr.data, me, 'Advance confirmed on the deal – work can start'); } await putRec(t, pr, user); }
-      }
+      if (next.handoff?.advance && !prev.handoff?.advance) await advanceProjects(t, rec.id, user, 'Advance confirmed on the deal – work can start');
       break;
+    }
     case 'project': {
       // Set by the server only: the advance, the deal it came from, the client's sign-off and its time, the progress link (security review).
       for (const k of ['advance', 'dealId', 'signoffId', 'liveAt', 'progressToken']) { if (prev[k] === undefined) delete next[k]; else next[k] = prev[k]; }
