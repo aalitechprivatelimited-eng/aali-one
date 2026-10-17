@@ -719,4 +719,4 @@ th{letter-spacing:.06em}
 @media (min-width:901px){.shell:not(.mini) .nav .lab,.shell:not(.mini) .brand-t,.shell:not(.mini) .nav .app-h{animation:lab-in .26s var(--ease) both}}
 @keyframes lab-in{from{opacity:0;transform:translateX(-4px)}}
 @media (prefers-reduced-motion:reduce){.nav .lab,.brand-t,.nav .app-h{animation:none!important}}
-
+[data-theme="dark"] .tiles.apps .tile.dash .tile-ico{color:#191305}

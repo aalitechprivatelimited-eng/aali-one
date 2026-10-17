@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { useStore, list } from './api.js';
+import { useStore, list, store } from './api.js';
 import { can, canEdit, inr, stageLabel, pStageLabel, clientName, uname } from './lib.js';
 import { SECTIONS } from '../shared/access.js';
 import { m, AnimatePresence, EASE } from './motion.jsx';
@@ -11,14 +11,16 @@ import { Ico } from './icons.jsx';
 
 export const openSearch = () => dispatchEvent(new Event('aali-search'));
 // The pages this person opened lately, newest first – kept on this device only, so Ctrl + K brings them back in one tap (18 Oct 2026).
-const RECENT = 'aali-recent';
-const recent = () => { try { return JSON.parse(localStorage.getItem(RECENT) || '[]').filter((r) => r && r.to && r.title); } catch { return []; } };
+// Kept per person, so on a shared computer one person never sees another's pages; signing out removes them too (src/api.js).
+const RECENT = () => 'aali-recent:' + (store.me?.id || '');
+const recent = () => { try { return JSON.parse(localStorage.getItem(RECENT()) || '[]').filter((r) => r && r.to && r.title); } catch { return []; } };
 const sectionOf = (path) => SECTIONS.filter(([, , to]) => to !== '/' && (path === to || path.startsWith(to + '/'))).sort((a, b) => b[2].length - a[2].length)[0];
 export function rememberPage(path, title) {
   if (path === '/' || !title || !sectionOf(path)) return;
-  try { localStorage.setItem(RECENT, JSON.stringify([{ to: path, title: title.slice(0, 80) }, ...recent().filter((r) => r.to !== path)].slice(0, 8))); } catch {}
+  try { localStorage.setItem(RECENT(), JSON.stringify([{ to: path, title: title.slice(0, 80) }, ...recent().filter((r) => r.to !== path)].slice(0, 8))); } catch {}
 }
 const EACH = 5; // results shown per kind
+const SHORTCUTS = ['Recent', 'Go to', 'Start something new']; // the groups that are not records
 // Things to start, for the people allowed to (18 Oct 2026): typing "new", "invoice" or "receipt" offers them, so nobody hunts for the button.
 const ACTIONS = [['quotes', 'New quotation', '/quotes/new', 'quotes'], ['agreements', 'New service agreement', '/agreements/new?kind=service', 'agreements'],
   ['money', 'New tax invoice (B2B or B2C)', '/payments/invoice/new', 'money'], ['money', 'New receipt', '/payments/receipt/new', 'money']];
@@ -50,9 +52,9 @@ export function Search() {
   const [open, setOpen] = useState(false), [q, setQ] = useState(''), [at, setAt] = useState(0), nav = useNavigate(), box = useRef(null);
   useEffect(() => {
     // Ctrl + K anywhere; "/" too, when the cursor is not in a box.
-    const typing = (e) => e.target.closest?.('input, textarea, select, [contenteditable="true"]');
+    const typing = (e) => e.target.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
     const key = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setOpen((o) => !o); }
-      else if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e) && !document.querySelector('.modal')) { e.preventDefault(); setOpen(true); } }, show = () => setOpen(true);
+      else if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e) && !document.querySelector('.modal, .tour')) { e.preventDefault(); setOpen(true); } }, show = () => setOpen(true);
     addEventListener('keydown', key); addEventListener('aali-search', show);
     return () => { removeEventListener('keydown', key); removeEventListener('aali-search', show); };
   }, []);
@@ -73,8 +75,8 @@ export function Search() {
         {groups.map((g) => <div key={g.group}><div className="search-h">{g.group}</div>
           {g.rows.map((r) => { i++; const n = i; return <button key={r.id} type="button" role="option" aria-selected={n === at} data-i={n} className={'search-row' + (n === at ? ' on' : '')} onMouseMove={() => n !== at && setAt(n)} onClick={() => go(r)}>
             <span className="ic"><Ico k={r.icon || g.icon} size={16} /></span><span className="grow"><b className="ell" style={{ display: 'block' }}>{r.title}</b>{r.sub && <span className="small muted ell" style={{ display: 'block' }}>{r.sub}</span>}</span></button>; })}</div>)}
-        {q.trim().length >= 2 && groups.length <= 1 && !groups[0]?.rows.length && <div className="search-none">Nothing found for “{q.trim()}”. Try the mobile number, or fewer letters.</div>}
-        {q.trim().length >= 2 && groups.length === 1 && groups[0].group === 'Go to' && <div className="search-none">No lead, client or business matches “{q.trim()}”.</div>}
+        {q.trim().length >= 2 && !groups.length && <div className="search-none">Nothing found for “{q.trim()}”. Try the mobile number, or fewer letters.</div>}
+        {q.trim().length >= 2 && groups.length > 0 && groups.every((g) => SHORTCUTS.includes(g.group)) && <div className="search-none">No lead, client or business matches “{q.trim()}”.</div>}
       </div>
       <div className="search-f"><span><kbd>↑</kbd> <kbd>↓</kbd> to move</span><span><kbd>Enter</kbd> to open</span><span><kbd>Esc</kbd> to close</span></div>
     </m.div></m.div>}</AnimatePresence>, document.body);

@@ -60,7 +60,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 
 export async function login(email, password) { await http('POST', '/auth/login', { email, password }); S.signedOut = ''; return boot(); }
 // why: shown on the sign-in screen (the page signs itself out after an hour without use)
-export async function logout(why = '') { await http('POST', '/auth/logout').catch(() => {}); clearInterval(timer); S.me = null; S.recs = new Map(); S.signedOut = why; emit(); }
+export async function logout(why = '') { await http('POST', '/auth/logout').catch(() => {}); clearInterval(timer); try { localStorage.removeItem('aali-recent:' + (S.me?.id || '')); } catch {} S.me = null; S.recs = new Map(); S.signedOut = why; emit(); }
 // hidden: the enquiry joined a lead that belongs to someone else, so there is nothing to show here.
 export async function create(type, data) { const r = await http('POST', '/records', { type, data }); if (!r.hidden) put(r.record); emit(); poll(); return r; }
 export async function update(id, data) { const r = await http('PATCH', '/records/' + id, { data }); put(r.record); emit(); poll(); return r.record; }

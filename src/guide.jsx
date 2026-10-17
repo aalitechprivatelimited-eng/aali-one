@@ -87,8 +87,9 @@ function build(me) {
   const secs = ORDER.flatMap((g) => SECTIONS.filter((s) => s[3] === g && s[0] !== 'today' && can(s[0]))), S = [];
   const add = (to, icon, title, text, spot = '.page .topbar') => S.push({ to, icon, title, text, spot });
   add('/', 'today', `Welcome, ${name}`, intro(me, secs.length + 1), '[data-guide="hero"]');
-  add('/', 'trend', 'Dashboard – your numbers', `${top ? `These tiles are today’s figures for the whole group – ${GROUP}` : mgr ? 'These tiles are today’s figures for your team' : 'These tiles are your own figures for today'}. Tap any tile to open that section.`, '[data-guide="numbers"]');
-  add('/', 'alert', 'Dashboard – what needs attention', `Everything that is late or due today is listed here${top ? '; anything left 3 or more days late is sent up to you' : mgr ? ': switch between “For me” and “My team”' : ''}.${own ? ' A call back you promised shows on its day with a “Call now” button.' : ''}`, '[data-guide="attention"]');
+  add('/', 'apps', 'Your apps', 'Each card is an app with a few pages – open one and its pages show in the menu. The first card, Overview, is today’s work. An app opens again on the page you last used in it.', '[data-guide="tiles"]');
+  add('/overview', 'trend', 'Overview – your numbers', `${top ? `These tiles are today’s figures for the whole group – ${GROUP}` : mgr ? 'These tiles are today’s figures for your team' : 'These tiles are your own figures for today'}. Tap any tile to open that section.`, '[data-guide="numbers"]');
+  add('/overview', 'alert', 'Overview – what needs attention', `Everything that is late or due today is listed here${top ? '; anything left 3 or more days late is sent up to you' : mgr ? ': switch between “For me” and “My team”' : ''}.${own ? ' A call back you promised shows on its day with a “Call now” button.' : ''}`, '[data-guide="attention"]');
   for (const [k, label, to] of secs) {
     add(k === 'settings' ? '/settings/me' : to, k, k === 'people' && !top ? 'My team members' : label, about(k, me));
     if (k !== 'settings') continue;
@@ -97,8 +98,8 @@ function build(me) {
     if (top) add('/settings/staff', 'people', 'Settings – staff register', 'Every person ever added, when they last signed in, and the ones removed. A removed person can be restored from here.');
     if (top) add('/settings/audit', 'daily', 'Settings – audit log', 'Who did what and when: sign-ins, wrong password tries, changes and deletions.');
   }
-  add(null, 'search', 'Search anything', 'Press Search in the sidebar, or Ctrl + K, and type part of a name or a mobile number. It finds leads, clients, businesses and sections that your login can open.', '.side-search');
-  add('/', 'help', 'The guide is always here', 'That is everything your login can open. Whenever you are unsure, press Guide at the top of the dashboard; use the list in this box to jump straight to one section.', '[data-guide="guide-btn"]');
+  add(null, 'search', 'Search anything', 'Press Search in the sidebar, Ctrl + K or the / key, and type part of a name or a mobile number. It finds leads, clients, businesses and sections that your login can open, brings back the pages you opened lately, and starts a new quotation, agreement, invoice or receipt.', '.side-search');
+  add('/', 'help', 'The guide is always here', 'That is everything your login can open. Whenever you are unsure, press Guide at the top of Home, or Help (the ? key) for the page you are on; use the list in this box to jump straight to one section.', '[data-guide="guide-btn"]');
   return S;
 }
 
@@ -127,7 +128,7 @@ export function Guide() {
   if (ask) return <Modal title="Welcome to Aali One" onClose={end} footer={<><button className="btn ghost sm" type="button" onClick={end}>Not now</button>
     <button className="btn primary" type="button" autoFocus onClick={() => { remember(me.id); setAsk(false); setAt(0); setOn(true); }}><Ico k="play" size={15} />Start the guide</button></>}>
     <div className="guide"><span className="guide-ic" ref={draw}><Ico k="help" size={30} /></span><h2>{`Welcome, ${me.display || me.name.split(' ')[0]}`}</h2>
-      <p>{intro(me, list.length ? SECTIONS.filter((x) => can(x[0])).length : 0)}</p><p className="small">It takes about two minutes. You can open it again any time with the Guide button at the top of the dashboard.</p></div></Modal>;
+      <p>{intro(me, list.length ? SECTIONS.filter((x) => can(x[0])).length : 0)}</p><p className="small">It takes about two minutes. You can open it again any time with the Guide button at the top of Home.</p></div></Modal>;
   return createPortal(<AnimatePresence>{on && s && <m.div key="tour" className="tour" role="dialog" aria-label="Guide" initial={{ opacity: 0, y: 26, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18, transition: { duration: 0.14 } }} transition={SPRING}>
       <div className="tour-h"><span className="ic" ref={draw}><Ico k={s.icon} /></span><div className="grow"><div className="small muted">Guide · step {at + 1} of {list.length}</div>
         <AnimatePresence mode="wait" initial={false}><m.h3 key={at} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.08 } }} transition={{ duration: 0.2, ease: EASE }}>{s.title}</m.h3></AnimatePresence></div>
@@ -147,11 +148,12 @@ const pad = (b) => ({ top: b.top - 6, left: b.left - 6, width: b.width + 12, hei
 // It says what the open page is for, in the words of this person's role, and can start the full guide.
 const sectionAt = (path) => (path === '/' ? 'today' : SECTIONS.filter(([, , to]) => to !== '/' && (path === to || path.startsWith(to + '/'))).sort((a, b) => b[2].length - a[2].length)[0]?.[0]);
 export function HelpButton({ className = 'btn sm', label = true, hotkey = false }) {
-  const [open, setOpen] = useState(false), { pathname } = useLocation(), me = store.me, k = sectionAt(pathname), name = pathname === '/overview' ? 'Overview' : SECTIONS.find((s) => s[0] === k)?.[1];
+  const [open, setOpen] = useState(false), { pathname } = useLocation(), me = store.me, k = sectionAt(pathname), name = pathname === '/' ? 'Home' : pathname === '/overview' ? 'Overview' : SECTIONS.find((s) => s[0] === k)?.[1];
   // "?" opens it from anywhere (only one of the Help buttons listens), unless the cursor is in a box or a pop-up is open.
-  useEffect(() => { if (!hotkey) return; const key = (e) => e.key === '?' && !e.ctrlKey && !e.metaKey && !e.target.closest?.('input, textarea, select, [contenteditable="true"]') && !document.querySelector('.modal, .search') && setOpen(true);
+  useEffect(() => { if (!hotkey) return; const key = (e) => e.key === '?' && !e.ctrlKey && !e.metaKey && !e.target.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])') && !document.querySelector('.modal, .search, .tour') && setOpen(true);
     addEventListener('keydown', key); return () => removeEventListener('keydown', key); }, [hotkey]);
-  const text = pathname === '/overview' ? 'The Overview is today’s work in one place: your numbers, what is late, what is due today and in the next 7 days, and what waits for your approval. Each number opens its page.'
+  const text = pathname === '/' ? 'Home shows your apps. Each card is an app with a few pages: open one and its pages show in the menu. The first card, Overview, is today’s work – your numbers and what needs attention. The buttons under the greeting are the main jobs of your day.'
+    : pathname === '/overview' ? 'The Overview is today’s work in one place: your numbers, what is late, what is due today and in the next 7 days, and what waits for your approval. Each number opens its page.'
     : (k && about(k, me)) || 'Each app on the Home page holds a few pages. Open one, and its pages are listed in the menu on the left. Press Ctrl + K to find anything by name or number.';
   return <>
     <button type="button" className={className} onClick={() => setOpen(true)} aria-label="What is this page?" title="What is this page?"><Ico k="help" size={16} />{label && <span>Help</span>}</button>

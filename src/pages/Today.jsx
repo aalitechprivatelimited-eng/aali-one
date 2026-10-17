@@ -55,7 +55,7 @@ function Numbers() {
 }
 
 // The welcome card: who you are, what today is, and the one thing to do next.
-function Hero({ slim }) {
+function Hero({ slim, title }) {
   const me = store.me, t = today(), month = t.slice(0, 7), hour = new Date().getHours(), top = isTop(), mgr = isManager(), writes = !NO_REPORT.includes(me.title);
   const rep = list('report').find((r) => r.owner === me.id && r.date === t), caller = me.team === 'sales' && level('leads') === 'own';
   const won = can('leads') ? list('deal').filter((d) => d.stage === 'won' && (d.wonAt || '').startsWith(month)).reduce((s, d) => s + (+d.value || 0), 0) : 0;
@@ -63,7 +63,7 @@ function Hero({ slim }) {
   const next = !writes ? 'Here is how the group is doing today.' : !rep ? 'Your day has not started yet. Start it and add each task as you take it up.' : rep.status === 'submitted' ? 'Your report for today is submitted. Well done.' : 'Your day is running. Keep adding each task as you take it up.';
   return <m.section className={'hero' + (slim ? ' slim' : '')} data-guide="hero" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, ease: EASE }}>
     <button type="button" className="btn sm guide-btn" data-guide="guide-btn" onClick={openGuide} title="A guided walk through every section your login can open"><Ico k="help" size={16} />Guide</button>
-    <div><h1>Good {hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, {me.display || me.name.split(' ')[0]}</h1>
+    <div><h1>{title || <>Good {hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, {me.display || me.name.split(' ')[0]}</>}</h1>
       <div className="sub">{desig(me)} · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
       <div className="sub">{next}</div>
       <div className="acts-row">
@@ -105,7 +105,7 @@ export default function Today() {
   const notes = list('notice').filter((n) => n.to === me.id && !n.read).slice(0, 5);
   return (
     <>
-      <Hero />
+      <Hero title="Overview" />
       <OutNow />
       <Numbers />
       <div className="row between" style={{ margin: '8px 0 10px' }}><h2 style={{ margin: 0 }}>What needs attention</h2>{wide.length > 1 && <Seg value={scope} onChange={setScope} options={wide} />}</div>
