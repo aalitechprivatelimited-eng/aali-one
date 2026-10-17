@@ -4,7 +4,7 @@ import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, isOldHash, passwordProblem, fakeCheck, sessionKey, createSession, sessionUser, dropSession, sessionCookie, readCookie, publicUser, IDLE_MIN } from './auth.js';
 import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP, TITLES } from '../shared/defaults.js';
-import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE } from '../shared/access.js';
+import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE, SOUND_PEOPLE } from '../shared/access.js';
 import { hrmConnected, hrmMonth, hrmPeople, hrmEmailOf, hrmEnv, hrmFind } from './hrm.js';
 import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE, REPORT_BUTTON, TEMPLATE_SAMPLES } from './whatsapp.js';
 // WhatsApp sending: in the background on the VPS; waited for on Vercel, which may stop a function once it has answered (server/whatsapp.js).
@@ -109,7 +109,8 @@ const KEEP_EVERY = ['salary', 'payrun', 'loan', 'payee', 'pclient', 'pemp', 'bil
 const FAILS_EMAIL = 8, FAILS_IP = 40, ENQUIRIES_IP = 30, UPLOAD_DAY = 80_000_000;
 // A stored file is shown in the browser only if it is a plain picture or a PDF. Anything else (a web page, an SVG drawing with a script inside) is
 // handed over as a download, so a file someone uploads can never run inside Aali One with another person's login.
-const SHOWN_INLINE = /^(image\/(png|jpeg|gif|webp)|application\/pdf)$/, PHOTO = /^image\/(png|jpeg|gif|webp)$/;
+const SOUND = /^audio\/(mpeg|mp3|mp4|x-m4a|aac|wav|x-wav|wave|ogg|webm)$/;
+const SHOWN_INLINE = /^(image\/(png|jpeg|gif|webp)|application\/pdf|audio\/(mpeg|mp3|mp4|x-m4a|aac|wav|x-wav|wave|ogg|webm))$/, PHOTO = /^image\/(png|jpeg|gif|webp)$/;
 
 async function userWork(db, id, viewer) {
   let r = (await db.query(`select type, count(*)::int n from records where deleted_at is null and type not in ('notice', 'comment')
@@ -212,6 +213,21 @@ export async function handle(req, res) {
     const seeUser = (u) => { const p = publicUser(u); if (!(admin || isTop(user) || u.id === user.id)) p.upiQr = ''; return admin || isTop(user) || u.id === user.id || (isManager(user) && u.team === user.team) ? p : { ...p, email: '', phone: '', personalEmail: '', removedReason: '', removedBy: null }; };
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
+    // My notification sound (only the people in SOUND_PEOPLE): a sound file they uploaded, and how loud. Saved here, so every device plays it.
+    if (path === '/me/sound') {
+      if (!SOUND_PEOPLE.includes(user.id)) throw new Rule('A notification sound of your own is not switched on for your login.', 403);
+      const key = 'sound:' + user.id;
+      if (method === 'GET') return send(res, 200, { sound: await getSetting(db, key, null) });
+      if (method === 'PUT') {
+        const b = await readBody(req);
+        if (!b.fileId) { await setSetting(db, key, null); await audit(db, user, null, 'user', 'Notification sound removed'); return send(res, 200, { sound: null }); }
+        const f = (await db.query('select id, name, mime, size from files where id = $1 and created_by = $2', [String(b.fileId).slice(0, 40), user.id])).rows[0];
+        if (!f || !SOUND.test(f.mime)) throw new Rule('Choose a sound file: MP3, M4A, WAV or OGG.');
+        const sound = { fileId: f.id, name: f.name, mime: f.mime, volume: Math.min(1, Math.max(0.05, Number(b.volume) || 0.8)), at: new Date().toISOString() };
+        await setSetting(db, key, sound); await audit(db, user, null, 'user', `Notification sound set: ${f.name}`);
+        return send(res, 200, { sound });
+      }
+    }
     // Deadline reminders: the first request of the day sends them (a quick check on every other request).
     if (path === '/bootstrap' || path === '/changes') { await deadlineSweep(db).catch((e) => console.error('deadline reminders', e.message)); await sendWa(db); } // WhatsApp messages still waiting
     if (path === '/bootstrap' && method === 'GET') {

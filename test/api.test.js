@@ -680,6 +680,24 @@ test('tax invoices are B2B (the client\'s real GSTIN) or B2C (no GSTIN); both ta
   assert.equal(ch.body.record.gstin, undefined); assert.equal(ch.body.record.number, b2b.body.record.number, 'the number stays');
 });
 
+test('notification sound: only Nikhil sets his own sound file, kept on the server for all his devices; nobody else can', async () => {
+  const db = await getDb();
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_nikhil','nikhil@test.in','Nikhil','ops','management',$1) on conflict (id) do nothing", [hashPassword('password123')]);
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_sndcs','sndcs@test.in','sndcs','cs','management',$1)", [hashPassword('password123')]);
+  const N = (await call('POST', '/auth/login', { email: 'nikhil@test.in', password: 'password123' })).cookie, C = (await call('POST', '/auth/login', { email: 'sndcs@test.in', password: 'password123' })).cookie;
+  const up = async (c, name, mime) => (await call('POST', '/files', { name, mime, data: Buffer.from('ID3 fake sound').toString('base64') }, c)).body;
+  assert.equal((await call('GET', '/me/sound', null, C)).status, 403, 'not switched on for anyone else');
+  const cf = await up(C, 'x.mp3', 'audio/mpeg'); assert.equal((await call('PUT', '/me/sound', { fileId: cf.id }, C)).status, 403);
+  assert.equal((await call('GET', '/me/sound', null, N)).body.sound, null, 'nothing chosen yet');
+  const pic = await up(N, 'p.png', 'image/png'); assert.equal((await call('PUT', '/me/sound', { fileId: pic.id }, N)).status, 400, 'a picture is not a sound');
+  assert.equal((await call('PUT', '/me/sound', { fileId: cf.id }, N)).status, 400, "someone else's file");
+  const f = await up(N, 'ding.mp3', 'audio/mpeg'), r = await call('PUT', '/me/sound', { fileId: f.id, volume: 5 }, N); assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.sound.fileId, f.id); assert.equal(r.body.sound.volume, 1, 'loudness kept between 5% and 100%');
+  const got = (await call('GET', '/me/sound', null, N)).body.sound; assert.equal(got.name, 'ding.mp3');
+  const boot = (await call('GET', '/bootstrap', null, C)).body; assert.ok(!JSON.stringify(boot.settings).includes(f.id), 'not sent to others');
+  assert.equal((await call('PUT', '/me/sound', { fileId: null }, N)).body.sound, null, 'removed');
+});
+
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {
   const { setHrmSource } = await import('../server/hrm.js'), { PGlite } = await import('@electric-sql/pglite');
   const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;

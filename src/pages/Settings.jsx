@@ -10,6 +10,7 @@ import { displayOk, displayChoices } from '../../shared/names.js';
 import { openGuide } from '../guide.jsx';
 import { PayslipSheet } from '../doc.jsx';
 import { monthLabel } from '../../shared/payroll.js';
+import { hasSound, mySound, rememberSound, playSound } from '../sound.js';
 import { inr } from '../../shared/money.js';
 
 export default function Settings() {
@@ -66,6 +67,7 @@ function Me() {
     <button className="btn primary" type="button" disabled={!fits} onClick={async () => { const r = await attempt(() => http('PATCH', '/users/' + me.id, { ...(me.isAdmin ? { name: f.name.trim() } : {}), display: f.display.trim(), phone: f.phone, personalEmail: f.personalEmail.trim(), ...(f.password ? { password: f.password, currentPassword: f.currentPassword } : {}) }), 'Saved.'); if (r) { setMe(r.user); setF({ ...f, password: '', currentPassword: '' }); } }}>Save</button></div>
     <div className="stack side-info">
       <MySlips />
+      {hasSound() && <MySound />}
       <div className="card stack"><h2>What your login can open</h2>
         <ul className="access" style={{ fontSize: 14 }}>{SECTIONS.filter(([k]) => levelOf(me, k)).map(([k, l]) => <li key={k}><b>{l}</b> – {levelText(k, levelOf(me, k))}</li>)}</ul>
         <p className="small muted" style={{ margin: 0 }}>Anything not in this list is not part of your role. If you need it for your work, ask the Operations Manager.</p></div>
@@ -521,6 +523,27 @@ function PersonalEmail({ u, busy, save }) {
   const [v, setV] = useState(u.personalEmail || '');
   return <div className="row" style={{ alignItems: 'flex-end' }}><Field label="Personal email (payslips will be sent here)"><In type="email" value={v} onChange={(e) => setV(e.target.value)} autoComplete="off" style={{ minWidth: 260 }} /></Field>
     <button className="btn sm" type="button" disabled={busy || v.trim() === (u.personalEmail || '')} onClick={() => save(v.trim())}>Save email</button></div>;
+}
+
+// My notification sound (only for the people in SOUND_PEOPLE): choose a short sound once; every device you sign in on plays it when a
+// notification arrives.
+function MySound() {
+  const [s, setS] = useState(undefined), [vol, setVol] = useState(0.8), [busy, setBusy] = useState(false);
+  useEffect(() => { mySound(true).then((x) => { setS(x); if (x) setVol(x.volume); }); }, []);
+  const save = async (body, ok) => { const r = await attempt(() => http('PUT', '/me/sound', body), ok); if (r) { rememberSound(r.sound); setS(r.sound); } };
+  async function pick(e) { const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+    if (!/^audio\//.test(file.type)) return toast('Choose a sound file: MP3, M4A, WAV or OGG.', true);
+    setBusy(true); const up = await attempt(() => upload(file)); if (up) await save({ fileId: up.id, volume: vol }, 'Sound saved. All your devices use it now.'); setBusy(false); }
+  return <div className="card stack"><h2>My notification sound</h2>
+    <p className="small muted" style={{ margin: 0 }}>Plays when a new notification arrives, on every device you sign in on. Use a short sound (1–3 seconds, up to 3 MB). It plays once you have clicked anywhere on the page.</p>
+    {s === undefined ? <span className="small muted">Loading…</span> : <>
+      <div className="row">{s ? <><Pill k="gold">♪ {s.name}</Pill><button className="btn sm" type="button" onClick={() => playSound({ ...s, volume: vol })}>Play</button></> : <span className="small muted">No sound chosen – notifications are silent.</span>}</div>
+      <Field label={`Loudness: ${Math.round(vol * 100)}%`}><input type="range" min="0.05" max="1" step="0.05" value={vol} onChange={(e) => setVol(+e.target.value)}
+        onMouseUp={() => s && save({ fileId: s.fileId, volume: vol })} onTouchEnd={() => s && save({ fileId: s.fileId, volume: vol })} onKeyUp={() => s && save({ fileId: s.fileId, volume: vol })} /></Field>
+      <div className="row"><label className="btn sm primary" style={{ cursor: busy ? 'wait' : 'pointer' }}>{busy ? 'Saving…' : s ? 'Choose another sound' : 'Choose a sound'}
+        <input type="file" accept="audio/*" hidden disabled={busy} onChange={pick} /></label>
+        {s && <button className="btn sm ghost" type="button" onClick={() => save({ fileId: null }, 'Sound removed. Notifications are silent again.')}>Remove</button>}</div></>}
+  </div>;
 }
 
 // My payslips: each person's own payslips, once HR has marked that month as paid. Nothing else of payroll is shown.

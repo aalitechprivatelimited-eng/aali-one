@@ -8,6 +8,7 @@ import { useStore, store, list, update } from './api.js';
 import { m, AnimatePresence, SPRING } from './motion.jsx';
 import { Ico } from './icons.jsx';
 import { uname } from './lib.js';
+import { notifySound } from './sound.js';
 
 const LINK = { lead: '/leads/', deal: '/deals/', project: '/projects/', quote: '/quotes/', client: '/clients/', task: '/tasks', ticket: '/support', approval: '/approvals', report: '/daily', prospect: '/calls', asset: '/assets', bill: '/bills/', agreement: '/agreements/', payroll: '/payroll', clientpay: '/client-payroll', payment: '/payments' };
 // Where a notification leads: the lead, deal, project… it is about.
@@ -35,6 +36,7 @@ export function Popups() {
     const fresh = mine.filter((n) => !known.current.has(n.id)); if (!fresh.length) return;
     for (const n of fresh) known.current.add(n.id);
     setCards((c) => [...c, ...fresh.map((n) => ({ id: n.id, title: n.text, sub: `from ${uname(n.createdBy)} · click to open`, to: noticeLink(n), notice: n.id }))].slice(-4));
+    notifySound(); // the person's own sound, if they set one (Settings → My profile)
     try { if (document.hidden && Notification.permission === 'granted') new Notification('Aali One', { body: fresh.length === 1 ? fresh[0].text : `${fresh.length} new notifications`, icon: '/icon.svg' }); } catch {}
   }, [ids]);
   const close = (id) => setCards((c) => c.filter((x) => x.id !== id));

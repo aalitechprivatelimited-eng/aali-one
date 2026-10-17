@@ -87,6 +87,9 @@ export const STRICT = ['agreements', 'payroll', 'clientpay'];
 // "HR & payroll" (u.hr) is given by the Founder & Chairman, and only to the Company Secretary (who is also HR). They make the
 // payroll; the Operations Manager only reads it; the Chairman may change it too (ACCESS). The switch on anyone else does nothing.
 export const HR_TITLE = 'cs';
+// Who may set their own notification sound (the user, 18 Oct 2026: "only Nikhil should have it"). Kept on the server, so it plays on every
+// device the person signs in on.
+export const SOUND_PEOPLE = ['u_nikhil'];
 export const isHr = (u) => !!u && !!u.hr && u.title === HR_TITLE;
 export const levelOf = (u, section) => (!u || !ACCESS[section] ? '' : (section === 'payroll' || section === 'clientpay') && isHr(u) ? 'all'
   : isAdminUser(u) && !STRICT.includes(section) ? 'all' : ACCESS[section][u.title] || '');

@@ -739,3 +739,5 @@ th{letter-spacing:.06em}
 /* a long row of choices scrolls inside itself on a phone instead of pushing the page sideways */
 .seg{max-width:100%;overflow-x:auto;scrollbar-width:none}.seg::-webkit-scrollbar{display:none}.seg button{flex:none}
 
+/* sliders and ticks in Aali gold */
+input[type=range],input[type=checkbox],input[type=radio]{accent-color:var(--gold-fill)}
