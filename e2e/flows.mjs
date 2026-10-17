@@ -30,6 +30,7 @@ try {
   browser = await chromium.launch({ channel: 'msedge' }).catch(() => chromium.launch({ channel: 'chrome' }));
   const errors = [];
   const open = async (size, mobile = false) => { const ctx = await browser.newContext({ viewport: size, isMobile: mobile, hasTouch: mobile }), page = await ctx.newPage();
+    await ctx.addInitScript(() => { try { localStorage.getItem('aali-side') || localStorage.setItem('aali-side', 'full'); } catch {} }); // the steps click sections in the full sidebar (it starts collapsed)
     page.on('pageerror', (e) => errors.push('page error: ' + e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/401|favicon/.test(m.text())) errors.push('console: ' + m.text()); });
     return page; };
   const signIn = async (page, email) => { await page.goto(BASE); await page.locator('input[type=email]').fill(email); await page.locator('input[type=password]').fill(PW);
@@ -50,6 +51,9 @@ try {
   await step('the opening screen shows, then lifts away', async () => { await bde.goto(BASE); await bde.locator('#splash svg').waitFor({ timeout: 8000 });
     await bde.locator('#splash').waitFor({ state: 'detached', timeout: 6000 }); await bde.locator('input[type=email]').waitFor(); });
   await step('sign in; the dashboard greets the person', async () => { await signIn(bde, 'bde@e2e.test'); must((await bde.locator('.hero h1').textContent()).includes('Kiran'), 'no greeting by name'); });
+  await step('Home shows the BDE their groups of sections as tiles, and only theirs', async () => { const t = bde.locator('.home-tiles');
+    for (const g of ['My work', 'Sales', 'Quotations & agreements', 'Delivery']) await t.locator('.tile', { hasText: g }).waitFor();
+    must(await t.locator('.tile', { hasText: 'Money' }).count() === 0 && await t.locator('.tile', { hasText: 'Management' }).count() === 0, 'a BDE sees Money or Management'); });
   await step('first sign-in offers the guide; it walks the BDE through the pages of a BDE, and only those', async () => { await bde.locator('.modal', { hasText: 'Welcome to Aali One' }).waitFor();
     must((await bde.locator('.guide p').first().textContent()).includes('Your work is sales'), 'the welcome is not written for a BDE'); await bde.getByRole('button', { name: 'Start the guide' }).click(); await bde.locator('.tour').waitFor();
     const { seen, framed } = await walkGuide(bde); for (const p of ['/', '/daily', '/calls', '/leads', '/assets', '/settings/me']) must(seen.has(p), 'the guide did not open ' + p);
@@ -123,7 +127,7 @@ try {
   await step('finish the calling time, write the plan, submit the day', async () => { await bde.locator('.steps button').first().click(); await bde.locator('.nowcard').getByRole('button', { name: /Finish/ }).click(); await bde.locator('.nowcard').waitFor({ state: 'detached' });
     await bde.getByRole('button', { name: /Finish my day/ }).last().click(); await bde.getByPlaceholder('What you will do next').fill('Call the remaining clinics'); await bde.getByPlaceholder('What you will do next').blur();
     await bde.getByRole('button', { name: 'Submit for the day' }).click(); await bde.locator('.banner.ok', { hasText: 'Submitted' }).waitFor(); });
-  await step('the call back shows on the dashboard for today', async () => { await bde.locator('.nav a', { hasText: 'Dashboard' }).click(); const row = bde.locator('.list .li', { hasText: 'Call back: Lotus Clinic' }); await row.scrollIntoViewIfNeeded();
+  await step('the call back shows on the dashboard for today', async () => { await bde.locator('.nav a', { hasText: 'Home' }).click(); const row = bde.locator('.list .li', { hasText: 'Call back: Lotus Clinic' }); await row.scrollIntoViewIfNeeded();
     await row.getByRole('link', { name: 'Call now' }).waitFor(); must(/to call back today/.test(await bde.locator('.stat', { hasText: 'Still to call' }).textContent()), 'the tile does not count the call back'); });
   await step('search: Ctrl + K finds the business by part of its number and opens the register on it', async () => { await bde.keyboard.press('Control+k'); await bde.getByRole('combobox', { name: 'Search' }).fill('98765012');
     await bde.locator('.search-row', { hasText: 'Lotus Clinic' }).waitFor(); await bde.locator('.search-row', { hasText: 'Test Medicals' }).click(); await bde.locator('.search').waitFor({ state: 'detached' });
@@ -153,7 +157,7 @@ try {
   await step('the menu closes with its Close button, and choosing the page already open closes it too', async () => { await phone.getByRole('button', { name: 'Open menu' }).click();
     await phone.locator('.side.open').getByRole('button', { name: 'Close the menu' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' });
     await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Daily reports' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' });
-    await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Dashboard' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' }); await phone.locator('.hero').waitFor(); });
+    await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Home' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' }); await phone.locator('.hero').waitFor(); });
   await step('the day’s timeline reads well on a phone: each task uses the full width', async () => { await phone.goto(BASE + '/daily'); const b = phone.locator('.li.tl .tl-b').first(); await b.waitFor();
     must(await b.evaluate((e) => e.getBoundingClientRect().width) > 280, 'the task text is squeezed into a narrow column'); await noSideScroll(phone); });
   await step('call register and profile fit the phone', async () => { for (const p of ['/calls', '/settings/me', '/leads', '/tasks']) { await phone.goto(BASE + p); await phone.locator('.page h1').first().waitFor(); await noSideScroll(phone); } });

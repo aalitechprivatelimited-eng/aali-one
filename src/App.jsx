@@ -2,7 +2,8 @@ import { useEffect, useState, lazy, Suspense, Fragment, Component } from 'react'
 import { Routes, Route, Navigate, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { boot, useStore, store, login, logout, http, list, idleFor } from './api.js';
 import { Toaster, In, Field, Empty, Avatar, Modal, attempt, toast, lockPage } from './ui.jsx';
-import { feedItems, forScope, diff, isTop, can, desig, urgentDeadlines } from './lib.js';
+import { isTop, can, desig } from './lib.js';
+import { sectionCounts } from './tiles.jsx';
 import { SECTIONS } from '../shared/access.js';
 import { ThemeToggle } from './theme.jsx';
 import { Motion, Page, ScrollLine, ToTop, m, AnimatePresence, SPRING, EASE } from './motion.jsx';
@@ -149,7 +150,8 @@ const Gate = ({ s, children }) => (can(s) ? children : <Empty>This section is no
 function Shell() {
   const [open, setOpen] = useState(false), loc = useLocation(), me = store.me;
   // The sidebar can be collapsed to a slim strip: the logo, the few everyday sections and the person. The choice is remembered on this device.
-  const [mini, setMini] = useState(() => { try { return localStorage.getItem('aali-side') === 'mini'; } catch { return false; } });
+  // It starts collapsed: the tiles on Home are the main way in (the user, 16 Oct 2026).
+  const [mini, setMini] = useState(() => { try { return localStorage.getItem('aali-side') !== 'full'; } catch { return true; } });
   const flip = (v) => { setMini(v); try { localStorage.setItem('aali-side', v ? 'mini' : 'full'); } catch {} };
   useEffect(() => setOpen(false), [loc.pathname]);
   // Signing out goes back to the start, so the next sign-in opens on the dashboard – not on the page someone left.
@@ -161,12 +163,7 @@ function Shell() {
   // the page already open too (tapping Dashboard while on the dashboard closes the menu and shows it).
   useEffect(() => { if (!open) return; const k = (e) => e.key === 'Escape' && setOpen(false); addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, [open]);
   useReminders();
-  const late = forScope(feedItems(), 'mine').filter((i) => diff(i.due) <= 0).length;
-  const unread = list('notice').filter((n) => n.to === me.id && !n.read).length;
-  const pending = can('approvals') ? list('approval').filter((a) => a.status === 'pending').length : 0;
-  const toReview = can('approvals') ? list('report').filter((r) => r.owner !== me.id && r.status === 'submitted' && !r.reviewed).length : 0;
-  const billsToDo = isTop() ? list('bill').filter((b) => b.status === 'submitted' || b.status === 'approved').length : 0; // management: to approve or to pay
-  const cnt = { today: late, daily: toReview, bills: billsToDo, inbox: unread, approvals: pending, calendar: urgentDeadlines() };
+  const cnt = sectionCounts(); // the same numbers as the tiles on Home (src/tiles.jsx)
   // Which section is open: the gold mark in the sidebar slides to it, and the page changes with a short movement.
   const path = loc.pathname, seg = path.split('/')[1] || 'home';
   const on = (k, to) => (to === '/' ? path === '/' : k === 'settings' ? path.startsWith('/settings') && !path.startsWith('/settings/people') : path === to || path.startsWith(to + '/'));
