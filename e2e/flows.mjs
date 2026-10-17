@@ -55,8 +55,8 @@ try {
     await bde.locator('#splash').waitFor({ state: 'detached', timeout: 6000 }); await bde.locator('input[type=email]').waitFor(); });
   await step('sign in; the dashboard greets the person', async () => { await signIn(bde, 'bde@e2e.test'); must((await bde.locator('.hero h1').textContent()).includes('Kiran'), 'no greeting by name'); });
   await step('the app launcher shows the BDE their apps, and only theirs (like Zoho One)', async () => { const t = bde.locator('.home-tiles');
-    for (const g of ['Aali CRM', 'Aali Calling', 'Aali Deals Desk', 'Aali Projects', 'Aali Work']) await t.locator('.tile', { hasText: g }).waitFor();
-    for (const g of ['Aali People', 'Aali Insights', 'Aali Connect']) must(await t.locator('.tile', { hasText: g }).count() === 0, 'a BDE sees ' + g); });
+    for (const g of ['Aali CRM', 'Aali Calling', 'Aali Projects', 'Aali Work']) await t.locator('.tile', { hasText: g }).waitFor();
+    for (const g of ['Aali Deals Desk', 'Aali People', 'Aali Insights', 'Aali Connect']) must(await t.locator('.tile', { hasText: g }).count() === 0, 'a BDE sees ' + g); });
   await step('first sign-in offers the guide; it walks the BDE through the pages of a BDE, and only those', async () => { await bde.locator('.modal', { hasText: 'Welcome to Aali One' }).waitFor();
     must((await bde.locator('.guide p').first().textContent()).includes('Your work is sales'), 'the welcome is not written for a BDE'); await bde.getByRole('button', { name: 'Start the guide' }).click(); await bde.locator('.tour').waitFor();
     const { seen, framed } = await walkGuide(bde); for (const p of ['/', '/daily', '/calls', '/leads', '/assets', '/settings/me']) must(seen.has(p), 'the guide did not open ' + p);
