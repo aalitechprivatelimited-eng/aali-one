@@ -124,8 +124,9 @@ function Day({ d, items, running, groups: kinds = GROUPS, onClose }) {
 // ---------- deadlines: missed ones, and the next two weeks, above the month ----------
 function DeadlineBoard({ items }) {
   const missed = items.filter((i) => diff(i.due) < 0), soon = items.filter((i) => diff(i.due) >= 0 && diff(i.due) <= 14);
-  const line = (i) => <Link key={i.key} to={i.link} className="li" style={{ padding: '9px 12px' }}><Pill k={i.tone}>{rel(i.due)}</Pill><span className="small muted" style={{ width: 110, flex: 'none' }}>{DEADLINE_KIND[i.kind]}</span>
-    <span className="grow">{i.title}</span><span className="small muted">{fmtDate(i.due)}{i.owner ? ' · ' + uname(i.owner) : ''}</span><Sample on={i.sample} /></Link>;
+  // Two lines, so the title always has the full width (18 Oct 2026): when, what kind and the date on top, the title under them.
+  const line = (i) => <Link key={i.key} to={i.link} className="li dl"><Pill k={i.tone}>{rel(i.due)}</Pill><span className="small muted ell">{DEADLINE_KIND[i.kind]} <Sample on={i.sample} /></span>
+    <span className="small muted dl-d">{fmtDate(i.due)}{i.owner ? ' · ' + uname(i.owner) : ''}</span><span className="dl-t">{i.title}</span></Link>;
   return <div className="grid2" style={{ marginBottom: 16, alignItems: 'start' }}>
     <div className="card stack"><h3 style={{ margin: 0 }}>Missed <span className="num muted">{missed.length}</span></h3>{missed.length ? <div className="list">{missed.map(line)}</div> : <p className="small muted" style={{ margin: 0 }}>No deadline has been missed.</p>}</div>
     <div className="card stack"><h3 style={{ margin: 0 }}>Next 14 days <span className="num muted">{soon.length}</span></h3>{soon.length ? <div className="list">{soon.map(line)}</div> : <p className="small muted" style={{ margin: 0 }}>Nothing due in the next two weeks.</p>}</div>

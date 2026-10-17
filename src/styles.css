@@ -127,8 +127,10 @@ a.me-who:hover{background:var(--gold-50)}
   .shell.mini .nav a .cnt{position:absolute;top:-3px;right:-5px;margin:0;font-size:9.5px;line-height:15px;min-width:15px;padding:0 4px;box-shadow:0 0 0 2px var(--paper)}
   .shell.mini .nav [data-tip]:hover::after,.shell.mini .nav [data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);background:var(--ink);color:var(--paper);font:600 12px/1 var(--ui);padding:8px 11px;border-radius:8px;white-space:nowrap;z-index:50;pointer-events:none;box-shadow:var(--e2);animation:tip-in .16s var(--ease)}
   .shell.mini .side .me{padding:12px 0 0;align-items:center;width:42px}
-  .shell.mini .me .grow,.shell.mini .me-act>:not(.help){display:none}
-  .shell.mini .me-act .help{width:42px;height:42px;padding:0;border-radius:12px}
+  .shell.mini .me .grow,.shell.mini .me-act{display:none}
+  .shell.mini .side-tools{flex-direction:column;gap:6px;margin-bottom:8px}
+  .shell.mini .side-help{width:42px;height:42px;border-radius:12px}
+  .shell.mini .side-search{margin:0}
   .shell.mini .nav .app-h{display:none}
   .shell.mini a.me-who{padding:0;border-radius:50%}
 }
@@ -675,7 +677,16 @@ th{letter-spacing:.06em}
 /* the app's name and picture at the top of its menu */
 .nav .app-h{display:flex;align-items:center;gap:9px;padding:14px 10px 6px;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft)}
 .nav .app-h .app-ic{display:grid;place-items:center;width:24px;height:24px;border-radius:8px;background:linear-gradient(145deg,var(--gold-soft),color-mix(in srgb,var(--gold-soft) 55%,var(--gold)));color:var(--gold-strong);box-shadow:var(--hi)}
-.me-act .help{flex:none;padding-inline:9px}
+/* Search and Help side by side at the top of the sidebar */
+.side-tools{display:flex;gap:6px;align-items:stretch;margin:0 0 8px}
+.side-tools .side-search{margin:0;flex:1;min-width:0}
+.side-help{flex:none;width:38px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--raise);color:var(--ink-faint);box-shadow:var(--e1);transition:border-color var(--t-mid),color var(--t-mid),transform var(--t-mid) var(--ease)}
+.side-help:hover{border-color:var(--gold);color:var(--ink)}
+.side-help:active{transform:scale(.95)}
+/* a deadline: when, kind and date on the first line, the title on its own line under them */
+.li.dl{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:5px 10px;align-items:center;padding:10px 13px}
+.li.dl .dl-d{text-align:right;white-space:nowrap}
+.li.dl .dl-t{grid-column:1/-1;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
 
 /* the app launcher: one card per app, with what it is for in plain words */
 .apps-h{display:flex;align-items:baseline;gap:6px 14px;flex-wrap:wrap}
@@ -720,3 +731,11 @@ th{letter-spacing:.06em}
 @keyframes lab-in{from{opacity:0;transform:translateX(-4px)}}
 @media (prefers-reduced-motion:reduce){.nav .lab,.brand-t,.nav .app-h{animation:none!important}}
 [data-theme="dark"] .tiles.apps .tile.dash .tile-ico{color:#191305}
+
+/* A list row keeps room for its words (found by the layout check, 18 Oct 2026): the text part is at least 220px wide, so on a phone it
+   takes its own line and the badges and buttons go under it, instead of the words being squeezed into a thin column. */
+.li>.grow{flex:1 1 220px}
+.li>.grow .row{row-gap:4px}
+/* a long row of choices scrolls inside itself on a phone instead of pushing the page sideways */
+.seg{max-width:100%;overflow-x:auto;scrollbar-width:none}.seg::-webkit-scrollbar{display:none}.seg button{flex:none}
+

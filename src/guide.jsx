@@ -11,10 +11,13 @@ import { SECTIONS } from '../shared/access.js';
 import { Modal } from './ui.jsx';
 import { m, AnimatePresence, EASE, SPRING, useDraw } from './motion.jsx';
 import { Ico } from './icons.jsx';
+import { myApps } from './apps.jsx';
 
 export const openGuide = () => dispatchEvent(new Event('aali-guide'));
-const key = (id) => 'aali-guide:' + id;
+// Version 2 (18 Oct 2026): the guide follows the apps. Someone who finished the first guide is offered this one once, with what is new.
+const key = (id) => 'aali-guide2:' + id;
 const seen = (id) => { try { return localStorage.getItem(key(id)) === 'done'; } catch { return true; } }; // if the device cannot remember, do not nag
+const sawOld = (id) => { try { return localStorage.getItem('aali-guide:' + id) === 'done'; } catch { return false; } };
 const remember = (id) => { try { localStorage.setItem(key(id), 'done'); } catch {} };
 const ORDER = ['', 'Overview', 'Sales', 'Delivery', 'Money', 'Management', 'Account']; // the order of the sidebar
 const GROUP = 'AaliTech, Aali Conssultancy and Aali Builders';
@@ -90,14 +93,17 @@ function build(me) {
   add('/', 'apps', 'Your apps', 'Each card is an app with a few pages – open one and its pages show in the menu. The first card, Overview, is today’s work. An app opens again on the page you last used in it.', '[data-guide="tiles"]');
   add('/overview', 'trend', 'Overview – your numbers', `${top ? `These tiles are today’s figures for the whole group – ${GROUP}` : mgr ? 'These tiles are today’s figures for your team' : 'These tiles are your own figures for today'}. Tap any tile to open that section.`, '[data-guide="numbers"]');
   add('/overview', 'alert', 'Overview – what needs attention', `Everything that is late or due today is listed here${top ? '; anything left 3 or more days late is sent up to you' : mgr ? ': switch between “For me” and “My team”' : ''}.${own ? ' A call back you promised shows on its day with a “Call now” button.' : ''}`, '[data-guide="attention"]');
-  for (const [k, label, to] of secs) {
-    add(k === 'settings' ? '/settings/me' : to, k, k === 'people' && !top ? 'My team members' : label, about(k, me));
-    if (k !== 'settings') continue;
+  // App by app, in the order of the cards on Home, each page of the app in the words of this person's role; then Settings.
+  const SEC = Object.fromEntries(SECTIONS.map(([k, label, to]) => [k, { label, to }]));
+  for (const a of myApps()) for (const k of a.items) add(SEC[k].to, k, `${a.name} – ${k === 'people' && !top ? 'My team members' : SEC[k].label}`, about(k, me));
+  for (const [k] of secs.filter(([k]) => k === 'settings')) {
+    add('/settings/me', k, 'Settings', about(k, me));
     if (top) add('/settings/access', 'approvals', 'Settings – who can see what', 'The whole access table: every section against every role. Use it when someone asks why they cannot see a page.');
     if (me.isAdmin) add('/settings/sales', 'settings', 'Settings – sales and report set-up', 'The lists and rules the team works with: services, lead sources, kinds of work, and the calling rules – how long a business stays with a BDE and how many unanswered tries are allowed.');
     if (top) add('/settings/staff', 'people', 'Settings – staff register', 'Every person ever added, when they last signed in, and the ones removed. A removed person can be restored from here.');
     if (top) add('/settings/audit', 'daily', 'Settings – audit log', 'Who did what and when: sign-ins, wrong password tries, changes and deletions.');
   }
+  add(null, 'help', 'Help on every page', 'Press the ? button next to Search (or the ? key) on any page: it says what that page is for, in the words of your role, and can start this guide again.', '.side-help');
   add(null, 'search', 'Search anything', 'Press Search in the sidebar, Ctrl + K or the / key, and type part of a name or a mobile number. It finds leads, clients, businesses and sections that your login can open, brings back the pages you opened lately, and starts a new quotation, agreement, invoice or receipt.', '.side-search');
   add('/', 'help', 'The guide is always here', 'That is everything your login can open. Whenever you are unsure, press Guide at the top of Home, or Help (the ? key) for the page you are on; use the list in this box to jump straight to one section.', '[data-guide="guide-btn"]');
   return S;
@@ -125,10 +131,13 @@ export function Guide() {
   }, [on, at]);
   const end = () => { remember(me.id); setOn(false); setAsk(false); };
   const draw = useDraw(`${on}${ask}${at}`); // the step's icon draws itself each time the step changes
-  if (ask) return <Modal title="Welcome to Aali One" onClose={end} footer={<><button className="btn ghost sm" type="button" onClick={end}>Not now</button>
+  const again = sawOld(me.id); // took the first guide: say what changed
+  if (ask) return <Modal title={again ? 'Aali One has a new look' : 'Welcome to Aali One'} onClose={end} footer={<><button className="btn ghost sm" type="button" onClick={end}>Not now</button>
     <button className="btn primary" type="button" autoFocus onClick={() => { remember(me.id); setAsk(false); setAt(0); setOn(true); }}><Ico k="play" size={15} />Start the guide</button></>}>
     <div className="guide"><span className="guide-ic" ref={draw}><Ico k="help" size={30} /></span><h2>{`Welcome, ${me.display || me.name.split(' ')[0]}`}</h2>
-      <p>{intro(me, list.length ? SECTIONS.filter((x) => can(x[0])).length : 0)}</p><p className="small">It takes about two minutes. You can open it again any time with the Guide button at the top of Home.</p></div></Modal>;
+      {again ? <><p>What is new: <b>Home</b> now shows your apps – open one and its pages are in the menu. Today’s numbers and what needs attention are on the <b>Overview</b> card. The <b>?</b> button next to Search explains any page, and <kbd>Ctrl</kbd> + <kbd>K</kbd> or <kbd>/</kbd> finds anything and starts new work.</p>
+        <p>The guide walks you through it all again, app by app, for your role.</p></>
+        : <p>{intro(me, list.length ? SECTIONS.filter((x) => can(x[0])).length : 0)}</p>}<p className="small">It takes about two minutes. You can open it again any time with the Guide button at the top of Home.</p></div></Modal>;
   return createPortal(<AnimatePresence>{on && s && <m.div key="tour" className="tour" role="dialog" aria-label="Guide" initial={{ opacity: 0, y: 26, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18, transition: { duration: 0.14 } }} transition={SPRING}>
       <div className="tour-h"><span className="ic" ref={draw}><Ico k={s.icon} /></span><div className="grow"><div className="small muted">Guide · step {at + 1} of {list.length}</div>
         <AnimatePresence mode="wait" initial={false}><m.h3 key={at} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.08 } }} transition={{ duration: 0.2, ease: EASE }}>{s.title}</m.h3></AnimatePresence></div>

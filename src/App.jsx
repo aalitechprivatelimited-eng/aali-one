@@ -181,7 +181,8 @@ function Shell() {
           <div className="brand-t"><b>Aali One</b><span>Aali Group</span></div>
           <button type="button" className="btn ghost sm shut" onClick={() => setOpen(false)} aria-label="Close the menu">Close</button>
           <button type="button" className="collapse" onClick={() => flip(true)} title="Collapse the sidebar" aria-label="Collapse the sidebar"><Ico k="side" /></button></div>
-        <button type="button" className="side-search" onClick={openSearch} data-tip="Search" aria-label="Search (Ctrl + K)"><Ico k="search" /><span className="lab">Search</span><kbd>Ctrl K</kbd></button>
+        <div className="side-tools"><button type="button" className="side-search" onClick={openSearch} data-tip="Search" aria-label="Search (Ctrl + K)"><Ico k="search" /><span className="lab">Search</span><kbd>Ctrl K</kbd></button>
+          <HelpButton className="side-help" label={false} hotkey /></div>
         <m.nav className="nav" layoutScroll aria-label={app ? app.name : 'Apps'}>
           {/* Like Zoho One (17 Oct 2026): inside an app, only its sections and Home (the apps) above them; on Home, the apps. Named Home on 18 Oct. */}
           <Link to="/" data-tip="Home" aria-label="Home" aria-current={path === '/' ? 'page' : undefined} className={path === '/' ? 'active' : ''}>
@@ -199,7 +200,7 @@ function Shell() {
                 {on('settings', '/settings') && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="settings" /><span className="lab">Settings</span></Link>}</>}
         </m.nav>
         <div className="me"><Link to="/settings/me" className="me-who" title="My profile: photo, display name, password"><Avatar u={me} /><div className="grow"><b className="ell">{me.name}</b><div className="faint ell" title={desig(me)}>{desig(me)}</div><div className="faint ell">{me.company}</div></div></Link>
-          <div className="me-act"><HelpButton className="btn sm help" label={false} hotkey /><ThemeToggle label /><button className="btn sm" type="button" onClick={signOut}>Sign out</button></div></div>
+          <div className="me-act"><ThemeToggle label /><button className="btn sm" type="button" onClick={signOut}>Sign out</button></div></div>
       </aside>
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
       <div style={{ minWidth: 0 }}>
