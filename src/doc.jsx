@@ -186,7 +186,7 @@ export function AgreementSheet({ a }) {
 
 // Payslip: one person's pay for one month (pages/Payroll.jsx), from the figures saved on the month's payroll.
 export function PayslipSheet({ run, i }) {
-  const b = settings().business, a = i.days.att, emp = run.pclientId ? run.employer || {} : null, co = ((emp && emp.name) || i.company || b.name || '').toUpperCase(), acct = i.bank?.account ? '•••• ' + String(i.bank.account).slice(-4) : '—';
+  const b = settings().business, a = i.days.att, emp = run.pclientId ? run.employer || {} : null, co = ((emp && emp.name) || i.company || b.name || '').toUpperCase(), acct = i.bank?.account ? String(i.bank.account) : '—'; // the full number (the user, 17 Oct 2026)
   const ded = [['Provident Fund (PF)', i.ded.pf], ['ESI', i.ded.esi], ['Professional Tax', i.ded.pt], ['Income tax (TDS)', i.ded.tds], ...i.ded.fixed.map((x) => [x.name, x.amount]),
     ...i.ded.loans.map((x) => [x.kind === 'advance' ? 'Salary advance' : 'Loan repayment', x.amount]), ...(i.ded.extras || []).map((x) => [`${x.name}${x.note ? ` (${x.note})` : ''}`, x.amount]), [i.ded.otherWhy || 'Other deduction', i.ded.other]].filter((x) => +x[1]);
   const daily = i.payType === 'daily', wages = daily ? [[`Wages – ₹${i.rate} a day × ${i.days.payable} days`, '', i.earned.gross]]
@@ -201,8 +201,8 @@ export function PayslipSheet({ run, i }) {
     <div className="rule" />
     <table className="slip-kv"><tbody>
       <tr><th>Name</th><td>{i.name}</td><th>Designation</th><td>{i.designation || '—'}</td></tr>
-      <tr>{emp ? <><th>Employee code</th><td>{i.code || '—'}</td></> : <><th>Company</th><td>{i.company || '—'}</td></>}<th>Bank account</th><td>{acct}{i.bank?.ifsc ? ' · ' + i.bank.ifsc : ''}</td></tr>
-      <tr><th>PAN</th><td>{i.pan || '—'}</td><th>UAN (PF)</th><td>{i.uan || '—'}</td></tr>
+      <tr>{emp ? <><th>Employee code</th><td>{i.code || '—'}</td></> : <><th>Company</th><td>{i.company || '—'}</td></>}<th>Bank account</th><td className="num">{acct}</td></tr>
+      <tr><th>IFSC</th><td className="num">{i.bank?.ifsc || '—'}</td><th>UAN (PF)</th><td>{i.uan || '—'}</td></tr>
       <tr><th>{daily ? 'Daily wage' : run.rules?.dayBasis ? 'Days for a full month' : 'Days in the month'}</th><td>{daily ? `₹${i.rate}` : i.days.total}</td><th>Paid days</th><td><b>{i.days.payable}</b>{i.days.typed ? ' (entered by HR)' : ''}</td></tr>
       {a && <tr><th>Attendance</th><td colSpan={3}>Present {a.present}{a.half ? ` · half days ${a.half}` : ''}{a.double ? ` · double shifts ${a.double}` : ''} · paid leave {a.paidLeave} · unpaid leave {a.unpaidLeave} · absent {a.absent} · {emp ? 'weekly offs' : 'Sundays'} {a.sundays} · holidays {a.holidays}</td></tr>}
     </tbody></table>
