@@ -50,7 +50,7 @@ export const ACCESS = {
 
 // The sidebar, in order. [key, label, path, group]
 export const SECTIONS = [
-  ['today', 'Dashboard', '/', ''], ['daily', 'Daily reports', '/daily', ''], ['tasks', 'Tasks', '/tasks', ''], ['bills', 'Bills', '/bills', ''], ['inbox', 'Notifications', '/inbox', ''], ['approvals', 'Approvals', '/approvals', ''],
+  ['today', 'Home', '/', ''], ['daily', 'Daily reports', '/daily', ''], ['tasks', 'Tasks', '/tasks', ''], ['bills', 'Bills', '/bills', ''], ['inbox', 'Notifications', '/inbox', ''], ['approvals', 'Approvals', '/approvals', ''],
   ['leads', 'Leads & enquiries', '/leads', 'Sales'], ['calls', 'Call register', '/calls', 'Sales'], ['deals', 'Deals pipeline', '/deals', 'Sales'], ['clients', 'Clients', '/clients', 'Sales'], ['quotes', 'Quotations', '/quotes', 'Sales'], ['agreements', 'Agreements', '/agreements', 'Sales'],
   ['projects', 'Projects', '/projects', 'Delivery'], ['support', 'Support', '/support', 'Delivery'], ['assets', 'Client assets', '/assets', 'Delivery'],
   ['money', 'Payments & receipts', '/payments', 'Money'], ['payroll', 'Payroll', '/payroll', 'Money'], ['clientpay', 'Client payroll', '/client-payroll', 'Money'],

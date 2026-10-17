@@ -7,6 +7,7 @@ import { Reveal, Ring, m, EASE } from '../motion.jsx';
 import { Ico } from '../icons.jsx';
 import { openGuide } from '../guide.jsx';
 import { openVisitNow } from '../visit.jsx';
+import { Tiles } from '../tiles.jsx';
 
 // The dashboard: the numbers that matter to this person's role, each one a link to its page.
 // It is built from what the person is allowed to see, so a BDE gets their own numbers, a manager the team's, management the whole group's.
@@ -97,6 +98,7 @@ export default function Today() {
   const notes = list('notice').filter((n) => n.to === me.id && !n.read).slice(0, 5);
   return (
     <>
+      <Tiles />
       <Hero />
       <OutNow />
       <Numbers />
