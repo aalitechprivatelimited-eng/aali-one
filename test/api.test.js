@@ -776,6 +776,20 @@ test('several services under one client: one deal with all of them, or one deal 
   const ps = (await recs(OPS)).filter((r) => [p1.id, p2.id].includes(r.id)); assert.ok(ps.every((p) => p.advance && p.stage === 'planning'), 'every project of the deal can start');
 });
 
+test('an interested business on a call becomes the BDE\'s lead at once (Warm, follow-up tomorrow); the same number and service joins it', async () => {
+  const db = await getDb(); await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_ilb','ilb@test.in','ilb','bde','sales',$1)", [hashPassword('password123')]);
+  const B = (await call('POST', '/auth/login', { email: 'ilb@test.in', password: 'password123' })).cookie, recs = async () => (await call('GET', '/bootstrap', null, B)).body.records;
+  const rep = (await add(B, 'report', {})).record, call1 = { id: 'k1', org: 'Lotus Bakery', phone: '9000099901', place: 'Tenali', resp: 'Interested', note: 'Wants a website', src: 'Google Maps', services: ['Website – 5 pages'] };
+  const r1 = await patch(B, rep.id, { calls: [call1] }); assert.equal(r1.status, 200, JSON.stringify(r1.body));
+  const leadId = r1.body.record.calls[0].leadId; assert.match(leadId || '', /^le_/, 'the call is linked to its new lead');
+  const lead = (await recs()).find((r) => r.id === leadId);
+  assert.equal(lead.owner, 'u_ilb'); assert.equal(lead.score, 'warm'); assert.deepEqual(lead.services, ['Website – 5 pages']); assert.equal(lead.source, 'Call list – Google Maps');
+  // Interested again about the same service: no second lead; without a service: no lead at all.
+  const r2 = await patch(B, rep.id, { calls: [...r1.body.record.calls, { ...call1, id: 'k2' }, { id: 'k3', org: 'Quiet Shop', phone: '9000099902', resp: 'Interested' }] });
+  assert.equal(r2.status, 200); assert.equal(r2.body.record.calls[1].leadId, leadId, 'the repeat joins the same lead'); assert.equal(r2.body.record.calls[2].leadId, undefined);
+  assert.equal((await recs()).filter((r) => r.type === 'lead' && ['9000099901', '9000099902'].includes(r.mobile10)).length, 1);
+});
+
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {
   const { setHrmSource } = await import('../server/hrm.js'), { PGlite } = await import('@electric-sql/pglite');
   const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;

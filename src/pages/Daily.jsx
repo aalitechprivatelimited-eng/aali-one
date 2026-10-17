@@ -9,6 +9,7 @@ import { Tabs, Seg, Pill, Av, Avatar, Empty, Field, In, Area, Sel, Sample, Stat,
 import { Check } from './Calls.jsx';
 import { readSheets } from '../xlsx.js';
 import { askVisit } from '../visit.jsx';
+import { ServicesPick } from './Leads.jsx';
 
 // Call sheet: the responses a BDE can pick, and what counts as positive.
 const RESP = [['Interested', 'ok'], ['Call back', 'warn'], ['Not interested', ''], ['No answer', ''], ['Busy', ''], ['Not reachable', ''], ['Wrong number', ''], ['Asked not to call', 'bad']];
@@ -255,7 +256,7 @@ function CallSheet({ r, show, locked, save, dial, setDial, pickId }) {
 // The calling window. It opens when "Calling" is chosen as the kind of work: pick the client from my list, call, tap what happened.
 const MAIN = ['Interested', 'Call back', 'No answer', 'Not interested'], REST = ['Busy', 'Not reachable', 'Wrong number', 'Asked not to call'];
 function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
-  const none = { meeting: '', met: false, note: '', back: addDays(today(), 1) }, fresh = { org: '', phone: '', place: '', ind: '', src: '', dupOk: false };
+  const none = { meeting: '', met: false, note: '', back: addDays(today(), 1), services: [] }, fresh = { org: '', phone: '', place: '', ind: '', src: '', dupOk: false };
   const [q, setQ] = useState(''), [pick, setPick] = useState(() => todo.find((x) => x.id === pickId) || null), [resp, setResp] = useState(''), [d, setD] = useState(none), [rest, setRest] = useState(false), [busy, setBusy] = useState(false);
   const [n, setN] = useState(null), [chk, setChk] = useState(null), [pl, setPl] = useState(''); // n: a number that is not in the list yet; chk: what the call register says about it; pl: a place added during the call
   const text = q.trim().toLowerCase(), shown = todo.filter((p) => !text || `${p.name} ${p.phone} ${p.place} ${p.ind}`.toLowerCase().includes(text));
@@ -273,7 +274,7 @@ function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
     if (!v.ok) return setChk(v); setPick({ id: v.id, name: n.org.trim(), phone: n.phone.trim(), place: n.place.trim(), ind: n.ind, src: n.src, dupOk: n.dupOk, tries: 0 }); setN(null); setChk(null); poll(); }
   async function log(r2) {
     setBusy(true);
-    const ok = await attempt(() => save({ calls: [...calls, row({ org: p.name || p.phone, phone: p.phone, place: p.place || pl.trim(), ind: p.ind || '', src: p.src || '', resp: r2, meeting: d.meeting, met: d.met, note: d.note, dupOk: !!p.dupOk, ...(r2 === 'Call back' ? { back: d.back } : {}) })] }), r2 === 'Call back' ? `${p.name || p.phone}: call back on ${fmtDate(d.back)}. It will show on your dashboard that day.` : `${p.name || p.phone}: ${r2}. Written on your call sheet.`);
+    const ok = await attempt(() => save({ calls: [...calls, row({ org: p.name || p.phone, phone: p.phone, place: p.place || pl.trim(), ind: p.ind || '', src: p.src || '', resp: r2, meeting: d.meeting, met: d.met, note: d.note, dupOk: !!p.dupOk, ...(r2 === 'Call back' ? { back: d.back } : {}), ...(r2 === 'Interested' ? { services: d.services } : {}) })] }), r2 === 'Call back' ? `${p.name || p.phone}: call back on ${fmtDate(d.back)}. It will show on your dashboard that day.` : `${p.name || p.phone}: ${r2}. Written on your call sheet.`);
     setBusy(false); if (ok) back();
   }
   const tap = (x) => (['Interested', 'Call back'].includes(x) ? setResp(x) : log(x)), upN = (key) => (e) => setN({ ...n, [key]: e.target.value });
@@ -293,10 +294,12 @@ function Dialer({ todo, calls, k, row, save, onClose, onUpload, pickId }) {
         {resp === 'Call back' && <div className="row"><span className="small" style={{ fontWeight: 600 }}>Call back on</span>
           {[[1, 'Tomorrow'], [2, 'In 2 days'], [7, 'Next week']].map(([n, lab]) => <button key={n} type="button" className={'chip' + (d.back === addDays(today(), n) ? ' on' : '')} aria-pressed={d.back === addDays(today(), n)} onClick={() => setD({ ...d, back: addDays(today(), n) })}>{lab}</button>)}
           <In type="date" style={{ width: 'auto' }} min={today()} value={d.back} onChange={(e) => e.target.value && setD({ ...d, back: e.target.value })} aria-label="Call back on this date" /></div>}
+        {resp === 'Interested' && <div className="stack gap4"><span className="small" style={{ fontWeight: 600 }}>Which services do they want? It becomes your lead (Warm, follow-up tomorrow).</span>
+          <ServicesPick value={d.services} onChange={(v) => setD({ ...d, services: v })} /></div>}
         <input className="in" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder={resp === 'Interested' ? 'What do they want? e.g. quotation for a 5-page website' : 'What did they say? e.g. owner is travelling, call after 4 pm'} maxLength={300} autoFocus />
         <div className="row"><input className="in" style={{ flex: '1 1 200px' }} value={d.meeting} onChange={(e) => setD({ ...d, meeting: e.target.value })} placeholder="Meeting fixed for… (if any)" maxLength={80} />
           <label className="check" style={{ alignItems: 'center' }}><input type="checkbox" style={{ margin: 0 }} checked={d.met} onChange={(e) => setD({ ...d, met: e.target.checked })} /> Met in person</label>
-          <button className="btn primary" type="button" disabled={busy} onClick={() => log(resp)}>Save this call</button></div></div>}
+          <button className="btn primary" type="button" disabled={busy || (resp === 'Interested' && !d.services.length)} onClick={() => log(resp)}>{resp === 'Interested' ? 'Save the call and make the lead' : 'Save this call'}</button></div></div>}
     </div> : n ? <div className="stack">
       <div className="row"><input className="in" style={{ flex: '2 1 200px' }} value={n.org} onChange={upN('org')} placeholder="Business / person name" maxLength={120} autoFocus />
         <input className="in" style={{ flex: '1 1 150px' }} value={n.phone} onChange={upN('phone')} placeholder="Contact no. (10 digits)" inputMode="tel" maxLength={40} /></div>
@@ -588,7 +591,8 @@ function Team() {
         {isTop(me) ? <TeamDetail rows={rows} date={date} open={open} /> :
         <div className="stack gap16">{['sales', 'it', 'management'].map((t) => { const g = rows.filter((x) => x.u.team === t); if (!g.length) return null;
           const parts = [['Manager', g.filter((x) => isManager(x.u))], ['Team', g.filter((x) => !isManager(x.u))]].filter((x) => x[1].length), cs = g.reduce((n, x) => n + callStats(x.r).n, 0);
-          return <section key={t}><div className="row between" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{TEAMS[t]} Team</h2>
+          const head = g.find((x) => isManager(x.u));
+          return <section key={t}><div className="row between" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{head ? <>{desig(head.u)} <span className="muted">→</span> {TEAMS[t]} team</> : `${TEAMS[t]} team`}</h2>
             <span className="small muted">{g.filter((x) => x.r).length} of {g.length} present · {g.filter((x) => x.r?.status === 'submitted').length} submitted{t === 'sales' ? ` · ${cs} calls` : ''}</span></div>
             {parts.map(([label, list]) => <div key={label} style={{ marginBottom: 10 }}><span className="lbl">{TEAMS[t]} {label}{label === 'Team' ? ` · ${list.length}` : ''}</span>
               <div className="list" style={{ marginTop: 4 }}>{list.map(({ u, r }, i) => <PersonRow key={u.id} u={u} r={r} date={date} first={!i} open={open === u.id} toggle={() => setOpen(open === u.id ? '' : u.id)} />)}</div></div>)}

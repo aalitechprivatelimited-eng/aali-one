@@ -295,7 +295,7 @@ export async function beforeCreate(t, type, data, user, sample) {
       if (ex) return { merged: true, id: ex.id, type: 'report' }; // one report per person per day
       data.status = 'open'; data.entries = cleanEntries(data.entries); checkVisits(data.entries); data.calls = cleanCalls(data.calls);
       for (const k of ['plan', 'blockers']) if (data[k] !== undefined) data[k] = String(data[k] ?? '').slice(0, 2000); // always text (a number broke the page)
-      await applyCalls(t, user, [], data.calls, sample); await setPresence(t, user, data, sample);
+      await applyCalls(t, user, [], data.calls, sample); await leadsFromCalls(t, user, [], data.calls, sample); await setPresence(t, user, data, sample);
       if (data.date === today()) data.dayStart = new Date().toISOString(); else delete data.dayStart; // the day starts when the report is opened
       delete data.dayEnd;
       for (const k of ['remarks', 'reviewed', 'submittedAt', 'log', 'shareToken']) delete data[k];
@@ -366,7 +366,22 @@ const cleanCalls = (list) => (Array.isArray(list) ? list : []).filter((c) => Str
   place: String(c.place || '').trim().slice(0, 60), resp: String(c.resp || '').trim().slice(0, 40), meeting: String(c.meeting || '').trim().slice(0, 80),
   met: !!c.met, note: String(c.note || '').trim().slice(0, 300), ...(c.ind ? { ind: String(c.ind).slice(0, 60) } : {}), ...(c.src ? { src: String(c.src).slice(0, 40) } : {}), ...(c.dupOk ? { dupOk: true } : {}),
   ...(c.paste && /^[\w-]{4,40}$/.test(c.paste) ? { paste: c.paste } : {}), // rows added together by one paste, so they can be removed together
-  ...(c.resp === 'Call back' && /^\d{4}-\d\d-\d\d$/.test(c.back || '') ? { back: c.back } : {}) }));
+  ...(c.resp === 'Call back' && /^\d{4}-\d\d-\d\d$/.test(c.back || '') ? { back: c.back } : {}),
+  ...(c.resp === 'Interested' && Array.isArray(c.services) ? { services: c.services.map((x) => String(x || '').trim().slice(0, 80)).filter(Boolean).slice(0, 12) } : {}),
+  ...(/^le_[\w-]{4,40}$/.test(c.leadId || '') ? { leadId: c.leadId } : {}) }));
+// A business said "Interested" on a call (the user, 17 Oct 2026): it becomes a lead at once, through the same intake as any enquiry –
+// the BDE's own, Warm, follow-up tomorrow, the services it wants. The same mobile + a service already open joins that lead instead.
+async function leadsFromCalls(t, user, prev, next, sample) {
+  const seen = new Set(prev.map((c) => c.id));
+  for (const c of next) {
+    if (seen.has(c.id) || c.resp !== 'Interested' || c.leadId || !c.services?.length || mobile10(c.phone).length !== 10) continue;
+    const data = { name: c.org, company: c.org, mobile: c.phone, services: c.services, source: c.src ? `Call list – ${c.src}` : 'Phone call',
+      message: [c.note, c.meeting && `Meeting: ${c.meeting}`, c.place].filter(Boolean).join(' · '), score: 'warm', followUp: addDays(today(), 1), owner: user.id, fromCall: c.id };
+    const r = await beforeCreate(t, 'lead', data, user, sample);
+    if (r?.merged) { c.leadId = r.type === 'lead' ? r.id : ''; continue; }
+    const id = await insertRec(t, 'lead', data, user, { sample }); await afterCreate(t, 'lead', id, data, user, sample); c.leadId = id;
+  }
+}
 // Who is told when a report is submitted: the department manager; for a manager's own report, the Ops Manager and Company Secretary.
 async function reportWatchers(t, d) {
   const us = (await t.query('select id, title, team from users where active and id <> $1', [d.owner])).rows;
@@ -1230,7 +1245,8 @@ export async function beforeUpdate(t, rec, next, user) {
       const edited = ['entries', 'calls', 'plan', 'blockers', 'nums'].some((k) => JSON.stringify(next[k] ?? null) !== JSON.stringify(prev[k] ?? null));
       if (edited && !mine) throw new Rule('Only the writer can change a report. Managers can add a remark.', 403);
       if (edited && prev.status === 'submitted') throw new Rule('This report is already submitted. Ask your manager to send it back if it needs a change.');
-      if (mine) await applyCalls(t, user, prev.calls || [], next.calls || [], rec.sample); // one business, one caller: refuse a call that should not be made, count the rest
+      if (mine) await applyCalls(t, user, prev.calls || [], next.calls || [], rec.sample);
+      if (mine) await leadsFromCalls(t, user, prev.calls || [], next.calls || [], rec.sample); // an interested business becomes a lead // one business, one caller: refuse a call that should not be made, count the rest
       // A client accepted the deal at a visit: the Sales Manager hears it at once, with the BDE's remark.
       if (mine) for (const e of next.entries || []) if (e.visit?.outcome === 'Deal accepted' && (prev.entries || []).find((x) => x.id === e.id)?.visit?.outcome !== 'Deal accepted')
         for (const u of (await t.query("select id from users where active and title = 'salesmgr'")).rows) await notify(t, u.id, `${user.name}: ${e.visit.client} accepted the deal at the client visit.${e.note ? ' ' + e.note.slice(0, 120) : ''}`, 'report', rec.id, user, rec.sample);

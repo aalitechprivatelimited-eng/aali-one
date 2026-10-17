@@ -107,7 +107,10 @@ try {
   await step('choose Calling: the list opens; pick a business, tap Interested, save the call', async () => { await bde.locator('.steps button').first().click(); await bde.locator('.composer .chip', { hasText: /^Calling$/ }).click();
     await bde.locator('.modal', { hasText: 'Who are you calling?' }).waitFor(); await bde.locator('.modal .li', { hasText: 'Test Medicals' }).click();
     await bde.locator('.modal').getByRole('button', { name: 'Interested', exact: true }).click(); await bde.getByPlaceholder(/What do they want/).fill('Wants a quotation for a pharmacy website');
-    await bde.getByRole('button', { name: 'Save this call' }).click(); await toast(bde, 'Written on your call sheet');
+    // Interested makes the lead (17 Oct 2026): not without the services the business wants
+    must(await bde.getByRole('button', { name: 'Save the call and make the lead' }).isDisabled(), 'an interested call can be saved without a service');
+    await bde.locator('.modal .chip', { hasText: 'Website – 5 pages' }).click();
+    await bde.getByRole('button', { name: 'Save the call and make the lead' }).click(); await toast(bde, 'Written on your call sheet');
     // the second business asks to be called back: the day is asked, today is chosen so that it shows on the dashboard
     await bde.locator('.modal .li', { hasText: 'Lotus Clinic' }).click(); await bde.locator('.modal').getByRole('button', { name: 'Call back', exact: true }).click();
     await bde.getByLabel('Call back on this date').fill(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)); await bde.getByPlaceholder(/What did they say/).fill('Owner is busy, call in the evening');
@@ -118,6 +121,7 @@ try {
     await bde.getByRole('button', { name: 'Use this number' }).click(); await bde.locator('.modal').getByRole('button', { name: 'No answer', exact: true }).click(); await toast(bde, 'Padma Fancy Store: No answer');
     await bde.locator('.modal-f').getByRole('button', { name: 'Close' }).click(); await bde.locator('.modal').waitFor({ state: 'detached' });
     await bde.locator('table tr', { hasText: 'Test Medicals' }).locator('.pill', { hasText: 'Interested' }).waitFor();
+    must((await api('GET', '/bootstrap', null, (await api('POST', '/auth/login', { email: 'bde@e2e.test', password: PW })).cookie)).body.records.some((r) => r.type === 'lead' && r.name === 'Test Medicals' && r.score === 'warm'), 'the interested call did not become a lead');
     must((await bde.locator('table tr', { hasText: 'Padma Fancy Store' }).textContent()).includes('Tenali'), 'the place typed last was not kept on the call sheet'); });
   await step('a call sheet kept in Excel goes straight onto today\'s call sheet; the numbers-to-call upload says where it belongs', async () => {
     const { xlsxBlob } = await import('../src/xlsx.js'), sheet = async (file, rows) => fs.writeFileSync(file, Buffer.from(await xlsxBlob([{ name: 'Calls', widths: [24, 14, 16, 16], rows: [['Organisation', 'Contact no.', 'Location', 'Response'], ...rows] }]).arrayBuffer()));
@@ -142,7 +146,7 @@ try {
   await step('the call back shows on the dashboard for today', async () => { await bde.locator('.nav a', { hasText: 'Home' }).click(); const row = bde.locator('.list .li', { hasText: 'Call back: Lotus Clinic' }); await row.scrollIntoViewIfNeeded();
     await row.getByRole('link', { name: 'Call now' }).waitFor(); must(/to call back today/.test(await bde.locator('.stat', { hasText: 'Still to call' }).textContent()), 'the tile does not count the call back'); });
   await step('search: Ctrl + K finds the business by part of its number and opens the register on it', async () => { await bde.keyboard.press('Control+k'); await bde.getByRole('combobox', { name: 'Search' }).fill('98765012');
-    await bde.locator('.search-row', { hasText: 'Lotus Clinic' }).waitFor(); await bde.locator('.search-row', { hasText: 'Test Medicals' }).click(); await bde.locator('.search').waitFor({ state: 'detached' });
+    await bde.locator('.search-row', { hasText: 'Lotus Clinic' }).waitFor(); await bde.locator('.search-list > div', { has: bde.locator('.search-h', { hasText: 'Call register' }) }).locator('.search-row', { hasText: 'Test Medicals' }).click(); // it is a lead too now await bde.locator('.search').waitFor({ state: 'detached' });
     await bde.locator('tbody tr', { hasText: 'Test Medicals' }).waitFor(); must(new URL(bde.url()).pathname === '/calls', 'did not open the call register'); must(await bde.locator('tbody tr').count() === 1, 'the register is not filtered to that business');
     await bde.keyboard.press('Control+k'); await bde.getByRole('combobox', { name: 'Search' }).fill('tasks'); await bde.keyboard.press('Enter'); await bde.locator('.page h1', { hasText: 'Tasks' }).waitFor(); });
   await step('the call register lists the business with its call', async () => { await bde.locator('.nav a', { hasText: 'Call register' }).click(); await bde.locator('table tr', { hasText: 'Test Medicals' }).click();
