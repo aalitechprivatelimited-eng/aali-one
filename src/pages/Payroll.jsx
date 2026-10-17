@@ -5,7 +5,7 @@
 // All the arithmetic is in shared/payroll.js; the server saves the figures, this page shows the same figures before saving.
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { useStore, list, get, create, update, store, http, saveSetting } from '../api.js';
+import { useStore, list, get, create, update, store, http, saveSetting, download } from '../api.js';
 import { settings, uname, fmtDate, fmtDT, today, inr, can, canEdit, desig, COMPANIES, GROUP } from '../lib.js';
 import { DEFAULT_SETTINGS } from '../../shared/defaults.js';
 import { payFor, splitGross, employerCost, monthLabel, addMonths, daysIn, loanLeft, grossOf } from '../../shared/payroll.js';
@@ -182,13 +182,18 @@ function bankFile(run) {
   if (rows.some((i) => !i.bank?.account || !i.bank?.ifsc)) toast('Some people have no bank account on their salary sheet – marked MISSING in the file.', true);
 }
 
+// Download (the user, 17 Oct 2026): every payslip of the month as its own PDF, together in one ZIP – or one person's PDF.
+function DownloadSlips({ run, u }) {
+  const [busy, setBusy] = useState(false), go = async () => { setBusy(true); await attempt(() => download(`/payroll/runs/${run.id}/payslips${u ? '?u=' + u : ''}`, u ? 'Payslip.pdf' : 'Payslips.zip'), u ? 'Payslip downloaded.' : 'Payslips downloaded – one PDF for each person, in a ZIP.'); setBusy(false); };
+  return <button className="btn primary" type="button" disabled={busy} onClick={go}>{busy ? 'Making the PDFs…' : u ? 'Download PDF' : `Download all (${(run.items || []).length} PDFs in a ZIP)`}</button>;
+}
 function Slips({ id }) {
   const [sp] = useSearchParams(), run = get(id), u = sp.get('u');
   if (!run) return <Empty>This payroll was not found. <Link to="/payroll">Back</Link></Empty>;
   const items = (run.items || []).filter((i) => !u || i.userId === u);
   return <>
     <div className="topbar no-print"><h1>Payslips <small>{monthLabel(run.month)}{u && items[0] ? ' · ' + items[0].name : ` · ${items.length} people`}</small></h1>
-      <div className="row"><Link className="btn" to={run.pclientId ? `/client-payroll/${run.pclientId}?m=${run.month}` : `/payroll?m=${run.month}`}>Back</Link><button className="btn primary" type="button" onClick={() => window.print()}>Print / Save PDF</button></div></div>
+      <div className="row"><Link className="btn" to={run.pclientId ? `/client-payroll/${run.pclientId}?m=${run.month}` : `/payroll?m=${run.month}`}>Back</Link>{run.status !== 'draft' && <DownloadSlips run={run} u={u} />}</div></div>
     {run.status === 'draft' && <div className="banner warn no-print" style={{ marginBottom: 12 }}>This month is still a draft – the figures may change until HR locks it.</div>}
     {items.map((i) => <div key={i.userId} className="paper-wrap slip-page"><PayslipSheet run={run} i={i} /></div>)}
   </>;

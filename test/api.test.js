@@ -891,6 +891,13 @@ test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; th
   const mine = (await call('GET', '/payroll/mine', null, B)).body.slips; assert.equal(mine.length, 1); assert.equal(mine[0].month, '2026-09');
   assert.equal(mine[0].item.userId, 'u_pb'); assert.equal(mine[0].item.net, 13824); assert.ok(!('warn' in mine[0].item), 'HR\'s notes are not shown');
   assert.deepEqual((await call('GET', '/payroll/mine', null, CH)).body.slips, []);
+  // Payslips as real PDF files (17 Oct 2026): the month's in one ZIP for HR, one person's PDF, my own; nobody else's.
+  const zip = await call('GET', `/payroll/runs/${run.id}/payslips`, null, CS); assert.equal(zip.status, 200); assert.equal(zip.headers['content-type'], 'application/zip');
+  assert.match(zip.headers['content-disposition'], /Payslips%20September%202026\.zip/); assert.ok(String(zip.body).startsWith('PK'), 'a ZIP file');
+  const pdf = await call('GET', `/payroll/runs/${run.id}/payslips?u=u_pb`, null, CS); assert.equal(pdf.headers['content-type'], 'application/pdf'); assert.ok(String(pdf.body).startsWith('%PDF'));
+  assert.equal((await call('GET', `/payroll/runs/${run.id}/payslips`, null, B)).status, 404, 'a BDE cannot download the month');
+  const own = await call('GET', '/payroll/mine/2026-09', null, B); assert.equal(own.status, 200); assert.ok(String(own.body).startsWith('%PDF'));
+  assert.equal((await call('GET', '/payroll/mine/2026-08', null, B)).status, 404, 'no payslip for a month not paid');
   // A personal email is taken when a person is added (payslips will go there); colleagues do not see it.
   assert.equal((await call('POST', '/users', { firstName: 'Pe', surname: 'Mail', email: 'pe@test.in', password: 'password123', title: 'bde', designation: 'BDE', company: 'AaliTech', personalEmail: 'not-an-email' }, admin)).status, 400);
   const pe = (await call('POST', '/users', { firstName: 'Pe', surname: 'Mail', email: 'pe@test.in', password: 'password123', title: 'bde', designation: 'BDE', company: 'AaliTech', personalEmail: 'Pe.Mail@Gmail.com' }, admin)).body.user;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Link, Routes, Route, Navigate, useParams } from 'react-router-dom';
-import { useStore, store, http, saveSetting, setMe, upsertUser, poll, upload } from '../api.js';
+import { useStore, store, http, saveSetting, setMe, upsertUser, poll, upload, download } from '../api.js';
 import { settings, isTop, TEAMS, uname, fmtDT, fmtDate, today, addDays, parse, waLink, myJuniors, canAddPeople, COMPANIES, GROUP, desig } from '../lib.js';
 import { SECTIONS, ROLES, ROLE_NAME, ADMIN_TITLES, levelOf, levelText, HR_TITLE } from '../../shared/access.js';
 import { Field, In, Sel, Seg, Area, Pill, Empty, Modal, Avatar, attempt, toast } from '../ui.jsx';
@@ -516,6 +516,6 @@ function MyPayslip() {
   const { month } = useParams(), slips = useMySlips(), x = slips?.find((s) => s.month === month);
   if (!slips) return <p className="muted">Loading…</p>;
   if (!x) return <Empty>No payslip for this month. <Link to="/settings/me">Back</Link></Empty>;
-  return <><div className="row no-print" style={{ marginBottom: 12 }}><Link className="btn" to="/settings/me">My profile</Link><button className="btn primary" type="button" onClick={() => window.print()}>Print / Save PDF</button></div>
+  return <><div className="row no-print" style={{ marginBottom: 12 }}><Link className="btn" to="/settings/me">My profile</Link><button className="btn primary" type="button" onClick={() => attempt(() => download('/payroll/mine/' + x.month, 'Payslip.pdf'), 'Payslip downloaded.')}>Download PDF</button></div>
     <div className="paper-wrap"><PayslipSheet run={{ month: x.month, paidOn: x.paidOn }} i={x.item} /></div></>;
 }

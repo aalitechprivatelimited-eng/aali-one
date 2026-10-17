@@ -5,11 +5,12 @@ import { newId, hashPassword, checkPassword, isOldHash, passwordProblem, fakeChe
 import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP, TITLES } from '../shared/defaults.js';
 import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE } from '../shared/access.js';
+import { payslipPdf, payslipsZip, slipName } from './payslip-pdf.js';
 import { hrmConnected, hrmMonth, hrmPeople, hrmEmailOf, hrmEnv, hrmFind } from './hrm.js';
 import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE, REPORT_BUTTON, TEMPLATE_SAMPLES } from './whatsapp.js';
 // WhatsApp sending: in the background on the VPS; waited for on Vercel, which may stop a function once it has answered (server/whatsapp.js).
 const sendWa = async (db, now) => { const k = kickOutbox(db, now); if (waitForSending()) await k; };
-import { attendanceDays, onBasis, clientPay } from '../shared/payroll.js';
+import { attendanceDays, onBasis, clientPay, monthLabel } from '../shared/payroll.js';
 import { buildAccess, loadIndex } from './access.js';
 import { checkCalls, rebuild, dropList } from './prospects.js';
 import { displayOk } from '../shared/names.js';
@@ -338,6 +339,31 @@ export async function handle(req, res) {
         : ['invoice', 'receipt', 'payment', 'bill'].includes(x.type) ? 'money' : ['project', 'task', 'ticket', 'asset', 'collab', 'signoff', 'approval'].includes(x.type) ? 'projects'
         : x.type === 'agreement' ? 'agreements' : ['user', 'settings', 'sample'].includes(x.action) ? 'people' : 'other');
       return send(res, 200, { rows: r.rows.filter((x) => !hiddenFrom(user, x.type)).map((x) => ({ ...x, section: sectionOf(x) })) }); // agreement and payroll work only for those who see them
+    }
+    // Payslips as PDF files (the user, 17 Oct 2026): a locked or paid month's payslips, one PDF each, in a ZIP – or one person's PDF (?u=).
+    // Only for those who may open that month (Aali's payroll, or a client's); each download is written in the audit log.
+    m = path.match(/^\/payroll\/runs\/([\w-]+)\/payslips$/);
+    if (m && method === 'GET') {
+      const rec = (await db.query("select * from records where id = $1 and type = 'payrun' and deleted_at is null", [m[1]])).rows[0];
+      if (!rec || (await access()).read(rec) !== true) throw new Rule('Payroll not found.', 404);
+      if (rec.data.status === 'draft') throw new Rule('Lock the payroll first: payslips are made from a locked month.');
+      const biz = await getSetting(db, 'business', DEFAULT_SETTINGS.business), one = url.searchParams.get('u'), run = { ...rec.data, id: rec.id };
+      const label = `${rec.data.pclientId ? (rec.data.employer?.name || 'Client') + ' – ' : ''}${monthLabel(rec.data.month)}`;
+      if (one) {
+        const i = (rec.data.items || []).find((x) => x.userId === one); if (!i) throw new Rule('This person is not on this payroll.', 404);
+        await audit(db, user, { id: rec.id, type: 'payrun' }, 'download', `Payslip PDF of ${i.name}, ${label}`);
+        return send(res, 200, await payslipPdf(run, i, biz), { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(slipName(run, i))}` });
+      }
+      await audit(db, user, { id: rec.id, type: 'payrun' }, 'download', `All payslips (${(rec.data.items || []).length} PDFs), ${label}`);
+      return send(res, 200, await payslipsZip(run, rec.data.items || [], biz), { 'content-type': 'application/zip', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`Payslips ${label}.zip`)}` });
+    }
+    // My own payslip as a PDF, for a month marked paid.
+    m = path.match(/^\/payroll\/mine\/(\d{4}-\d\d)$/);
+    if (m && method === 'GET') {
+      const rec = (await db.query("select * from records where deleted_at is null and type = 'payrun' and data->>'status' = 'paid' and coalesce(data->>'pclientId', '') = '' and data->>'month' = $1", [m[1]])).rows[0];
+      const i = rec && (rec.data.items || []).find((x) => x.userId === user.id); if (!i) throw new Rule('No payslip for this month.', 404);
+      const run = { ...rec.data, id: rec.id }, biz = await getSetting(db, 'business', DEFAULT_SETTINGS.business);
+      return send(res, 200, await payslipPdf(run, i, biz), { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(slipName(run, i))}` });
     }
     // My payslips: each person sees only their own payslip, once that month is marked paid – nothing else of payroll.
     if (path === '/payroll/mine' && method === 'GET') {

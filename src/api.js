@@ -74,3 +74,11 @@ export async function upload(file) {
 }
 export function setMe(u) { S.me = u; S.users = S.users.map((x) => (x.id === u.id ? u : x)); emit(); }
 export function upsertUser(u) { const m = new Map(S.users.map((x) => [x.id, x])); m.set(u.id, u); S.users = [...m.values()].sort((a, b) => a.name.localeCompare(b.name)); emit(); }
+// A file the server makes (payslip PDFs, a ZIP of them) saved to the device under the server's file name (17 Oct 2026).
+export async function download(path, fallback = 'download') {
+  const r = await fetch('/api' + path, { credentials: 'same-origin', headers: { 'x-idle': String(Math.floor(idleFor() / 1000)) } });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `Download failed (${r.status})`); }
+  const cd = r.headers.get('content-disposition') || '', m = cd.match(/filename\*=UTF-8''([^;]+)/), name = m ? decodeURIComponent(m[1]) : fallback;
+  const url = URL.createObjectURL(await r.blob()), a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
