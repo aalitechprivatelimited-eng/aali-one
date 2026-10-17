@@ -183,9 +183,9 @@ function Shell() {
           <button type="button" className="collapse" onClick={() => flip(true)} title="Collapse the sidebar" aria-label="Collapse the sidebar"><Ico k="side" /></button></div>
         <button type="button" className="side-search" onClick={openSearch} data-tip="Search" aria-label="Search (Ctrl + K)"><Ico k="search" /><span className="lab">Search</span><kbd>Ctrl K</kbd></button>
         <m.nav className="nav" layoutScroll aria-label={app ? app.name : 'Apps'}>
-          {/* Like Zoho One (17 Oct 2026): inside an app, only its sections and the 9-dot button back to all apps; on the launcher, the apps. */}
-          <Link to="/" data-tip="All apps" aria-label="All apps" aria-current={path === '/' ? 'page' : undefined} className={path === '/' ? 'active' : ''}>
-            {path === '/' && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="apps" /><span className="lab">All apps</span></Link>
+          {/* Like Zoho One (17 Oct 2026): inside an app, only its sections and Home (the apps) above them; on Home, the apps. Named Home on 18 Oct. */}
+          <Link to="/" data-tip="Home" aria-label="Home" aria-current={path === '/' ? 'page' : undefined} className={path === '/' ? 'active' : ''}>
+            {path === '/' && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="home" /><span className="lab">Home</span></Link>
           <Link to="/overview" data-tip="Overview" aria-label="Overview" aria-current={path === '/overview' ? 'page' : undefined} className={path === '/overview' ? 'active' : ''}>
             {path === '/overview' && <m.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}<Ico k="today" /><span className="lab">Overview</span>{cnt.today ? <span className="cnt">{cnt.today}</span> : null}</Link>
           {app ? <><div className="app-h"><span className="app-ic"><Ico k={app.icon} size={15} /></span><span className="lab">{app.name}</span></div>

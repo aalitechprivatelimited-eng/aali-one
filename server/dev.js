@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { handle } from './app.js';
 
 const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon' };
+const TYPES = { '.woff2': 'font/woff2', '.woff': 'font/woff', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon' };
 const port = +process.env.PORT || +process.argv[2] || 3000;
 // The same page headers as vercel.json: no framing by other sites, no guessing of file types, scripts only from Aali One itself.
 const HEADERS = Object.fromEntries(JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8')).headers[0].headers.map((h) => [h.key, h.value]));

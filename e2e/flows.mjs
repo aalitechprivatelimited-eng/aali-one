@@ -33,8 +33,8 @@ try {
     await ctx.addInitScript(() => { try { localStorage.getItem('aali-side') || localStorage.setItem('aali-side', 'full'); } catch {} }); // the steps click sections in the full sidebar (it starts collapsed)
     page.on('pageerror', (e) => errors.push('page error: ' + e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/401|favicon/.test(m.text())) errors.push('console: ' + m.text()); });
     return page; };
-  // Like Zoho One (17 Oct 2026): a section lives inside its app – when it is not in the menu now, open the app from All apps first.
-  const go = async (page, app, label) => { if (!(await page.locator('.nav a', { hasText: label }).count())) { await page.locator('.nav a', { hasText: 'All apps' }).click(); await page.locator('.nav a', { hasText: app }).click(); }
+  // Like Zoho One (17 Oct 2026): a section lives inside its app – when it is not in the menu now, open the app from Home first.
+  const go = async (page, app, label) => { if (!(await page.locator('.nav a', { hasText: label }).count())) { await page.locator('.nav a', { hasText: /^Home$/ }).click(); await page.locator('.nav a', { hasText: app }).click(); }
     await page.locator('.nav a', { hasText: label }).click(); };
   const signIn = async (page, email) => { await page.goto(BASE); await page.locator('input[type=email]').fill(email); await page.locator('input[type=password]').fill(PW);
     await page.getByRole('button', { name: 'Sign in' }).click(); await page.locator('.hero h1').waitFor({ timeout: 8000 }); };
@@ -160,7 +160,7 @@ try {
   await step('the menu closes with its Close button, and choosing the page already open closes it too', async () => { await phone.getByRole('button', { name: 'Open menu' }).click();
     await phone.locator('.side.open').getByRole('button', { name: 'Close the menu' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' });
     await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'Daily reports' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' });
-    await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: 'All apps' }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' }); await phone.locator('.hero').waitFor(); });
+    await phone.getByRole('button', { name: 'Open menu' }).click(); await phone.locator('.side.open .nav a', { hasText: /^Home$/ }).click(); await phone.locator('.side.open').waitFor({ state: 'detached' }); await phone.locator('.hero').waitFor(); });
   await step('the day’s timeline reads well on a phone: each task uses the full width', async () => { await phone.goto(BASE + '/daily'); const b = phone.locator('.li.tl .tl-b').first(); await b.waitFor();
     must(await b.evaluate((e) => e.getBoundingClientRect().width) > 280, 'the task text is squeezed into a narrow column'); await noSideScroll(phone); });
   await step('call register and profile fit the phone', async () => { for (const p of ['/calls', '/settings/me', '/leads', '/tasks']) { await phone.goto(BASE + p); await phone.locator('.page h1').first().waitFor(); await noSideScroll(phone); } });
