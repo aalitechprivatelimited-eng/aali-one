@@ -753,3 +753,52 @@ input.in.live{background:var(--gold-50);color:var(--ink-soft)}
 /* the document preview stays in view while a long form is filled in; notification cards sit under the page heading, never over its buttons */
 @media (min-width:901px){.grid2.no-print>.paper-wrap,.grid2.no-print>.sheet-col{position:sticky;top:92px}.popups{top:88px}}
 
+/* ---------- the ledger (18 Oct 2026): an old account book, drawn in CSS ---------- */
+.ledger{--paper:#ead9b0;--ink:#2a1d0e;--ink-soft:#5a4426;--rule:rgba(92,64,28,.22);--red:#8e1f17;
+  position:relative;padding:34px 34px 28px 74px;border-radius:6px 10px 10px 6px;color:var(--ink);font-family:"IM Fell English",Georgia,serif;
+  background:
+    radial-gradient(120% 90% at 50% 40%,transparent 55%,rgba(90,52,10,.28) 100%),
+    radial-gradient(60px 40px at 82% 18%,rgba(120,72,20,.10),transparent 70%),
+    radial-gradient(90px 70px at 14% 78%,rgba(120,72,20,.09),transparent 70%),
+    linear-gradient(90deg,rgba(0,0,0,.18),transparent 3%,transparent 97%,rgba(0,0,0,.08)),
+    linear-gradient(180deg,#f0e2bd,#e6d2a4 60%,#dcc48f);
+  box-shadow:0 1px 0 #fff4d6 inset,0 18px 40px -18px rgba(30,18,4,.65),0 2px 0 #b89a5e,0 4px 0 #a5864b,0 6px 0 #8f7139;
+  color-scheme:light}
+.ledger::before{content:'';position:absolute;top:0;bottom:0;left:52px;border-left:1px solid rgba(142,31,23,.55);box-shadow:3px 0 0 -2px rgba(142,31,23,.45);pointer-events:none}
+.ledger::after{content:'';position:absolute;top:10px;bottom:10px;left:10px;width:14px;border-radius:7px;background:repeating-linear-gradient(180deg,transparent 0 22px,rgba(60,38,10,.35) 22px 26px);opacity:.55;pointer-events:none}
+.ledger-head{text-align:center;margin-bottom:6px}
+.ledger-co{display:block;font-variant:small-caps;letter-spacing:.24em;font-size:13px;color:var(--ink-soft)}
+.ledger-head h2{font-family:"IM Fell English",Georgia,serif;font-size:34px;font-weight:400;letter-spacing:.01em;margin:2px 0 0;color:var(--ink)}
+.ledger-sub{display:block;font-style:italic;font-size:14px;color:var(--ink-soft);margin-top:2px}
+.ledger-flourish{display:block;width:220px;height:14px;margin:8px auto 0;color:var(--ink-soft);opacity:.75}
+.ledger-page{margin-top:22px;animation:ledger-in .5s var(--ease) both}
+.ledger-page+.ledger-page{border-top:1px dashed rgba(92,64,28,.35);padding-top:18px}
+@keyframes ledger-in{from{opacity:0;transform:translateY(6px)}}
+.ledger-month{font-family:"IM Fell English",Georgia,serif;font-style:italic;font-weight:400;font-size:22px;margin:0 0 6px;color:var(--red)}
+.ledger-table{width:100%;border-collapse:collapse;font-size:14px}
+.ledger-table th{background:none;border-bottom:1.5px solid var(--ink);color:var(--ink-soft);font-family:"IM Fell English",Georgia,serif;font-weight:400;font-style:italic;font-size:13px;letter-spacing:0;text-transform:none;padding:4px 8px}
+.ledger-table td{border-bottom:1px solid var(--rule);padding:5px 8px 3px;vertical-align:baseline;background:none!important}
+.ledger-table tr.ink{cursor:pointer;font-family:Caveat,"Segoe Script",cursive;font-size:19px;line-height:1.25;color:#1e2a44;transition:background-color var(--t-fast)}
+.ledger-table tr.ink:hover td,.ledger-table tr.ink:focus-visible td{background:rgba(255,248,220,.45)!important}
+.ledger-table tr.ink:focus-visible{outline:1px dashed var(--ink-soft);outline-offset:-2px}
+.ledger-table .d{width:44px;text-align:right;font-family:"IM Fell English",Georgia,serif;font-size:15px;color:var(--ink)}
+.ledger-table .no{width:150px;font-family:"IM Fell English",Georgia,serif;font-size:13px;color:var(--ink-soft);white-space:nowrap}
+.ledger-table .md{width:110px;font-size:16px}
+.ledger-table .n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ledger-table th.n,.ledger-table th.md,.ledger-table th.no,.ledger-table th.d{font-size:13px}
+.ledger .who{font-weight:700}
+.ledger .for{color:#36405a}
+.ledger .stamp{display:inline-block;margin-left:10px;padding:0 6px;border:1.5px solid var(--red);border-radius:3px;color:var(--red);font-family:"IM Fell English",Georgia,serif;font-size:11px;letter-spacing:.12em;text-transform:uppercase;transform:rotate(-6deg);opacity:.85;vertical-align:2px}
+.ledger .pencil{margin-left:10px;color:#6e6658;font-style:italic;font-size:15px}
+.ledger tr.st-refunded td:not(.d):not(.no){text-decoration:line-through;text-decoration-color:rgba(142,31,23,.8);text-decoration-thickness:1.5px}
+.ledger tr.st-pending{color:#5d5a52}
+.ledger .settled{font-family:"IM Fell English",Georgia,serif;font-style:italic;font-size:13px;color:#2f5d3a}
+.ledger tfoot td{border-bottom:none;padding-top:8px;font-family:"IM Fell English",Georgia,serif;background:none!important}
+.ledger .tot-l{text-align:right;font-style:italic;color:var(--ink-soft)}
+.ledger .tot{font-size:16px;color:var(--ink);border-top:1px solid var(--ink);box-shadow:inset 0 -3px 0 -1px var(--paper),inset 0 -4px 0 -1px var(--ink)}
+.ledger-empty{text-align:center;font-style:italic;color:var(--ink-soft);margin:26px 0 10px}
+@media (max-width:720px){.ledger{padding:22px 14px 18px 30px}.ledger::before{left:20px}.ledger::after{display:none}.ledger-head h2{font-size:26px}
+  .ledger-table .no,.ledger-table .md{display:none}.ledger-table tr.ink{font-size:17px}.ledger-table .d{width:30px}}
+@media print{.ledger{box-shadow:none;background:#fff}.ledger::after{display:none}}
+
+.ledger-table td.n{font-family:inherit}.ledger-table tr.ink td.n{font-size:20px;letter-spacing:.01em}

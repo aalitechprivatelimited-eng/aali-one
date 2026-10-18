@@ -7,6 +7,7 @@ import { settings, fmtDate, today, addDays, inr, canMoney, canEdit, csvCell } fr
 import { fyLabel } from '../../shared/money.js';
 import { Field, In, Sel, Area, Empty, DeleteButton, attempt, toast, Seg, RO, ViewOnly } from '../ui.jsx';
 import { QuoteSheet } from '../doc.jsx';
+import { InvoiceLedger, readView, saveView } from '../ledger.jsx';
 
 // B2B (the client's GSTIN is on the invoice) or B2C (an unregistered buyer) – the user, 17 Oct 2026. Older invoices: B2B when a GSTIN is on them.
 export const kindOf = (q) => (q.kind === 'b2b' || q.kind === 'b2c' ? q.kind : q.gstin ? 'b2b' : 'b2c');
@@ -23,7 +24,7 @@ export default function Invoices() {
 }
 
 function Register() {
-  const nav = useNavigate(), edit = canEdit('invoices'), [q, setQ] = useState(''), [kind, setKind] = useState('all'), [fy, setFy] = useState('');
+  const nav = useNavigate(), edit = canEdit('invoices'), [q, setQ] = useState(''), [kind, setKind] = useState('all'), [fy, setFy] = useState(''), [view, setView] = useState(readView);
   const all = list('invoice').sort((a, b) => (b.date + (b.number || '')).localeCompare(a.date + (a.number || '')));
   const years = [...new Set(all.map((r) => r.fy || fyLabel(r.date)))].sort().reverse(), text = q.trim().toLowerCase();
   const rows = all.filter((r) => (kind === 'all' || kindOf(r) === kind) && (!fy || (r.fy || fyLabel(r.date)) === fy)
@@ -41,8 +42,9 @@ function Register() {
     <div className="row" style={{ marginBottom: 12 }}><In placeholder="Search number, client or GSTIN" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 280 }} />
       <Seg value={kind} onChange={setKind} options={[['all', 'All'], ['b2b', 'B2B'], ['b2c', 'B2C']]} />
       <Sel value={fy} onChange={setFy} options={years.map((y) => [y, 'FY ' + y])} blank="All years" style={{ width: 'auto' }} aria-label="Financial year" />
+      <Seg value={view} onChange={(v) => { setView(v); saveView(v); }} options={[['table', 'Table'], ['ledger', 'Ledger']]} />
       <span className="grow" /><Gstr1 rows={rows} /></div>
-    {rows.length ? <div className="tbl cards"><table><thead><tr><th>Invoice</th><th>Kind</th><th>Date</th><th>Client</th><th>GSTIN</th><th className="n">GST</th><th className="n">Total</th></tr></thead><tbody>
+    {view === 'ledger' ? <InvoiceLedger rows={rows} kindOf={kindOf} /> : rows.length ? <div className="tbl cards"><table><thead><tr><th>Invoice</th><th>Kind</th><th>Date</th><th>Client</th><th>GSTIN</th><th className="n">GST</th><th className="n">Total</th></tr></thead><tbody>
       {rows.map((r) => <tr key={r.id} className="click" onClick={() => nav('/invoices/' + r.id)}><td className="num"><b>{r.number}</b></td><td>{KIND[kindOf(r)]}</td><td>{fmtDate(r.date)}</td><td>{r.clientName}</td>
         <td className="num">{r.gstin || '—'}</td><td className="n">{inr(tax(r))}</td><td className="n">{inr(r.totals?.total)}</td></tr>)}</tbody></table></div>
       : <Empty>{all.length ? 'No invoice matches.' : 'No tax invoices yet. Start one with “+ B2B invoice” (a GST-registered client) or “+ B2C invoice” (an unregistered buyer), or copy one from an accepted quotation.'}</Empty>}

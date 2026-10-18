@@ -3,8 +3,9 @@ import { Link, Navigate, useLocation, useNavigate, useSearchParams, useParams } 
 import { useStore, list, get, create, update, store, http, poll } from '../api.js';
 import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney, canEdit, csvCell } from '../lib.js';
 import { receiptTotals } from '../../shared/money.js';
-import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
+import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs, Seg, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
 import { ReceiptSheet } from '../doc.jsx';
+import { ReceiptLedger, readView, saveView } from '../ledger.jsx';
 
 export default function Payments() {
   useStore(); const p = useParams()['*'] || '', [kind, id] = p.split('/'), { search } = useLocation();
@@ -103,7 +104,7 @@ export const owing = (r, m) => Math.max(0, r2((r.totals?.balance || 0) - (m.get(
 const usdFmt = (n) => '$' + (+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function ReceiptRegister() {
-  const nav = useNavigate(), [q, setQ] = useState(''), [st, setSt] = useState(''), [fy, setFy] = useState(''), [imp, setImp] = useState(false), me = store.me;
+  const nav = useNavigate(), [q, setQ] = useState(''), [st, setSt] = useState(''), [fy, setFy] = useState(''), [imp, setImp] = useState(false), me = store.me, [view, setView] = useState(readView);
   const all = list('receipt').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number)), settled = settledBy(all);
   const years = [...new Set(all.map((r) => r.fy))].filter(Boolean).sort().reverse(), text = q.trim().toLowerCase();
   const stOf = (r) => r.status || (r.totals?.balance > 0 ? 'partial' : 'received');
@@ -122,8 +123,9 @@ function ReceiptRegister() {
     <div className="row"><In placeholder="Search number, payer, purpose or UTR" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 300 }} />
       <Sel value={st} onChange={setSt} options={RSTATUS} blank="Every status" style={{ width: 'auto' }} aria-label="Status" />
       <Sel value={fy} onChange={setFy} options={years.map((y) => [y, 'FY ' + y])} blank="All years" style={{ width: 'auto' }} aria-label="Financial year" />
+      <Seg value={view} onChange={(v) => { setView(v); saveView(v); }} options={[['table', 'Table'], ['ledger', 'Ledger']]} />
       {(me.isAdmin || me.title === 'ops') && <><span className="grow" /><button className="btn sm" type="button" onClick={() => setImp(true)}>Import from Receipt generator</button></>}</div>
-    {rows.length ? <div className="tbl cards"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Status</th><th className="n">Total</th><th className="n">Paid</th><th className="n">Balance due</th><th>Mode</th><th>By</th></tr></thead><tbody>
+    {view === 'ledger' ? <ReceiptLedger rows={rows} owing={(r) => owing(r, settled)} /> : rows.length ? <div className="tbl cards"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Status</th><th className="n">Total</th><th className="n">Paid</th><th className="n">Balance due</th><th>Mode</th><th>By</th></tr></thead><tbody>
       {rows.map((r) => { const o = owing(r, settled), stl = (r.totals?.balance || 0) > 0 && !o;
         return <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b>{r.settlesNo && <div className="small muted">against {r.settlesNo}</div>}</td><td>{fmtDate(r.date)}</td>
           <td>{r.payerName}<Sample on={r.sample} />{r.imported && <div className="small muted">from the Receipt generator</div>}</td>

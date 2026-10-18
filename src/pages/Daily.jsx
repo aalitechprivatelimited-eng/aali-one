@@ -373,14 +373,22 @@ export function SharedReport({ token }) {
 
 // ---------- my report ----------
 function Mine() {
-  const me = store.me, [date, setDate] = useState(today()), r = reportOf(me.id, date);
+  const me = store.me, [date, setDate] = useState(today()), r = reportOf(me.id, date), edge = addDays(today(), -2), writable = date >= edge;
   const past = [...Array(7)].map((_, i) => addDays(today(), -i));
+  // Every day of my own can be opened (18 Oct 2026: "a BDE can't see their own previous reports"); days before the last three are read only.
+  const older = list('report').filter((x) => x.owner === me.id && x.date < past[6]).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 90);
   return <div className="stack gap16">
-    <div><Seg value={date} onChange={setDate} options={[0, -1, -2].map((n) => [addDays(today(), n), dayName(addDays(today(), n))])} /></div>
-    <Editor key={date + (r?.id || '')} date={date} r={r} />
+    <div className="row"><Seg value={date} onChange={setDate} options={[0, -1, -2].map((n) => [addDays(today(), n), dayName(addDays(today(), n))])} />
+      <span className="small muted">or another day</span><In type="date" style={{ width: 'auto' }} max={today()} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="Open the report of another day" /></div>
+    {writable ? <Editor key={date + (r?.id || '')} date={date} r={r} />
+      : r ? <div className="card stack"><div className="row"><h3 style={{ margin: 0 }}>{fullDate(date)}</h3><Pill k={status(r)[1]}>{status(r)[0]}</Pill><span className="grow" /><span className="small muted">Read only – only the last three days can be written.</span></div><ReportView r={r} me={me} /></div>
+      : <Empty>You have no report for {fullDate(date)}.</Empty>}
     {['salesmgr', 'itmgr'].includes(me.title) && <TeamSummary team={me.team} date={date} />}
     <div className="card"><h3>My last 7 days</h3><div className="row">{past.map((d) => { const x = reportOf(me.id, d), [l, k] = status(x);
-      return <button key={d} type="button" className="btn sm" disabled={d < addDays(today(), -2)} onClick={() => setDate(d)} title={l}><span className="num">{fmtDate(d)}</span><Pill k={k}>{l}</Pill></button>; })}</div></div>
+      return <button key={d} type="button" className={'btn sm' + (d === date ? ' primary' : '')} onClick={() => setDate(d)} title={l}><span className="num">{fmtDate(d)}</span><Pill k={k}>{l}</Pill></button>; })}</div></div>
+    {older.length > 0 && <div className="card stack gap4"><h3 style={{ margin: 0 }}>My older reports</h3><div className="list">{older.map((x) => { const [l, k] = status(x);
+      return <button key={x.id} type="button" className="li" onClick={() => { setDate(x.date); scrollTo({ top: 0, behavior: 'smooth' }); }} style={{ width: '100%', textAlign: 'left', border: 0, background: 'none', font: 'inherit', color: 'inherit', cursor: 'pointer' }}>
+        <span className="num" style={{ minWidth: 120 }}>{fullDate(x.date)}</span><span className="grow small muted">{(x.entries || []).length} tasks{(x.calls || []).length ? ` · ${x.calls.length} calls` : ''}</span><Pill k={k}>{l}</Pill></button>; })}</div></div>}
   </div>;
 }
 // What is running right now, with a live clock and one big Finish button.
