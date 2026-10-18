@@ -698,6 +698,97 @@ test('notification sound: only Nikhil sets his own sound file, kept on the serve
   assert.equal((await call('PUT', '/me/sound', { fileId: null }, N)).body.sound, null, 'removed');
 });
 
+test('receipts work as the Receipt generator did: status, amount paid, a balance receipt that settles an earlier one, USD without GST', async () => {
+  const db = await getDb();
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_rcops','rcops@test.in','rcops','ops','management',$1)", [hashPassword('password123')]);
+  const O = (await call('POST', '/auth/login', { email: 'rcops@test.in', password: 'password123' })).cookie;
+  const mk = (data) => call('POST', '/records', { type: 'receipt', data: { date: '2026-05-04', payerName: 'Lotus Traders', taxMode: 'intra', taxRate: 18, mode: 'UPI', ...data } }, O);
+  // A round figure the client pays: 32,000 with GST inside it; 20,000 paid now.
+  const r1 = await mk({ items: [{ desc: 'Website', note: 'Phase 1', amount: 32000, incl: true }], paid: 20000 }); assert.equal(r1.status, 200, JSON.stringify(r1.body));
+  const a = r1.body.record; assert.equal(a.totals.total, 32000); assert.equal(a.totals.balance, 12000); assert.equal(a.status, 'partial', 'a part payment is never "received"');
+  assert.equal(a.items[0].note, 'Phase 1'); assert.match(a.number, /^ACY-040526\/\d{3}$/);
+  assert.equal((await mk({ items: [{ desc: 'x', amount: 100 }], status: 'received', paid: 50 })).body.record.status, 'partial');
+  // Record balance: the second receipt clears the 12,000 and prints the first one's number, whatever the browser sends.
+  const r2 = await mk({ date: '2026-05-20', items: [{ desc: 'Balance', amount: 12000, incl: true }], settlesId: a.id, settlesNo: 'FAKE/1' }); assert.equal(r2.status, 200, JSON.stringify(r2.body));
+  assert.equal(r2.body.record.settlesId, a.id); assert.equal(r2.body.record.settlesNo, a.number); assert.equal(r2.body.record.status, 'received');
+  assert.equal((await mk({ items: [{ desc: 'x', amount: 1 }], settlesId: 'nope' })).status, 400, 'settling an unknown receipt');
+  // The settling link cannot be changed afterwards.
+  const ch = await call('PATCH', '/records/' + r2.body.record.id, { data: { ...r2.body.record, settlesId: null, settlesNo: '' } }, O); assert.equal(ch.status, 200); assert.equal(ch.body.record.settlesNo, a.number);
+  // USD: no GST at all, words in dollars on the receipt.
+  const u = (await mk({ currency: 'USD', taxMode: 'intra', items: [{ desc: 'Consulting', amount: 500 }] })).body.record; assert.equal(u.taxMode, 'none'); assert.equal(u.totals.tax, 0); assert.equal(u.totals.total, 500);
+  const { inWords } = await import('../shared/money.js'); assert.equal(inWords(1250.5, 'USD'), 'US Dollars One Thousand Two Hundred Fifty and Fifty Cents Only');
+  assert.equal((await mk({ status: 'refunded', items: [{ desc: 'Refund', amount: 1000 }] })).body.record.status, 'refunded');
+});
+
+test('Receipt generator import: numbers and printed figures kept, counters raised, balance links, deleted kept deleted, raw backup, safe to repeat', async () => {
+  const db = await getDb(), { setGeneratorFetch } = await import('../server/receiptimport.js');
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_imp_ops','impops@test.in','impops','ops','management',$1)", [hashPassword('password123')]);
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_imp_sm','impsm@test.in','impsm','salesmgr','sales',$1)", [hashPassword('password123')]);
+  const O = (await call('POST', '/auth/login', { email: 'impops@test.in', password: 'password123' })).cookie, C = (await call('POST', '/auth/login', { email: 'impsm@test.in', password: 'password123' })).cookie;
+  assert.equal((await call('GET', '/imports/receipts', null, O)).body.connected, false, 'not connected until Coolify has the two variables');
+  const base = { status: 'received', currency: 'INR', payer_name: 'Green Valley School', tax_mode: 'intra', tax_rate: 18, method: 'UPI', fy: '2025-26', created_at: '2026-03-15T10:00:00Z' };
+  const rows = [
+    { ...base, id: 'g1', receipt_no: 'ACY-150326/001', seq: 1, payment_date: '2026-03-15', items: [{ desc: 'Website', amount: 32000, incl: true }], subtotal: 27118.64, tax_amount: 4881.36, total: 32000, balance: 0 },
+    { ...base, id: 'g2', receipt_no: 'ACY-150326/002', seq: 2, payment_date: '2026-03-15', status: 'partial', items: [{ desc: 'App', note: 'Phase 1', amount: 10000 }], subtotal: 10000, tax_amount: 1800, total: 11800, balance: 5800 },
+    { ...base, id: 'g3', receipt_no: 'ACY-200326/001', seq: 1, payment_date: '2026-03-20', items: [{ desc: 'Balance', amount: 5800, incl: true }], subtotal: 4915.25, tax_amount: 884.75, total: 5800, balance: 0, settles_id: 'g2', settles_no: 'ACY-150326/002' },
+    { ...base, id: 'g4', receipt_no: 'ACY-160326/001', seq: 1, payment_date: '2026-03-16', items: [{ desc: 'Wrong', amount: 100 }], subtotal: 100, tax_amount: 18, total: 118, balance: 0, deleted_at: '2026-03-16T12:00:00Z', delete_reason: 'Typed the wrong payer' },
+  ];
+  const business = { id: 1, stamp_url: 'data:image/png;base64,iVBORw0KGgo=', default_bank: 'Account name : AALI CONSSULTANCY\nIFSC : ICIC0000001' };
+  setGeneratorFetch(async (url, opt) => { assert.equal(opt.headers.apikey, 'pub-key');
+    const body = url.includes('/receipts?') ? rows : url.includes('/business_settings?') ? [business] : [];
+    return { ok: true, status: 200, json: async () => body }; });
+  process.env.RECEIPTS_SUPABASE_URL = 'https://fake-generator.supabase.co'; process.env.RECEIPTS_SUPABASE_KEY = 'pub-key';
+  try {
+    assert.equal((await call('GET', '/imports/receipts', null, C)).status, 403, 'only the Operations Manager or an admin (the Company Secretary has the admin features)');
+    const pv = (await call('GET', '/imports/receipts', null, O)).body.preview; assert.deepEqual([pv.total, pv.fresh, pv.deleted], [4, 4, 1]);
+    const run = await call('POST', '/imports/receipts', null, O); assert.equal(run.status, 200, JSON.stringify(run.body)); const rep = run.body.report;
+    assert.equal(rep.copied, 4); assert.equal(rep.linked, 1); assert.deepEqual(rep.letterhead, ['stamp', 'payment details']);
+    const got = (await db.query("select id, data, deleted_at, delete_reason from records where type = 'receipt' and data->>'imported' is not null order by data->>'number'")).rows;
+    const by = Object.fromEntries(got.map((r) => [r.data.number, r]));
+    assert.equal(by['ACY-150326/001'].data.totals.total, 32000); assert.equal(by['ACY-150326/001'].data.totals.subtotal, 27118.64, 'printed figures kept');
+    assert.equal(by['ACY-150326/002'].data.totals.balance, 5800); assert.equal(by['ACY-150326/002'].data.items[0].note, 'Phase 1');
+    assert.equal(by['ACY-200326/001'].data.settlesId, by['ACY-150326/002'].id, 'the balance receipt points at the new record');
+    assert.ok(by['ACY-160326/001'].deleted_at); assert.equal(by['ACY-160326/001'].delete_reason, 'Typed the wrong payer');
+    // The next receipt made in Aali One on 15 March 2026 continues after the copied ones.
+    const next = await call('POST', '/records', { type: 'receipt', data: { date: '2026-03-15', payerName: 'X', taxMode: 'none', items: [{ desc: 'y', amount: 10 }] } }, O);
+    assert.match(next.body.record.number, /^ACY-150326\/003$/);
+    // A copied receipt cannot be changed (only its client may change, for merging duplicates).
+    const ed = await call('PATCH', '/records/' + by['ACY-150326/001'].id, { data: { ...by['ACY-150326/001'].data, payerName: 'Changed', clientId: 'c_x' } }, O);
+    assert.equal(ed.status, 200); assert.equal(ed.body.record.payerName, 'Green Valley School'); assert.equal(ed.body.record.clientId, 'c_x');
+    // The raw backup holds every source row.
+    const f = await call('GET', '/files/' + rep.backup.id, null, O); assert.equal(f.status, 200);
+    assert.equal(f.body.receipts.length, 4); assert.equal(f.body.business.default_bank.startsWith('Account name'), true);
+    // Safe to repeat: everything is skipped the second time.
+    const again = (await call('POST', '/imports/receipts', null, O)).body.report; assert.equal(again.copied, 0); assert.equal(again.skipped.length, 4);
+  } finally { delete process.env.RECEIPTS_SUPABASE_URL; delete process.env.RECEIPTS_SUPABASE_KEY; }
+});
+
+test('forgetting to end the day: a 7 pm reminder; after midnight the day is closed, a running task stopped at 8 pm, the manager told; a sent-back day is left alone', async () => {
+  const db = await getDb(), { daySweep } = await import('../server/logic.js');
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_eod_b','eodb@test.in','Eod Bde','bde','sales',$1)", [hashPassword('password123')]);
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_eod_m','eodm@test.in','Eod Mgr','salesmgr','sales',$1)", [hashPassword('password123')]);
+  const day = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10), yday = new Date(Date.parse(day) - 864e5).toISOString().slice(0, 10);
+  const put = async (id, data) => db.query("insert into records (id, type, data, created_by) values ($1, 'report', $2, 'u_eod_b')", [id, JSON.stringify({ owner: 'u_eod_b', team: 'sales', ownerTitle: 'bde', ...data })]);
+  await put('rp_eod_today', { date: day, status: 'open', entries: [{ id: 'e1', text: 'Calls', start: new Date().toISOString(), state: 'running' }] });
+  await put('rp_eod_old', { date: yday, status: 'open', entries: [{ id: 'e2', text: 'Client visit', start: yday + 'T10:00:00.000Z', state: 'running' }] });
+  await put('rp_eod_back', { date: yday, status: 'open', entries: [{ id: 'e3', text: 'Fix', start: yday + 'T09:00:00.000Z', end: yday + 'T10:00:00.000Z' }], log: [{ at: '', by: 'u_eod_m', text: 'Sent back: add the calls' }] });
+  await daySweep(db, { force: true });
+  const rec = async (id) => (await db.query('select data from records where id = $1', [id])).rows[0].data;
+  const old = await rec('rp_eod_old'); assert.equal(old.status, 'closed'); assert.ok(old.autoClosed);
+  assert.equal(old.entries[0].state, undefined); assert.equal(old.entries[0].end, new Date(Date.parse(yday + 'T20:00:00+05:30')).toISOString(), 'stopped at 8 pm');
+  assert.equal(old.entries[0].mins, Math.round((Date.parse(old.entries[0].end) - Date.parse(yday + 'T10:00:00.000Z')) / 60000));
+  assert.equal((await rec('rp_eod_back')).status, 'open', 'a day sent back for changes is not closed');
+  assert.equal((await rec('rp_eod_today')).status, 'open', "today's day is only reminded");
+  const notes = (await db.query("select data->>'to' to_, data->>'text' t from records where type = 'notice' and data->>'relId' in ('rp_eod_today','rp_eod_old')")).rows;
+  assert.ok(notes.some((x) => x.to_ === 'u_eod_b' && /7 pm/.test(x.t)), 'the 7 pm reminder');
+  assert.ok(notes.some((x) => x.to_ === 'u_eod_b' && /closed it after midnight/.test(x.t)), 'the person is told');
+  assert.ok(notes.some((x) => x.to_ === 'u_eod_m' && /Forgot to end the day/.test(x.t) && /Eod Bde/.test(x.t)), 'the manager is told who forgot');
+  // A closed day cannot be changed or submitted by its writer.
+  const B = (await call('POST', '/auth/login', { email: 'eodb@test.in', password: 'password123' })).cookie;
+  assert.equal((await call('PATCH', '/records/rp_eod_old', { data: { ...old, plan: 'x', entries: [...old.entries, { id: 'e9', text: 'more' }] } }, B)).status, 400);
+  assert.equal((await call('PATCH', '/records/rp_eod_old', { data: { ...old, status: 'submitted' } }, B)).status, 400);
+});
+
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {
   const { setHrmSource } = await import('../server/hrm.js'), { PGlite } = await import('@electric-sql/pglite');
   const db = await getDb(), login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;

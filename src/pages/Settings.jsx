@@ -252,9 +252,20 @@ function Business() {
   const F = (k, l, area) => <Field label={l} full={area}>{area ? <Area value={b[k] || ''} onChange={up(k)} style={{ minHeight: 90 }} /> : <In value={b[k] || ''} onChange={up(k)} />}</Field>;
   return <div className="card stack" style={{ maxWidth: 820 }}><h2>Letterhead & documents</h2><p className="small muted" style={{ margin: 0 }}>Used on every quotation, invoice, receipt and certificate.</p>
     <div className="form">{F('name', 'Business name')}{F('parentLine', 'Line under the name')}{F('phone', 'Phone')}{F('email', 'Email')}{F('website', 'Website')}{F('gstin', 'GSTIN')}{F('pan', 'PAN')}{F('state', 'State (place of supply)')}
-      {F('address', 'Address', true)}{F('bank', 'Payment / bank details', true)}{F('quoteTerms', 'Quotation terms', true)}{F('receiptTerms', 'Receipt terms', true)}
+      {F('address', 'Address', true)}{F('bank', 'Payment / bank details', true)}{F('quoteTerms', 'Quotation terms', true)}{F('receiptTerms', 'Receipt terms', true)}{F('receiptIntro', 'Receipt opening line')}{F('receiptBank', 'Payment details on receipts (if different from above)', true)}
       {F('quotePrefix', 'Quotation prefix (AC → AC/2026-27/001)')}{F('receiptPrefix', 'Receipt prefix (ACY → ACY-300926/001)')}{F('invoicePrefix', 'Invoice prefix')}{F('signName', 'Signatory name')}{F('signRole', 'Signatory designation')}</div>
+    <Stamp value={b.stamp || ''} onChange={(stamp) => setB({ ...b, stamp })} />
     <button className="btn primary" type="button" onClick={save}>Save</button></div>;
+}
+// The company's real rubber stamp, scanned: printed on receipts beside the signature. No drawn stand-in – without a scan, no stamp prints.
+function Stamp({ value, onChange }) {
+  async function pick(e) { const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(f.type)) return toast('Choose a PNG or JPG picture of the stamp.', true);
+    if (f.size > 400_000) return toast('That picture is too large (max 400 KB). Crop it to the stamp.', true);
+    onChange(await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(f); })); }
+  return <div className="row" style={{ gap: 14 }}>{value ? <img src={value} alt="Company stamp" style={{ height: 80, maxWidth: 160, objectFit: 'contain', background: '#fff', borderRadius: 8, border: '1px solid var(--line)' }} /> : null}
+    <div className="stack gap4"><b>Company stamp</b><span className="small muted">A scan of the real stamp (PNG with a clear background is best). Printed on receipts. Press Save after choosing it.</span>
+      <div className="row"><label className="btn sm">{value ? 'Choose another' : 'Choose the stamp picture'}<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={pick} /></label>{value && <button className="btn sm ghost" type="button" onClick={() => onChange('')}>Remove</button>}</div></div></div>;
 }
 
 function Lines({ label, value, onChange }) { return <Field label={label} hint="One per line"><Area value={value.join('\n')} onChange={(e) => onChange(e.target.value.split('\n'))} onBlur={(e) => onChange(e.target.value.split('\n').map((x) => x.trim()).filter(Boolean))} style={{ minHeight: 120 }} /></Field>; }

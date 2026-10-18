@@ -15,6 +15,7 @@ import { Popups } from './popups.jsx';
 import { VisitPrompt } from './visit.jsx';
 
 const Today = lazy(() => import('./pages/Today.jsx'));
+const Invoices = lazy(() => import('./pages/Invoices.jsx'));
 const Home = lazy(() => import('./pages/Today.jsx').then((x) => ({ default: x.Home })));
 const Leads = lazy(() => import('./pages/Leads.jsx'));
 const Calls = lazy(() => import('./pages/Calls.jsx'));
@@ -212,7 +213,7 @@ function Shell() {
               <Route path="/" element={<Home />} /><Route path="/overview" element={<Today />} /><Route path="/inbox" element={<Inbox />} /><Route path="/approvals" element={<Gate s="approvals"><Approvals /></Gate>} />
               <Route path="/leads/*" element={<Gate s="leads"><Leads /></Gate>} /><Route path="/calls" element={<Gate s="calls"><Calls /></Gate>} /><Route path="/deals/*" element={<Gate s="deals"><Deals /></Gate>} /><Route path="/clients/*" element={<Gate s="clients"><Clients /></Gate>} />
               <Route path="/quotes/*" element={<Gate s="quotes"><Quotes /></Gate>} /><Route path="/agreements/*" element={<Gate s="agreements"><Agreements /></Gate>} /><Route path="/projects/*" element={<Gate s="projects"><Projects /></Gate>} /><Route path="/tasks" element={<Tasks />} />
-              <Route path="/support" element={<Gate s="support"><Support /></Gate>} /><Route path="/assets" element={<Gate s="assets"><Assets /></Gate>} /><Route path="/bills/*" element={<Gate s="bills"><Bills /></Gate>} /><Route path="/payments/*" element={<Gate s="money"><Payments /></Gate>} /><Route path="/payroll/*" element={<Gate s="payroll"><Payroll /></Gate>} /><Route path="/client-payroll/*" element={<Gate s="clientpay"><ClientPayrollPage /></Gate>} /><Route path="/calendar/*" element={<Calendar />} /><Route path="/daily/*" element={<Daily />} /><Route path="/collab" element={<Gate s="collab"><Collab /></Gate>} />
+              <Route path="/support" element={<Gate s="support"><Support /></Gate>} /><Route path="/assets" element={<Gate s="assets"><Assets /></Gate>} /><Route path="/bills/*" element={<Gate s="bills"><Bills /></Gate>} /><Route path="/payments/*" element={<Gate s="money"><Payments /></Gate>} /><Route path="/invoices/*" element={<Gate s="invoices"><Invoices /></Gate>} /><Route path="/payroll/*" element={<Gate s="payroll"><Payroll /></Gate>} /><Route path="/client-payroll/*" element={<Gate s="clientpay"><ClientPayrollPage /></Gate>} /><Route path="/calendar/*" element={<Calendar />} /><Route path="/daily/*" element={<Daily />} /><Route path="/collab" element={<Gate s="collab"><Collab /></Gate>} />
               <Route path="/reports" element={<Gate s="reports"><Reports /></Gate>} /><Route path="/messages" element={<Gate s="messages"><Messages /></Gate>} /><Route path="/settings/*" element={<Settings />} />
               <Route path="/signoff/:projectId" element={<Gate s="projects"><Signoff /></Gate>} /><Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

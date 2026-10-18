@@ -1,17 +1,17 @@
-import { useState } from 'react';
-import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom';
-import { useStore, list, get, create, update, store } from '../api.js';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Link, Navigate, useNavigate, useSearchParams, useParams } from 'react-router-dom';
+import { useStore, list, get, create, update, store, http, poll } from '../api.js';
 import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney, canEdit, csvCell } from '../lib.js';
-import { receiptTotals, docTotals, fyLabel } from '../../shared/money.js';
-import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs, Seg, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
-import { ReceiptSheet, QuoteSheet } from '../doc.jsx';
+import { receiptTotals } from '../../shared/money.js';
+import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButton, Person, Message, attempt, toast, Tabs, RO, ViewOnly, TeamFilter, byTeam } from '../ui.jsx';
+import { ReceiptSheet } from '../doc.jsx';
 
 export default function Payments() {
   useStore(); const p = useParams()['*'] || '', [kind, id] = p.split('/');
   if (!canMoney()) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>;
   if (id === 'new' && !canEdit('money')) return <Empty>Your access to payments is view only. <Link to="/payments">Back</Link></Empty>;
   if (kind === 'receipt' && id) return <ReceiptEditor id={id === 'new' ? null : id} />;
-  if (kind === 'invoice' && id) return <InvoiceEditor id={id === 'new' ? null : id} />;
+  if (kind === 'invoice') return <Navigate to={'/invoices/' + (id || '')} replace />; // tax invoices moved to Aali Invoices (18 Oct 2026)
   return <Home />;
 }
 
@@ -24,17 +24,17 @@ function Home() {
   const open = list('payment').filter((p) => p.status !== 'paid' && byTeam(p.owner, tf)).sort((a, b) => a.due.localeCompare(b.due));
   const bal = (p) => Math.max(0, (+p.amount || 0) - (+p.paid || 0));
   const groups = [['Overdue', open.filter((p) => p.due < t)], ['Rest of this month', open.filter((p) => p.due >= t && p.due.slice(0, 7) === month)], ['Later', open.filter((p) => p.due.slice(0, 7) > month)]];
-  const receipts = list('receipt').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number)), invoices = list('invoice').sort((a, b) => (b.seq || 0) - (a.seq || 0));
+  const receipts = list('receipt').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
   const gotMonth = receipts.filter((r) => r.date.slice(0, 7) === month).reduce((s, r) => s + (r.totals?.received || 0), 0);
   return <>
-    <div className="topbar"><h1>Payments & receipts <ViewOnly when={!edit} /></h1>{edit && <div className="row"><button className="btn" type="button" onClick={() => setAdd(true)}>+ Payment to collect</button><Link className="btn" to="/payments/invoice/new">+ Tax invoice</Link><Link className="btn primary" to="/payments/receipt/new">+ Receipt</Link></div>}</div>
+    <div className="topbar"><h1>Payments & receipts <ViewOnly when={!edit} /></h1>{edit && <div className="row"><button className="btn" type="button" onClick={() => setAdd(true)}>+ Payment to collect</button><Link className="btn primary" to="/payments/receipt/new">+ Receipt</Link></div>}</div>
     <div className="stats">
       <div className="stat"><span className="l">Received this month</span><span className="v">{inr(gotMonth)}</span></div>
       <div className={'stat' + (groups[0][1].length ? ' hot' : '')}><span className="l">Overdue</span><span className="v">{inr(groups[0][1].reduce((s, p) => s + bal(p), 0))}</span><span className="small muted">{groups[0][1].length} items</span></div>
       <div className="stat"><span className="l">Due this month</span><span className="v">{inr(groups[1][1].reduce((s, p) => s + bal(p), 0))}</span></div>
       <div className="stat"><span className="l">Total still to collect</span><span className="v">{inr(open.reduce((s, p) => s + bal(p), 0))}</span></div>
     </div>
-    <Tabs value={tab} onChange={setTab} tabs={[['collect', 'To collect'], ['receipts', `Receipts (${receipts.length})`], ['invoices', `Tax invoices (${invoices.length})`], ['clients', 'Who owes what'], ['export', 'Export for Tally / accounts']]} />
+    <Tabs value={tab} onChange={setTab} tabs={[['collect', 'To collect'], ['receipts', `Receipts (${receipts.length})`], ['clients', 'Who owes what'], ['export', 'Export for Tally / accounts']]} />
     {tab === 'collect' && <div className="stack"><div className="row"><TeamFilter value={tf} onChange={setTf} /><span className="small muted">Each BDE collects from their own clients. Record payment makes the receipt and updates the balance.</span></div>
       {!open.length && <Empty>Nothing to collect. Add payments from a won deal, or with “+ Payment to collect”.</Empty>}
       {groups.map(([title, rows]) => rows.length ? <section key={title}><h2 style={{ marginBottom: 8 }}>{title} <span className="num small muted">{inr(rows.reduce((s, p) => s + bal(p), 0))}</span></h2>
@@ -45,12 +45,7 @@ function Home() {
           <b className="num">{inr(bal(p))}</b>
           {edit && <button className="btn sm" type="button" onClick={() => setRemind(p)}>Remind client</button>}
           {edit && <Link className="btn sm primary" to={`/payments/receipt/new?payment=${p.id}`}>Record payment</Link>}</div>)}</div></section> : null)}</div>}
-    {tab === 'receipts' && (receipts.length ? <div className="tbl cards"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Mode</th><th className="n">Received</th><th className="n">Balance</th><th>By</th></tr></thead><tbody>
-      {receipts.map((r) => <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b></td><td>{fmtDate(r.date)}</td><td>{r.payerName}<Sample on={r.sample} /></td><td>{r.mode}</td>
-        <td className="n">{inr(r.totals?.received)}</td><td className="n">{r.totals?.balance ? inr(r.totals.balance) : '—'}</td><td>{uname(r.createdBy)}</td></tr>)}</tbody></table></div> : <Empty>No receipts yet.</Empty>)}
-    {tab === 'invoices' && (invoices.length ? <div className="tbl cards"><table><thead><tr><th>Invoice</th><th>Date</th><th>Client</th><th className="n">Total</th><th>Status</th></tr></thead><tbody>
-      {invoices.map((r) => <tr key={r.id} className="click" onClick={() => nav('/payments/invoice/' + r.id)}><td className="num"><b>{r.number}</b></td><td>{fmtDate(r.date)}</td><td>{r.clientName}</td><td className="n">{inr(r.totals?.total)}</td><td>{r.status}</td></tr>)}</tbody></table></div>
-      : <Empty>No tax invoices yet. Make one from an accepted quotation. (Format to be confirmed by the CA.)</Empty>)}
+    {tab === 'receipts' && <ReceiptRegister />}
     {tab === 'clients' && <Owes />}
     {tab === 'export' && <Export />}
     {add && <PaymentModal onClose={() => setAdd(false)} />}
@@ -88,101 +83,183 @@ function Export() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = name; a.click(); URL.revokeObjectURL(a.href);
   }
   const inRange = (d) => d >= from && d <= to;
-  return <div className="card stack" style={{ maxWidth: 640 }}><p style={{ margin: 0 }}>Download receipts and invoices as CSV. Your CA can import them into Tally or Zoho Books, so nobody retypes.</p>
+  return <div className="card stack" style={{ maxWidth: 640 }}><p style={{ margin: 0 }}>Download receipts as CSV. Your CA can import them into Tally or Zoho Books, so nobody retypes. Tax invoices are downloaded from Aali Invoices (for GSTR-1).</p>
     <div className="row"><Field label="From"><In type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field><Field label="To"><In type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field></div>
     <div className="row"><button className="btn" type="button" onClick={() => dl(`receipts_${from}_${to}.csv`, [['Receipt No', 'Date', 'Payer', 'GSTIN', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total', 'Received', 'Balance', 'Mode', 'Reference'],
-      ...list('receipt').filter((r) => inRange(r.date)).map((r) => [r.number, r.date, r.payerName, r.payerGstin, r.totals.subtotal, r.totals.cgst, r.totals.sgst, r.totals.igst, r.totals.total, r.totals.received, r.totals.balance, r.mode, r.reference])])}>Download receipts</button>
-      <button className="btn" type="button" onClick={() => dl(`invoices_${from}_${to}.csv`, [['Invoice No', 'Type', 'Date', 'Client', 'GSTIN', 'Taxable', 'CGST', 'SGST', 'IGST', 'Round off', 'Total'],
-        ...list('invoice').filter((r) => inRange(r.date)).map((r) => [r.number, gstrType(r), r.date, r.clientName, r.gstin || '', r.totals.taxable, r.totals.cgst, r.totals.sgst, r.totals.igst, r.totals.roundOff, r.totals.total])])}>Download invoices</button></div>
+      ...list('receipt').filter((r) => inRange(r.date)).map((r) => [r.number, r.date, r.payerName, r.payerGstin, r.totals.subtotal, r.totals.cgst, r.totals.sgst, r.totals.igst, r.totals.total, r.totals.received, r.totals.balance, r.mode, r.reference])])}>Download receipts</button></div>
     <div className="banner info">A direct connection to Tally / Zoho Books can be switched on later (Settings → Connections).</div></div>;
 }
 
+// ---------- receipts (everything the Receipt generator did, 18 Oct 2026) ----------
+export const RSTATUS = [['received', 'Received'], ['partial', 'Part payment'], ['pending', 'Pending clearance'], ['refunded', 'Refunded']];
+const MODES = ['UPI', 'Bank transfer / NEFT', 'RTGS', 'IMPS', 'Cash', 'Cheque', 'Card'];
+const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+// A line carries one stored amount: before GST, or after GST when "incl" is on. Both boxes show; the one typed into last drives the line.
+const netOf = (it, rate, taxed) => { const a = +it.amount || 0; return taxed && it.incl ? r2(a / (1 + rate / 100)) : a; };
+const grossOf = (it, rate, taxed) => { const a = +it.amount || 0; return taxed && !it.incl ? r2(a * (1 + rate / 100)) : a; };
+// What later receipts brought in against each receipt they settle ("Record balance"). Built from every receipt, never a filtered list.
+export const settledBy = (all) => { const m = new Map(); for (const x of all) if (x.settlesId) m.set(x.settlesId, (m.get(x.settlesId) || 0) + (x.totals?.received || 0)); return m; };
+export const owing = (r, m) => Math.max(0, r2((r.totals?.balance || 0) - (m.get(r.id) || 0)));
+const usdFmt = (n) => '$' + (+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function ReceiptRegister() {
+  const nav = useNavigate(), [q, setQ] = useState(''), [st, setSt] = useState(''), [fy, setFy] = useState(''), [imp, setImp] = useState(false), me = store.me;
+  const all = list('receipt').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number)), settled = settledBy(all);
+  const years = [...new Set(all.map((r) => r.fy))].filter(Boolean).sort().reverse(), text = q.trim().toLowerCase();
+  const stOf = (r) => r.status || (r.totals?.balance > 0 ? 'partial' : 'received');
+  const rows = all.filter((r) => (!st || stOf(r) === st) && (!fy || r.fy === fy)
+    && (!text || `${r.number} ${r.payerName} ${r.forText || ''} ${r.description || ''} ${(r.items || []).map((x) => x.desc).join(' ')} ${r.reference || ''}`.toLowerCase().includes(text)));
+  const inrRows = rows.filter((r) => r.currency !== 'USD'), sum = (f) => inrRows.reduce((s, r) => s + (f(r) || 0), 0);
+  const money = (r, n) => (r.currency === 'USD' ? usdFmt(n) : inr(n)), out = sum((r) => owing(r, settled));
+  return <div className="stack">
+    <div className="stats">
+      <div className="stat"><span className="l">Receipts</span><span className="v">{rows.length}</span></div>
+      <div className="stat"><span className="l">Total amount</span><span className="v">{inr(sum((r) => r.totals?.total))}</span></div>
+      <div className="stat"><span className="l">Cash received</span><span className="v">{inr(sum((r) => r.totals?.received))}</span></div>
+      <div className={'stat' + (out ? ' warm' : '')}><span className="l">Still outstanding</span><span className="v">{inr(out)}</span></div>
+    </div>
+    {imp && <ImportGenerator onClose={() => setImp(false)} />}
+    <div className="row"><In placeholder="Search number, payer, purpose or UTR" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 300 }} />
+      <Sel value={st} onChange={setSt} options={RSTATUS} blank="Every status" style={{ width: 'auto' }} aria-label="Status" />
+      <Sel value={fy} onChange={setFy} options={years.map((y) => [y, 'FY ' + y])} blank="All years" style={{ width: 'auto' }} aria-label="Financial year" />
+      {(me.isAdmin || me.title === 'ops') && <><span className="grow" /><button className="btn sm" type="button" onClick={() => setImp(true)}>Import from Receipt generator</button></>}</div>
+    {rows.length ? <div className="tbl cards"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Status</th><th className="n">Total</th><th className="n">Paid</th><th className="n">Balance due</th><th>Mode</th><th>By</th></tr></thead><tbody>
+      {rows.map((r) => { const o = owing(r, settled), stl = (r.totals?.balance || 0) > 0 && !o;
+        return <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b>{r.settlesNo && <div className="small muted">against {r.settlesNo}</div>}</td><td>{fmtDate(r.date)}</td>
+          <td>{r.payerName}<Sample on={r.sample} />{r.imported && <div className="small muted">from the Receipt generator</div>}</td>
+          <td><Pill k={{ received: 'ok', partial: 'warn', pending: 'info', refunded: 'bad' }[stOf(r)]}>{RSTATUS.find((x) => x[0] === stOf(r))[1]}</Pill></td>
+          <td className="n">{money(r, r.totals?.total || 0)}</td><td className="n">{money(r, r.totals?.received || 0)}</td><td className="n">{stl ? <Pill k="ok">settled</Pill> : o ? money(r, o) : '—'}</td><td>{r.mode}</td><td>{r.imported ? '—' : uname(r.createdBy)}</td></tr>; })}</tbody></table></div>
+      : <Empty>{all.length ? 'No receipt matches.' : 'No receipts yet. “+ Receipt” makes one, or “Record payment” on a payment to collect.'}</Empty>}
+  </div>;
+}
+
 function ReceiptEditor({ id }) {
-  const nav = useNavigate(), [sp] = useSearchParams(), saved = id ? get(id) : null;
+  const nav = useNavigate(), [sp] = useSearchParams(), saved = id ? get(id) : null, b = settings().business, settled = settledBy(list('receipt'));
   const [r, setR] = useState(() => {
-    if (saved) return { ...saved };
-    const p = get(sp.get('payment')), c = p && get(p.clientId), d = p && get(p.dealId), bal = p ? Math.max(0, (+p.amount || 0) - (+p.paid || 0)) : 0;
-    return { date: today(), paymentId: p?.id || '', clientId: p?.clientId || '', dealId: p?.dealId || '', payerName: c?.name || d?.contactName || '', payerPhone: c?.phone || d?.phone || '', payerAddress: c?.address || '', payerGstin: c?.gstin || '',
-      items: [{ desc: p ? p.title + (d ? ' – ' + d.title : '') : '', amount: bal || '', incl: true }], taxMode: 'intra', taxRate: 18, balance: 0, mode: 'UPI', reference: '', against: d?.quoteNo || '', forText: '' };
+    if (saved) return { ...saved, paid: saved.totals ? r2(saved.totals.total - saved.totals.balance) : '' };
+    const fresh = { date: today(), status: 'received', currency: 'INR', taxMode: 'intra', taxRate: 18, mode: 'UPI', reference: '', against: '', forText: '', description: '', payerEmail: '', payerContact: '', paid: '',
+      intro: b.receiptIntro || 'Thank you for your payment. We have received your payment successfully.', terms: b.receiptTerms || '', bank: b.receiptBank || b.bank || '' };
+    const s = get(sp.get('settles')), c0 = get(sp.get('copy'));
+    if (s) return { ...fresh, settlesId: s.id, clientId: s.clientId || '', payerName: s.payerName, payerPhone: s.payerPhone || '', payerAddress: s.payerAddress || '', payerGstin: s.payerGstin || '', payerEmail: s.payerEmail || '', payerContact: s.payerContact || '',
+      taxMode: s.taxMode, taxRate: s.taxRate, currency: s.currency || 'INR', items: [{ desc: `Balance against receipt ${s.number}`, note: '', amount: owing(s, settled), incl: true }] };
+    if (c0) { const c = { ...c0 }; ['id', 'type', 'number', 'seq', 'fy', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample', 'settlesId', 'settlesNo', 'imported', 'balance', 'status', 'reference', 'paymentId'].forEach((k) => delete c[k]); return { ...fresh, ...c, date: today(), status: 'received', paid: '' }; }
+    const p = get(sp.get('payment')), cl = p && get(p.clientId), d = p && get(p.dealId), bal = p ? Math.max(0, (+p.amount || 0) - (+p.paid || 0)) : 0;
+    return { ...fresh, paymentId: p?.id || '', clientId: p?.clientId || '', dealId: p?.dealId || '', payerName: cl?.name || d?.contactName || '', payerPhone: cl?.phone || d?.phone || '', payerAddress: cl?.address || '', payerGstin: cl?.gstin || '',
+      items: [{ desc: p ? p.title + (d ? ' – ' + d.title : '') : '', note: '', amount: bal || '', incl: true }], against: d?.quoteNo || '' };
   });
   if (id && !saved) return <Empty>Receipt not found. <Link to="/payments">Back</Link></Empty>;
-  const up = (k) => (v) => setR({ ...r, [k]: v?.target ? v.target.value : v }), t = receiptTotals(r);
-  const item = (i, k, v) => setR({ ...r, items: r.items.map((x, j) => (j === i ? { ...x, [k]: v } : x)) });
+  const edit = canEdit('money') && !saved?.imported, usd = r.currency === 'USD', taxed = !usd && r.taxMode !== 'none', rate = +r.taxRate || 0;
+  const whole = receiptTotals({ ...r, balance: 0 }).total, t = receiptTotals({ ...r, balance: r.paid === '' || r.paid == null ? 0 : Math.max(0, whole - (+r.paid || 0)) });
+  const up = (k) => (v) => setR({ ...r, [k]: v?.target ? v.target.value : v });
+  // Typing the amount paid moves the status with it: less than the total is a part payment, the full total is received.
+  const paidTo = (v) => { const bal = v === '' ? 0 : Math.max(0, whole - (+v || 0)); setR({ ...r, paid: v, status: bal > 0 && r.status === 'received' ? 'partial' : !bal && r.status === 'partial' ? 'received' : r.status }); };
+  const item = (i, patch) => setR({ ...r, items: r.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  const move = (i, by) => { const xs = [...r.items], j = i + by; if (j < 0 || j >= xs.length) return; [xs[i], xs[j]] = [xs[j], xs[i]]; setR({ ...r, items: xs }); };
+  const allIncl = taxed && r.items.length > 0 && r.items.every((x) => x.incl);
+  const round = (on) => setR({ ...r, items: r.items.map((x) => ({ ...x, incl: on, amount: on ? grossOf(x, rate, taxed) : netOf(x, rate, taxed) })) });
+  const left = saved ? owing(saved, settled) : 0, cur = (n) => (usd ? usdFmt(n) : inr(n));
   async function save() {
-    const data = { ...r, items: r.items.map((x) => ({ ...x, amount: +x.amount || 0 })), balance: +r.balance || 0 };
-    ['id', 'type', 'number', 'seq', 'fy', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample'].forEach((k) => delete data[k]);
+    const data = { ...r, items: r.items.map((x) => ({ ...x, amount: +x.amount || 0 })), paid: r.paid === '' || r.paid == null ? '' : +r.paid };
+    ['id', 'type', 'number', 'seq', 'fy', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample', 'balance', 'settlesNo', 'imported'].forEach((k) => delete data[k]);
     const res = saved ? await attempt(() => update(id, data), 'Saved.') : await attempt(() => create('receipt', data));
-    if (!res) return; const rec = saved ? res : res.record; setR({ ...rec });
+    if (!res) return; const rec = saved ? res : res.record; setR({ ...rec, paid: r2(rec.totals.total - rec.totals.balance) });
     if (!saved) { toast(`Receipt ${rec.number} saved. ${r.paymentId ? 'The payment balance was updated.' : ''}`); nav('/payments/receipt/' + rec.id, { replace: true }); }
   }
   return <>
-    <div className="topbar no-print"><h1>{saved ? saved.number : 'New receipt'} <ViewOnly when={!canEdit('money')} /></h1><div className="row"><Link className="btn" to="/payments">Payments</Link>{saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}{canEdit('money') && <button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
+    <div className="topbar no-print"><h1>{saved ? saved.number : r.settlesId ? 'Balance receipt' : 'New receipt'} <ViewOnly when={!canEdit('money')} /></h1><div className="row"><Link className="btn" to="/payments">Payments</Link>
+      {saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}
+      {saved && canEdit('money') && <Link className="btn" to={'/payments/receipt/new?copy=' + saved.id}>Duplicate</Link>}
+      {saved && canEdit('money') && left > 0 && <Link className="btn" to={'/payments/receipt/new?settles=' + saved.id}>Record balance ({cur(left)})</Link>}
+      {edit && <button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
+    {saved?.imported && <div className="banner info no-print" style={{ marginBottom: 12 }}>Copied from the Receipt generator on {fmtDate(saved.imported.at.slice(0, 10))}. It is kept exactly as it was printed, so it cannot be changed; if it is wrong, delete it with a reason and make a new one.</div>}
+    {r.settlesId && !saved && <div className="banner info no-print" style={{ marginBottom: 12 }}>This receipt brings in the balance of receipt {get(r.settlesId)?.number}. It prints “Against Receipt No. …”, and the register then shows the earlier one as settled.</div>}
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
-      <RO when={!canEdit('money')}><div className="stack"><div className="card form">
-        <Field label="Date" hint={saved ? 'The date is part of the number, so it cannot change.' : ''}><In type="date" value={r.date} onChange={up('date')} disabled={!!saved} /></Field>
+      <RO when={!edit}><div className="stack"><div className="card form">
+        <Field label="Payment date" hint={saved ? 'The date is part of the number, so it cannot change.' : 'It becomes part of the number (ACY-DDMMYY/…).'}><In type="date" value={r.date} onChange={up('date')} disabled={!!saved} /></Field>
+        <Field label="Status"><Sel value={r.status || 'received'} onChange={up('status')} options={RSTATUS} /></Field>
         <Field label="Client"><Pick value={r.clientId} onChange={(v) => { const c = get(v); setR({ ...r, clientId: v, payerName: c?.name || r.payerName, payerPhone: c?.phone || r.payerPhone, payerAddress: c?.address || r.payerAddress, payerGstin: c?.gstin || r.payerGstin }); }} options={list('client').map((c) => [c.id, c.name, c.city])} blank="Choose…" /></Field>
-        <Field label="Payment it settles"><Pick value={r.paymentId} onChange={up('paymentId')} options={list('payment').filter((p) => p.status !== 'paid' || p.id === r.paymentId).map((p) => [p.id, p.title, clientName(p.clientId)])} blank="None" disabled={!!saved} /></Field>
-        <Field label="Received from"><In value={r.payerName} onChange={up('payerName')} /></Field><Field label="Phone"><In value={r.payerPhone} onChange={up('payerPhone')} /></Field><Field label="GSTIN"><In value={r.payerGstin} onChange={up('payerGstin')} /></Field>
-        <Field label="Address" full><Area value={r.payerAddress} onChange={up('payerAddress')} /></Field>
+        {!r.settlesId && <Field label="Payment it settles"><Pick value={r.paymentId} onChange={up('paymentId')} options={list('payment').filter((p) => p.status !== 'paid' || p.id === r.paymentId).map((p) => [p.id, p.title, clientName(p.clientId)])} blank="None" disabled={!!saved} /></Field>}
+        <Field label="Received from *"><In value={r.payerName || ''} onChange={up('payerName')} /></Field><Field label="Contact person"><In value={r.payerContact || ''} onChange={up('payerContact')} /></Field>
+        <Field label="Phone"><In value={r.payerPhone || ''} onChange={up('payerPhone')} /></Field><Field label="Email"><In type="email" value={r.payerEmail || ''} onChange={up('payerEmail')} /></Field>
+        <Field label="GSTIN"><In value={r.payerGstin || ''} onChange={(e) => setR({ ...r, payerGstin: e.target.value.toUpperCase() })} maxLength={15} /></Field>
+        <Field label="Address" full><Area value={r.payerAddress || ''} onChange={up('payerAddress')} /></Field>
       </div>
-        <div className="card stack"><h3>What was paid for</h3>
-          {r.items.map((it, i) => <div key={i} className="form" style={{ borderBottom: '1px dashed var(--line)', paddingBottom: 8 }}>
-            <Field label={`Line ${i + 1}`} full><In value={it.desc} onChange={(e) => item(i, 'desc', e.target.value)} /></Field>
-            <Field label="Amount (₹)"><In type="number" value={it.amount} onChange={(e) => item(i, 'amount', e.target.value)} /></Field>
-            <label className="check" style={{ alignSelf: 'end' }}><input type="checkbox" checked={!!it.incl} onChange={(e) => item(i, 'incl', e.target.checked)} /> Round figure, GST included</label></div>)}
-          <button className="btn sm" type="button" onClick={() => setR({ ...r, items: [...r.items, { desc: '', amount: '', incl: true }] })}>+ Line</button>
-          {r.taxMode !== 'none' && r.items.some((x) => x.incl) && <div className="small muted">Client pays {inr(t.total)}: of that {inr(t.subtotal)} is earned and {inr(t.tax)} is GST payable. (Shown only here, not on the receipt.)</div>}</div>
+        <div className="card stack"><div className="row between"><h3 style={{ margin: 0 }}>What was paid for</h3>
+          {taxed && <label className="check"><input type="checkbox" checked={allIncl} onChange={(e) => round(e.target.checked)} /> Client pays one round figure</label>}</div>
+          {r.items.map((it, i) => <div key={i} className="rline">
+            <div className="row"><b className="small muted">Line {i + 1}</b><span className="grow" />
+              <button className="btn ghost sm" type="button" aria-label="Move up" title="Move up" disabled={!i} onClick={() => move(i, -1)}>↑</button>
+              <button className="btn ghost sm" type="button" aria-label="Move down" title="Move down" disabled={i === r.items.length - 1} onClick={() => move(i, 1)}>↓</button>
+              <button className="btn ghost sm" type="button" aria-label="Remove line" title="Remove line" disabled={r.items.length === 1} onClick={() => setR({ ...r, items: r.items.filter((_, j) => j !== i) })}>✕</button></div>
+            <Field label="What for" full><In value={it.desc} onChange={(e) => item(i, { desc: e.target.value })} /></Field>
+            <Field label="Small note under it" full><In value={it.note || ''} onChange={(e) => item(i, { note: e.target.value })} placeholder="optional" /></Field>
+            {taxed ? <div className="form two-amt">
+              <Field label="Amount before GST" hint={it.incl ? 'worked out' : 'drives this line'}><In type="number" className={'in' + (it.incl ? ' live' : '')} value={it.incl ? netOf(it, rate, taxed) : it.amount} onChange={(e) => item(i, { amount: e.target.value, incl: false })} /></Field>
+              <Field label="Amount after GST" hint={!it.incl ? 'worked out' : 'drives this line'}><In type="number" className={'in' + (!it.incl ? ' live' : '')} value={!it.incl ? grossOf(it, rate, taxed) : it.amount} onChange={(e) => item(i, { amount: e.target.value, incl: true })} /></Field></div>
+              : <Field label={`Amount (${usd ? '$' : '₹'})`}><In type="number" value={it.amount} onChange={(e) => item(i, { amount: e.target.value, incl: false })} /></Field>}
+          </div>)}
+          <button className="btn sm" type="button" onClick={() => setR({ ...r, items: [...r.items, { desc: '', note: '', amount: '', incl: allIncl }] })}>+ Line</button>
+          {taxed && r.items.some((x) => x.incl) && <div className="small muted">The client pays {cur(t.total)} and nothing is added to it. Of that, {cur(t.subtotal)} is earned and {cur(t.tax)} is GST payable to the government. (Shown only here, never on the receipt.)</div>}</div>
         <div className="card form">
-          <Field label="GST"><Sel value={r.taxMode} onChange={up('taxMode')} options={[['intra', 'CGST + SGST'], ['inter', 'IGST'], ['none', 'No GST (exempt only)']]} /></Field><Field label="Rate %"><In type="number" value={r.taxRate} onChange={up('taxRate')} /></Field>
-          <Field label="Balance still due (₹)" hint="For a part payment"><In type="number" value={r.balance} onChange={up('balance')} /></Field>
-          <Field label="Mode"><Sel value={r.mode} onChange={up('mode')} options={['UPI', 'Bank transfer / NEFT', 'RTGS', 'Cash', 'Cheque', 'Card']} /></Field>
-          <Field label="UTR / transaction / cheque no."><In value={r.reference} onChange={up('reference')} /></Field><Field label="Against (quote / invoice no.)"><In value={r.against} onChange={up('against')} /></Field>
+          <Field label="Currency"><Sel value={r.currency || 'INR'} onChange={up('currency')} options={[['INR', '₹ Indian rupees'], ['USD', '$ US dollars (no GST)']]} /></Field>
+          {!usd && <><Field label="GST"><Sel value={r.taxMode} onChange={up('taxMode')} options={[['intra', 'CGST + SGST (within the state)'], ['inter', 'IGST (another state)'], ['none', 'No GST (exempt only)']]} /></Field><Field label="Rate %"><In type="number" value={r.taxRate} onChange={up('taxRate')} /></Field></>}
+          <Field label="Amount paid" hint={t.balance > 0 ? `Balance still due: ${cur(t.balance)}` : 'Leave it empty when the full amount was paid.'}><In type="number" value={r.paid ?? ''} placeholder={String(whole || '')} onChange={(e) => paidTo(e.target.value)} /></Field>
+          <Field label="Payment method"><Sel value={r.mode} onChange={up('mode')} options={MODES.includes(r.mode) || !r.mode ? MODES : [r.mode, ...MODES]} /></Field>
+          <Field label="UTR / transaction / cheque no."><In value={r.reference || ''} onChange={up('reference')} /></Field>
+          <Field label="Payment for"><In value={r.forText || ''} onChange={up('forText')} placeholder="e.g. Advance for the website" /></Field><Field label="Against (quote / invoice no.)"><In value={r.against || ''} onChange={up('against')} /></Field>
+          <Field label="Description" full><Area value={r.description || ''} onChange={up('description')} placeholder="optional" /></Field>
         </div>
+        <div className="card form"><h3 style={{ gridColumn: '1 / -1', margin: 0 }}>Printed on the receipt</h3>
+          <Field label="Opening line" full><In value={r.intro || ''} onChange={up('intro')} /></Field>
+          <Field label="Payment / bank details" full hint="One per line – label : value"><Area value={r.bank || ''} onChange={up('bank')} /></Field>
+          <Field label="Terms" full><Area value={r.terms || ''} onChange={up('terms')} /></Field></div>
         {saved && <div className="row"><Sample on={saved.sample} /><span className="grow" /><DeleteButton id={saved.id} needsReason after={() => nav('/payments')} /></div>}
       </div></RO>
-      <div className="paper-wrap"><div style={{ transform: 'scale(.72)', transformOrigin: 'top left', width: '139%' }}><ReceiptSheet r={{ ...r, number: saved?.number }} /></div></div>
+      <FitSheet r={{ ...r, balance: t.balance, number: saved?.number, settlesNo: saved?.settlesNo || get(r.settlesId)?.number }} />
     </div>
-    <style>{'@media print{.paper-wrap>div{transform:none!important;width:auto!important}.grid2.no-print{display:block!important}.grid2.no-print>.stack{display:none!important}}'}</style>
+    <style>{'@media print{.paper-wrap>div{transform:none!important;width:auto!important}.grid2.no-print{display:block!important}.grid2.no-print>.stack{display:none!important}.fit{display:none!important}}'}</style>
   </>;
 }
 
-// B2B (the client's GSTIN is on the invoice) or B2C (an unregistered buyer) – the user, 17 Oct 2026. Older invoices: B2B when a GSTIN is on them.
-const kindOf = (q) => (q.kind === 'b2b' || q.kind === 'b2c' ? q.kind : q.gstin ? 'b2b' : 'b2c');
-// For the CA's GSTR-1: B2B, B2C large (inter-state above ₹1,00,000) or B2C small.
-const gstrType = (r) => (kindOf(r) === 'b2b' ? 'B2B' : r.taxMode === 'inter' && (r.totals?.total || 0) > 100000 ? 'B2CL' : 'B2CS');
-function InvoiceEditor({ id }) {
-  const nav = useNavigate(), [sp] = useSearchParams(), saved = id ? get(id) : null;
-  const [q, setQ] = useState(() => {
-    if (saved) return { ...saved }; const src = get(sp.get('quote'));
-    const base = src ? { ...src } : { items: [{ desc: '', qty: 1, unit: 'Nos', rate: 0, sac: '998314' }], taxMode: 'intra', taxRate: 18, discountType: 'none', discountValue: 0, roundOff: true };
-    ['id', 'number', 'seq', 'fy', 'status', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'totals', 'sample', 'type', 'validUntil'].forEach((k) => delete base[k]);
-    return { ...base, quoteId: src?.id || '', quoteNo: src?.number || '', date: today(), dueDate: addDays(today(), 15), placeOfSupply: settings().business.state, terms: 'Payment due by the date above. Please quote the invoice number when paying.' };
-  });
-  if (id && !saved) return <Empty>Invoice not found. <Link to="/payments">Back</Link></Empty>;
-  const up = (k) => (v) => setQ({ ...q, [k]: v?.target ? v.target.value : v }), item = (i, k, v) => setQ({ ...q, items: q.items.map((x, j) => (j === i ? { ...x, [k]: v } : x)) });
-  async function save() {
-    const data = { ...q }; ['id', 'type', 'number', 'seq', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample'].forEach((k) => delete data[k]);
-    const res = saved ? await attempt(() => update(id, data), 'Saved.') : await attempt(() => create('invoice', data));
-    if (res && !saved) { toast(`Invoice ${res.record.number} saved.`); nav('/payments/invoice/' + res.record.id, { replace: true }); }
-  }
-  return <>
-    <div className="topbar no-print"><h1>{saved ? saved.number : 'New tax invoice'} <ViewOnly when={!canEdit('money')} /></h1><div className="row"><Link className="btn" to="/payments">Payments</Link>{saved && <button className="btn" type="button" onClick={() => window.print()}>Print / Save PDF</button>}{canEdit('money') && <button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
-    <div className="banner info no-print" style={{ marginBottom: 12 }}>Tax invoice format to be confirmed by the company's CA before live use. E-invoicing (IRN) is not switched on.</div>
-    <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
-      <RO when={!canEdit('money')}><div className="stack"><div className="card form">
-        {!saved && <Field label="Copy from quotation" full><Sel value={q.quoteId} onChange={(v) => nav('/payments/invoice/new?quote=' + v)} options={list('quote').map((x) => [x.id, `${x.number} – ${x.clientName}`])} blank="None" /></Field>}
-        <Field label="Kind of invoice" full hint={kindOf(q) === 'b2b' ? 'The client is GST-registered: its GSTIN goes on the invoice.' : 'An unregistered buyer (a person or a small shop): no GSTIN.'}><Seg value={kindOf(q)} onChange={(v) => setQ({ ...q, kind: v })} options={[['b2b', 'B2B – has GSTIN'], ['b2c', 'B2C – no GSTIN']]} /></Field>
-        <Field label="Client *"><In value={q.clientName || ''} onChange={up('clientName')} /></Field>{kindOf(q) === 'b2b' && <Field label="Client's GSTIN *"><In value={q.gstin || ''} onChange={(e) => setQ({ ...q, gstin: e.target.value.toUpperCase() })} maxLength={15} /></Field>}
-        <Field label="Date"><In type="date" value={q.date} onChange={up('date')} disabled={!!saved} /></Field><Field label="Due date"><In type="date" value={q.dueDate} onChange={up('dueDate')} /></Field>
-        <Field label="Place of supply *" hint="The client's state"><In value={q.placeOfSupply || ''} onChange={up('placeOfSupply')} /></Field>
-        <Field label="GST"><Sel value={q.taxMode} onChange={up('taxMode')} options={[['intra', 'CGST + SGST'], ['inter', 'IGST'], ['export', 'Export (LUT)'], ['none', 'No GST']]} /></Field>
-        <Field label="Address" full><Area value={q.address || ''} onChange={up('address')} /></Field></div>
-        <div className="card stack"><h3>Lines</h3>{q.items.map((it, i) => <div key={i} className="form"><Field label="Description" full><In value={it.desc} onChange={(e) => item(i, 'desc', e.target.value)} /></Field>
-          <Field label="SAC"><In value={it.sac || '998314'} onChange={(e) => item(i, 'sac', e.target.value)} /></Field><Field label="Qty"><In type="number" value={it.qty} onChange={(e) => item(i, 'qty', e.target.value)} /></Field><Field label="Rate"><In type="number" value={it.rate} onChange={(e) => item(i, 'rate', e.target.value)} /></Field></div>)}
-          <button className="btn sm" type="button" onClick={() => setQ({ ...q, items: [...q.items, { desc: '', qty: 1, unit: 'Nos', rate: 0, sac: '998314' }] })}>+ Line</button></div>
-        {saved && <div className="row"><span className="grow" /><DeleteButton id={saved.id} needsReason after={() => nav('/payments')} /></div>}</div></RO>
-      <div className="paper-wrap"><div style={{ transform: 'scale(.72)', transformOrigin: 'top left', width: '139%' }}><QuoteSheet invoice q={{ ...q, number: saved?.number }} /></div></div>
-    </div>
-    <style>{'@media print{.paper-wrap>div{transform:none!important;width:auto!important}.grid2.no-print{display:block!important}.grid2.no-print>.stack{display:none!important}.banner.no-print{display:none!important}}'}</style>
-  </>;
+// Copying the old Receipt generator (18 Oct 2026): what would happen, then copy, then a check list before the old app is deleted.
+function ImportGenerator({ onClose }) {
+  const [s, setS] = useState(null), [busy, setBusy] = useState(false), [rep, setRep] = useState(null);
+  useEffect(() => { http('GET', '/imports/receipts').then(setS, (e) => setS({ error: e.message })); }, []);
+  async function go() { setBusy(true); const r = await attempt(() => http('POST', '/imports/receipts')); setBusy(false); if (r) { setRep(r.report); await poll(); } }
+  const p = s?.preview;
+  return <Modal title="Import from the Receipt generator" wide onClose={onClose} footer={<><button className="btn" type="button" onClick={onClose}>Close</button>
+    {p && !rep && <button className="btn primary" type="button" disabled={busy || !p.fresh} onClick={go}>{busy ? 'Copying…' : `Copy ${p.fresh} receipts`}</button>}</>}>
+    {!s ? <p className="muted">Asking the Receipt generator…</p>
+      : s.error ? <div className="banner bad">{s.error}</div>
+      : !s.connected ? <div className="stack"><p style={{ margin: 0 }}>Aali One is not connected to the Receipt generator yet.</p>
+        <p className="small muted" style={{ margin: 0 }}>In Coolify, add two environment variables to the Aali One app, then restart it: <b>RECEIPTS_SUPABASE_URL</b> (the generator's Supabase address, https://….supabase.co) and <b>RECEIPTS_SUPABASE_KEY</b> (its publishable key). Aali One only reads from it.</p></div>
+      : rep ? <div className="stack">
+        <div className="banner ok">{rep.copied} receipts copied{rep.copied ? ` (${rep.first} … ${rep.last})` : ''}. {rep.skipped.length} skipped. {rep.linked} balance receipts linked. Counters raised for {rep.counters} days.{rep.letterhead.length ? ` Letterhead: ${rep.letterhead.join(' and ')} copied.` : ''}</div>
+        <p style={{ margin: 0 }}>The untouched copy of everything in the generator: <a href={'/api/files/' + rep.backup.id} download={rep.backup.name}>{rep.backup.name}</a>. Keep it.</p>
+        {rep.skipped.length > 0 && <details><summary>Skipped ({rep.skipped.length})</summary><ul className="small">{rep.skipped.slice(0, 200).map((x, i) => <li key={i}>{x.number}: {x.why}</li>)}</ul></details>}
+        <h3 style={{ margin: '8px 0 0' }}>Before you delete the old Receipt generator</h3>
+        <ol className="small" style={{ margin: 0 }}><li>The receipts count in the generator = copied + skipped above.</li><li>The last receipt numbers in Receipts here match the generator.</li>
+          <li>Make one test receipt here dated today: its number must be the next one, never one already used. Delete it with a reason after.</li>
+          <li>Download and keep the backup file above.</li><li>Then delete only the generator's own Vercel project and its own Supabase project, and remove the two RECEIPTS_SUPABASE_ variables from Coolify.</li></ol></div>
+      : <div className="stack">
+        <div className="stats"><div className="stat"><span className="l">In the generator</span><span className="v">{p.total}</span></div><div className="stat"><span className="l">New to copy</span><span className="v">{p.fresh}</span></div>
+          <div className="stat"><span className="l">Already here</span><span className="v">{p.already}</span></div><div className="stat"><span className="l">Deleted there</span><span className="v">{p.deleted}</span><span className="small muted">copied as deleted</span></div></div>
+        <p className="small muted" style={{ margin: 0 }}>From {p.first ? fmtDate(p.first) : '—'} to {p.last ? fmtDate(p.last) : '—'}. Each receipt keeps its own number and printed figures and cannot be changed here. Numbers already in Aali One are skipped, so this can be run again safely. A full copy of the generator's data is saved first.</p>
+        {p.lastNumbers?.length > 0 && <p className="small" style={{ margin: 0 }}>Last numbers: {p.lastNumbers.map((x) => x.number).join(', ')}</p>}</div>}
+  </Modal>;
+}
+
+// The receipt preview with a one-page meter: how much of the A4 page the receipt fills; red when it would spill onto a second page.
+const MM = 96 / 25.4;
+function FitSheet({ r }) {
+  const box = useRef(null), [used, setUsed] = useState(0);
+  useLayoutEffect(() => {
+    const el = box.current?.querySelector('.paper'); if (!el) return;
+    const measure = () => { const rc = el.getBoundingClientRect(), scale = rc.width / (210 * MM); if (!scale || !el.children.length) return;
+      const bottom = Math.max(...[...el.children].map((k) => k.getBoundingClientRect().bottom)) - rc.top;
+      setUsed(Math.round(100 * (bottom / scale + 14 * MM) / (297 * MM))); };
+    measure(); const ro = new ResizeObserver(measure); ro.observe(el); return () => ro.disconnect();
+  }, [r]);
+  return <div className="stack gap4 sheet-col"><div className={'fit' + (used > 100 ? ' over' : '')} role="status"><span>{used > 100 ? `Too long for one page – ${used}% of the page. Shorten the lines or the terms.` : `Fits one page – ${used}% used`}</span><i style={{ width: Math.min(100, used) + '%' }} /></div>
+    <div className="paper-wrap" ref={box}><div style={{ transform: 'scale(.72)', transformOrigin: 'top left', width: '139%' }}><ReceiptSheet r={r} /></div></div></div>;
 }

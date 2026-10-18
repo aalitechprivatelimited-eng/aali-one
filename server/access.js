@@ -11,7 +11,7 @@ export const loadIndex = async (db) => (await db.query(`select id, type, created
 
 // The kinds of item people add themselves. Notifications, presence and anything unknown are made by the server only (audit ACB-1, ACB-3).
 const CREATABLE = new Set(['lead', 'deal', 'client', 'quote', 'invoice', 'receipt', 'payment', 'project', 'task', 'ticket', 'activity', 'comment', 'approval', 'target', 'signoff', 'asset', 'bill', 'collab', 'report', 'prospect', 'agreement', 'salary', 'payrun', 'loan', 'payee', 'pclient', 'pemp']);
-const LABEL = { assets: 'client assets', calls: 'the call register', leads: 'leads', deals: 'deals', clients: 'clients', quotes: 'quotations', money: 'receipts and payments', projects: 'projects', support: 'support requests', collab: 'collaborations', agreements: 'agreements', payroll: 'payroll' };
+const LABEL = { assets: 'client assets', calls: 'the call register', leads: 'leads', deals: 'deals', clients: 'clients', quotes: 'quotations', money: 'receipts and payments', invoices: 'tax invoices', projects: 'projects', support: 'support requests', collab: 'collaborations', agreements: 'agreements', payroll: 'payroll' };
 
 // rows: every live record (or the light index). canSeeReport: the daily-report rule, passed in from logic.js.
 export function buildAccess(user, rows, canSeeReport) {
@@ -42,7 +42,8 @@ export function buildAccess(user, rows, canSeeReport) {
       case 'quote': return canSee(user, 'quotes');
       case 'agreement': return canSee(user, 'agreements'); // Operations Manager, Sales Manager, Company Secretary and Chairman only
       case 'salary': case 'payrun': case 'loan': case 'payee': case 'pclient': case 'pemp': return canSee(user, 'payroll'); // HR and the Operations Manager only
-      case 'invoice': case 'receipt': case 'payment': return canSee(user, 'money');
+      case 'invoice': return canSee(user, 'invoices');
+      case 'receipt': case 'payment': return canSee(user, 'money');
       case 'lead': return within('leads', myLeads, r.id) || (sc('leads') === 'own' && mine(r));
       case 'deal': return within('deals', myDeals, r.id) || (sc('deals') === 'own' && mine(r));
       case 'client': return sc('clients') ? within('clients', myClients, r.id) || (sc('clients') === 'own' && mine(r)) : canSee(user, 'projects') || canSee(user, 'support') ? 'card' : false;

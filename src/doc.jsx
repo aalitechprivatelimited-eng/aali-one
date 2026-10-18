@@ -52,23 +52,41 @@ export function QuoteSheet({ q, invoice }) {
   </div>;
 }
 
+// A payment receipt, one A4 page, as the Receipt generator printed it (18 Oct 2026): the status names the total, part payments show the
+// balance, a balance receipt says which receipt it clears, and the stamp is the scan in Settings (never a drawn one).
+const RSTATUS = { received: 'Received', partial: 'Part payment', pending: 'Pending clearance', refunded: 'Refunded' };
+const TOTAL_WORD = { received: 'Received', partial: 'Part paid', pending: 'Pending clearance', refunded: 'Refunded' };
 export function ReceiptSheet({ r }) {
-  const t = receiptTotals(r), b = settings().business;
-  return <div className="paper">
-    <Head title="Payment Receipt" meta={[['Receipt No.', r.number || 'Given on save'], ['Date', fmtDate(r.date)], ['Status', r.balance > 0 ? 'Part paid' : 'Received']]} />
-    <Party label="Received from" name={r.payerName} lines={[r.payerPhone, r.payerAddress, r.payerGstin && 'GSTIN ' + r.payerGstin]} />
-    <p style={{ margin: '4px 0 10px' }}>{b.name === 'AALI CONSSULTANCY' ? 'Thank you for your payment. We have received your payment successfully.' : 'Received with thanks.'}</p>
-    <table><thead><tr><th>#</th><th>Description</th><th className="n">Amount</th></tr></thead><tbody>
-      {(r.items || []).map((it, i) => <tr key={i}><td>{i + 1}</td><td><b>{it.desc}</b>{it.incl && r.taxMode !== 'none' ? <div style={{ fontSize: 11, color: '#6b5c3c' }}>Round figure, GST included</div> : null}</td><td className="n">{inr2(it.amount)}</td></tr>)}
-      <tr><td /><td>Taxable value</td><td className="n">{inr2(t.subtotal)}</td></tr><TaxRows t={t} mode={r.taxMode} />
-      <tr className="grand"><td /><td>Total amount</td><td className="n">{inr2(t.total)}</td></tr>
-      {t.balance > 0 && <><tr><td /><td>Received now</td><td className="n">{inr2(t.received)}</td></tr><tr><td /><td>Balance still due</td><td className="n">{inr2(t.balance)}</td></tr></>}
+  const t = receiptTotals(r), b = settings().business, usd = r.currency === 'USD', taxed = !usd && r.taxMode !== 'none', rate = t.rate;
+  const st0 = r.status && RSTATUS[r.status] ? r.status : 'received', st = st0 === 'received' && t.balance > 0 ? 'partial' : st0; // a part payment never prints as received
+  const money = (n) => (usd ? '$' + (+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : inr2(n));
+  const line = (it) => { const a = +it.amount || 0; const net = taxed && it.incl ? a / (1 + rate / 100) : a, gross = taxed && !it.incl ? a * (1 + rate / 100) : a; return { net, tax: gross - net, gross }; };
+  const bank = String(r.bank ?? b.receiptBank ?? b.bank ?? '').split('\n').map((x) => x.trim()).filter(Boolean).map((x) => { const i = x.indexOf(':'); return i > 0 ? [x.slice(0, i).trim(), x.slice(i + 1).trim()] : ['', x]; });
+  const intro = r.intro ?? b.receiptIntro ?? 'Thank you for your payment. We have received your payment successfully.', terms = r.terms ?? b.receiptTerms;
+  return <div className="paper receipt">
+    <Head title="Payment Receipt" meta={[['Receipt No.', r.number || 'Given on save'], ['Date', fmtDate(r.date)], ['Status', RSTATUS[st]], ['Against Receipt No.', r.settlesNo]]} />
+    <Party label="Received from" name={r.payerName} lines={[r.payerContact && 'Attn: ' + r.payerContact, r.payerPhone, r.payerEmail, r.payerAddress, r.payerGstin && 'GSTIN ' + r.payerGstin]} />
+    {intro && <p style={{ margin: '4px 0 10px' }}>{intro}</p>}
+    <table><thead><tr><th style={{ width: 28 }}>#</th><th>Description</th>{taxed && <><th className="n">Taxable</th><th className="n">GST</th></>}<th className="n">Amount</th></tr></thead><tbody>
+      {(r.items || []).map((it, i) => { const l = line(it); return <tr key={i}><td>{i + 1}</td><td><b>{it.desc}</b>{it.note && <div style={{ fontSize: 11, color: '#6b5c3c' }}>{it.note}</div>}</td>
+        {taxed && <><td className="n">{money(l.net)}</td><td className="n">{money(l.tax)}</td></>}<td className="n">{money(l.gross)}</td></tr>; })}
     </tbody></table>
-    <div style={{ marginTop: 8 }}><b>Amount received in words:</b> {inWords(t.received)}</div>
-    <table style={{ marginTop: 10, width: '60%' }}><tbody>{[['Payment method', r.mode], ['Transaction / UTR / cheque', r.reference], ['Against', r.against], ['For', r.forText]].filter((x) => x[1]).map(([k, v]) => <tr key={k}><td style={{ color: '#6b5c3c' }}>{k}</td><td>{v}</td></tr>)}</tbody></table>
-    <div className="row between" style={{ alignItems: 'flex-start', marginTop: 14, gap: 24 }}>
-      <div style={{ flex: 1, whiteSpace: 'pre-line', fontSize: 11 }}><b style={{ fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', color: '#9a6400' }}>Terms</b>{'\n'}{b.receiptTerms}</div>
-      <div style={{ flex: 1, fontSize: 11 }}><Sign /></div></div>
+    <table className="tot" style={{ width: '55%', marginLeft: 'auto', marginTop: 6 }}><tbody>
+      {taxed && <><tr><td>Taxable value</td><td className="n">{money(t.subtotal)}</td></tr><TaxRows t={t} mode={r.taxMode} /></>}
+      <tr className="grand" style={st === 'refunded' ? { color: '#b23a32' } : st === 'received' ? { color: '#2a6f4b' } : undefined}><td>Total Amount ({TOTAL_WORD[st]})</td><td className="n">{money(t.total)}</td></tr>
+      {t.balance > 0 && <><tr><td>Received now</td><td className="n">{money(t.received)}</td></tr><tr><td><b>Balance still due</b></td><td className="n"><b>{money(t.balance)}</b></td></tr></>}
+    </tbody></table>
+    <div style={{ marginTop: 8 }}><b>Amount {st === 'refunded' ? 'refunded' : 'received'} in words:</b> {inWords(t.received, usd ? 'USD' : 'INR')}</div>
+    {st === 'pending' && <div style={{ marginTop: 4, color: '#955608' }}>Subject to clearance of the payment.</div>}
+    <div className="row between" style={{ alignItems: 'flex-start', marginTop: 10, gap: 24 }}>
+      <table style={{ flex: 1 }}><tbody>{[['Payment method', r.mode], ['Transaction / UTR / cheque', r.reference], ['Payment for', r.forText], ['Against', r.against]].filter((x) => x[1]).map(([k, v]) => <tr key={k}><td style={{ color: '#6b5c3c', border: 'none', padding: '2px 8px 2px 0' }}>{k}</td><td style={{ border: 'none', padding: '2px 0' }}>{v}</td></tr>)}</tbody></table>
+      {bank.length > 0 && <table style={{ flex: 1 }}><tbody><tr><td colSpan={2} style={{ border: 'none', padding: '0 0 3px', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', color: '#9a6400', fontWeight: 700 }}>Payment details</td></tr>
+        {bank.map(([k, v], i) => <tr key={i}><td style={{ color: '#6b5c3c', border: 'none', padding: '1px 8px 1px 0', whiteSpace: 'nowrap' }}>{k}</td><td style={{ border: 'none', padding: '1px 0', overflowWrap: 'anywhere' }}>{v}</td></tr>)}</tbody></table>}
+    </div>
+    {r.description && <div style={{ marginTop: 8, whiteSpace: 'pre-line' }}>{r.description}</div>}
+    <div className="row between" style={{ alignItems: 'flex-end', marginTop: 14, gap: 24 }}>
+      <div style={{ flex: 1, whiteSpace: 'pre-line', fontSize: 11 }}>{terms && <><b style={{ fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', color: '#9a6400' }}>Terms</b>{'\n'}{terms}</>}</div>
+      <div style={{ flex: 1, fontSize: 11, textAlign: 'right' }}>{b.stamp && <img src={b.stamp} alt="Company stamp" style={{ height: 92, maxWidth: 180, objectFit: 'contain', display: 'block', marginLeft: 'auto', marginBottom: 4 }} />}<Sign /></div></div>
   </div>;
 }
 

@@ -23,7 +23,7 @@ const EACH = 5; // results shown per kind
 const SHORTCUTS = ['Recent', 'Go to', 'Start something new']; // the groups that are not records
 // Things to start, for the people allowed to (18 Oct 2026): typing "new", "invoice" or "receipt" offers them, so nobody hunts for the button.
 const ACTIONS = [['quotes', 'New quotation', '/quotes/new', 'quotes'], ['agreements', 'New service agreement', '/agreements/new?kind=service', 'agreements'],
-  ['money', 'New tax invoice (B2B or B2C)', '/payments/invoice/new', 'money'], ['money', 'New receipt', '/payments/receipt/new', 'money']];
+  ['invoices', 'New B2B tax invoice', '/invoices/new?kind=b2b', 'invoices'], ['invoices', 'New B2C tax invoice', '/invoices/new?kind=b2c', 'invoices'], ['money', 'New receipt', '/payments/receipt/new', 'money']];
 
 function find(q) {
   const text = q.trim().toLowerCase(), digits = text.replace(/\D/g, ''), out = [];

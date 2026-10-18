@@ -112,7 +112,7 @@ function DailyWork({ p }) {
       <div className="stat"><span className="l">Meetings & visits</span><span className="v">{all.meet + all.visits}</span><span className="small muted">{all.meet} meetings fixed · {all.visits} client visits</span></div></div>
     {people.length ? <div className="tbl cards"><table><thead><tr><th>Person</th><th>{p.kind === 'day' ? 'Report' : 'Days written'}</th><th className="n">Worked</th><th className="n">Nothing recorded</th><th className="n">Calls</th><th className="n">Interested</th><th className="n">Meetings fixed</th><th className="n">Client visits</th></tr></thead><tbody>
       {rows.map(({ u, mine, w }) => <tr key={u.id} className="click" onClick={() => setOpen(u.id)}><td><b>{u.name}</b><div className="small muted">{desig(u)}</div></td>
-        <td>{p.kind === 'day' ? (mine[0] ? <Pill k={mine[0].status === 'submitted' ? 'ok' : 'warn'}>{mine[0].status === 'submitted' ? 'Submitted' : 'Still writing'}</Pill> : <Pill k="bad">Not written</Pill>) : `${w.days} (${w.sub} submitted)`}</td>
+        <td>{p.kind === 'day' ? (mine[0] ? <Pill k={mine[0].status === 'submitted' ? 'ok' : mine[0].status === 'closed' ? 'bad' : 'warn'}>{mine[0].status === 'submitted' ? 'Submitted' : mine[0].status === 'closed' ? 'Not ended' : 'Still writing'}</Pill> : <Pill k="bad">Not written</Pill>) : `${w.days} (${w.sub} submitted)`}</td>
         <td className="n">{fmtMins(w.worked)}</td><td className="n" style={{ color: w.idle >= 60 * Math.max(1, w.days) ? 'var(--bad)' : '' }}>{fmtMins(w.idle)}</td>
         <td className="n">{w.calls}</td><td className="n">{w.pos}</td><td className="n">{w.meet}</td><td className="n">{w.visits}</td></tr>)}</tbody></table></div>
       : <Empty>Nobody here writes a daily report.</Empty>}

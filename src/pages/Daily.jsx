@@ -136,7 +136,7 @@ const shareLink = (r) => `${location.origin}/daily/${r.shareToken}`;
 const dayOf = (s) => (s ? iso(new Date(s)) : '');
 const hm = (s) => new Date(s).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
 const ago = (s) => { const m = Math.round((Date.now() - new Date(s)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : fmtDT(s); };
-const status = (r) => !r ? ['Not started', ''] : r.status === 'submitted' ? (r.reviewed ? ['Reviewed', 'ok'] : ['Submitted', 'info']) : ['In progress', 'warn'];
+const status = (r) => !r ? ['Not started', ''] : r.status === 'submitted' ? (r.reviewed ? ['Reviewed', 'ok'] : ['Submitted', 'info']) : r.status === 'closed' ? ['Not ended – closed by Aali One', 'bad'] : ['In progress', 'warn'];
 const dayName = (d) => d === today() ? 'Today' : d === addDays(today(), -1) ? 'Yesterday' : `${WEEKDAY[parse(d).getDay()]} ${fmtDate(d)}`;
 const NO_REPORT = ['chairman', 'ops', 'cs', 'admin']; // top management reads reports, it does not write them
 const expected = () => activeUsers().filter((u) => !NO_REPORT.includes(u.title));
@@ -400,7 +400,7 @@ function NowCard({ e, onFinish }) {
   </m.div>;
 }
 function Editor({ date, r }) {
-  const me = store.me, locked = r?.status === 'submitted', loc = useLocation();
+  const me = store.me, locked = r?.status === 'submitted' || r?.status === 'closed', loc = useLocation();
   const [vis, setVis] = useState({ client: '', person: '', phone: '', place: '' }), upV = (k) => (e) => setVis({ ...vis, [k]: e.target.value });
   const [text, setText] = useState(''), [proj, setProj] = useState(''), [busy, setBusy] = useState(false), [mins, setMins] = useState(''), [from, setFrom] = useState('');
   const lastEnd = r ? (r.entries || []).reduce((m, e) => Math.max(m, bounds(e)[1]), r.dayStart ? new Date(r.dayStart).getTime() : 0) : 0, fromV = from || (lastEnd ? hm24(lastEnd) : '');
@@ -646,7 +646,7 @@ export function ReportView({ r, me, inTeam }) {
     {auto.length > 0 && <div className="row small"><span className="lbl">Recorded by Aali One</span>{auto.map((a) => <Pill key={a} k="gold">{a}</Pill>)}</div>}
     {r.plan?.trim() && <div className="small"><span className="lbl">Plan for tomorrow</span><div style={{ whiteSpace: 'pre-wrap' }}>{r.plan}</div></div>}
     {r.blockers?.trim() && <div className="banner bad"><b>Problems / help needed:</b> {r.blockers}</div>}
-    <div className="small muted">{sub ? `Submitted ${fmtDT(r.submittedAt)}` : 'Still being written – not submitted yet'}{r.reviewed ? ` · reviewed by ${uname(r.reviewed.by)} ${fmtDT(r.reviewed.at)}` : ''}</div>
+    <div className="small muted">{sub ? `Submitted ${fmtDT(r.submittedAt)}` : r.status === 'closed' ? 'Not ended – closed by Aali One after midnight (not submitted)' : 'Still being written – not submitted yet'}{r.reviewed ? ` · reviewed by ${uname(r.reviewed.by)} ${fmtDT(r.reviewed.at)}` : ''}</div>
     {(r.remarks || []).length > 0 && <Remarks r={r} />}
     <WaSend text={reportText(r)} to={management(me)} title="Send this report on WhatsApp to" />
     {r.shareToken && r.owner !== me.id && isManager(me) && <div className="row small"><span className="lbl">Report link</span><span className="muted">Opens this report without sign-in, like a client's progress link.</span>
@@ -661,7 +661,7 @@ export function ReportView({ r, me, inTeam }) {
 }
 function Week({ people, end, pick }) {
   const days = [...Array(7)].map((_, i) => addDays(end, i - 6));
-  const mark = (r) => !r ? ['–', 'var(--ink-faint)'] : r.status === 'submitted' ? [r.reviewed ? '✓✓' : '✓', 'var(--ok)'] : ['…', 'var(--warn)'];
+  const mark = (r) => !r ? ['–', 'var(--ink-faint)'] : r.status === 'submitted' ? [r.reviewed ? '✓✓' : '✓', 'var(--ok)'] : r.status === 'closed' ? ['✕', 'var(--bad)'] : ['…', 'var(--warn)'];
   return <><div className="tbl"><table><thead><tr><th>Person</th>{days.map((d) => <th key={d} style={{ textAlign: 'center' }}>{WEEKDAY[parse(d).getDay()]} {parse(d).getDate()}</th>)}<th className="n">Submitted</th></tr></thead>
     <tbody>{people.map((u) => { const rs = days.map((d) => reportOf(u.id, d));
       return <tr key={u.id}><td><b>{u.name}</b><div className="small muted">{desig(u)}</div></td>

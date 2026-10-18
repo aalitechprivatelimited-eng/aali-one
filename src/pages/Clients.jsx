@@ -81,7 +81,7 @@ function ClientView({ id }) {
         {deals.map((d) => <Link key={d.id} to={'/deals/' + d.id} className="row small"><Pill k="gold">Deal</Pill><b>{d.title}</b><span className="num">{inr(d.value)}</span><span className="muted">{stageLabel(d.stage)}</span></Link>)}</Sec>
       {canMoney() && <Sec title="Quotations & invoices" empty={!quotes.length && !invoices.length ? 'None yet.' : ''}>
         {quotes.map((q) => <Link key={q.id} to={'/quotes/' + q.id} className="row small"><b className="num">{q.number}</b><span className="num">{inr(q.totals?.total)}</span><Pill>{q.status}</Pill></Link>)}
-        {invoices.map((q) => <Link key={q.id} to={'/payments/invoice/' + q.id} className="row small"><b className="num">{q.number}</b><span className="num">{inr(q.totals?.total)}</span><Pill k="info">Invoice</Pill></Link>)}</Sec>}
+        {invoices.map((q) => <Link key={q.id} to={'/invoices/' + q.id} className="row small"><b className="num">{q.number}</b><span className="num">{inr(q.totals?.total)}</span><Pill k="info">Invoice</Pill></Link>)}</Sec>}
       <Sec title="Projects" empty={!projects.length ? 'None yet.' : ''}>{projects.map((p) => <Link key={p.id} to={'/projects/' + p.id} className="row small"><b>{p.name}</b><Pill>{pStageLabel(p.stage)}</Pill>{p.signoffId && <Pill k="ok">Signed off</Pill>}</Link>)}
         {signoffs.map((s) => <div key={s.id} className="small">Sign-off <b className="num">{s.certNo}</b> by {s.signerName} · {'★'.repeat(+s.rating || 0)} {s.ratingComment}</div>)}</Sec>
       {canMoney() && <Sec title="Payments" empty={!pays.length && !receipts.length ? 'None yet.' : ''}>

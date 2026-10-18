@@ -174,6 +174,20 @@ try {
   await step('the manager sees the call in the register and can add a Do Not Call number', async () => { await go(mgr, 'Aali Calling', 'Call register'); await mgr.locator('table tr', { hasText: 'Test Medicals' }).waitFor();
     await mgr.getByRole('button', { name: '+ Do Not Call number' }).click(); await mgr.getByLabel(/Number/).fill('9876509999'); await mgr.getByLabel(/Why must it not be called/).fill('Asked us to stop calling');
     await mgr.getByRole('button', { name: 'Add to Do Not Call' }).click(); await toast(mgr, 'Added'); });
+  await step('tax invoices are their own app: Aali Invoices starts a B2B or a B2C invoice; Books has no invoices', async () => {
+    await go(mgr, 'Aali Books', 'Payments & receipts'); await mgr.locator('.page h1', { hasText: 'Payments' }).waitFor();
+    must(await mgr.getByRole('tab', { name: /Tax invoices/ }).count() === 0 && await mgr.getByRole('link', { name: '+ Tax invoice' }).count() === 0, 'Books still has invoices');
+    await go(mgr, 'Aali Invoices', 'Tax invoices'); await mgr.getByRole('link', { name: '+ B2C invoice' }).click();
+    await mgr.locator('.page h1', { hasText: 'New B2C tax invoice' }).waitFor(); must(await mgr.getByLabel(/Client's GSTIN/).count() === 0, 'a B2C invoice asks for a GSTIN');
+    await mgr.goto(BASE + '/invoices/new?kind=b2b'); await mgr.getByLabel(/Client's GSTIN/).waitFor(); });
+  await step('a part payment on a receipt, then Record balance – the register shows the first one settled', async () => {
+    await mgr.goto(BASE + '/payments/receipt/new'); await mgr.getByLabel('Received from *').fill('E2E Payer'); await mgr.getByLabel('What for').fill('Website');
+    await mgr.getByLabel('Amount after GST').fill('11800'); await mgr.getByLabel('Amount paid').fill('5000');
+    await mgr.getByRole('button', { name: 'Save & get number' }).click(); await toast(mgr, 'saved');
+    await mgr.locator('.toast').waitFor({ state: 'detached', timeout: 8000 }); await mgr.getByRole('link', { name: /Record balance/ }).click(); await mgr.locator('.page h1', { hasText: 'Balance receipt' }).waitFor();
+    await mgr.getByRole('button', { name: 'Save & get number' }).click(); await toast(mgr, 'saved');
+    await mgr.goto(BASE + '/payments'); await mgr.getByRole('tab', { name: /Receipts/ }).click();
+    await mgr.locator('tr', { hasText: 'E2E Payer' }).locator('.pill', { hasText: 'settled' }).waitFor(); });
   await step('the BDE is now refused that number', async () => { const c = (await api('POST', '/auth/login', { email: 'bde@e2e.test', password: PW })).cookie;
     const r = await api('POST', '/prospects/check', { items: [{ org: 'Padma Traders', phone: '9876509999' }], claim: true }, c); must(r.body.results[0].ok === false && r.body.results[0].kind === 'dnc', 'the Do Not Call number was not refused'); });
   await step('a lead import is shown first, confirmed, and can be undone', async () => { await mgr.goto(BASE + '/leads'); await mgr.getByRole('button', { name: 'Import from Excel' }).click();

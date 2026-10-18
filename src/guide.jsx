@@ -76,7 +76,8 @@ function about(k, me) {
       : top ? `Every client file uploaded: who it went to, who is working on it, and whether it is done.${ro}` : 'Client files given to you for your work. Mark them done when you have used them.';
     case 'bills': return top ? 'Bills the team paid for work – petrol, a courier, a client lunch. You are told the moment one comes in. Open it, check the photo, press Approve; pay it by scanning the person’s UPI QR code shown on the bill, then press “Mark paid”. A wrong bill can be rejected with the reason.'
       : 'Paid for something for work – petrol for a client visit, a courier, a client lunch? Add your UPI QR code once, then press “+ Submit a bill”, fill the form and take a photo of the bill. Management is told at once, approves it and pays it back to your QR code. You are told at each step.';
-    case 'money': return `Payments to collect, receipts and tax invoices. “Record payment” makes the receipt and updates the balance; overdue amounts are in red.${ro}`;
+    case 'money': return `Payments to collect and receipts. “Record payment” makes the receipt and updates the balance; overdue amounts are in red.${ro}`;
+    case 'invoices': return `Tax invoices. Start with “+ B2B invoice” for a GST-registered client (its GSTIN goes on the invoice) or “+ B2C invoice” for an unregistered buyer, or copy one from an accepted quotation. “Download for GSTR-1” gives your CA the list with each invoice’s type.${ro}`;
     case 'collab': return `The colleges and employers that work with Aali Conssultancy, with their contacts and terms.${ro}`;
     case 'messages': return `Ready-made WhatsApp messages. They open with one tap from a lead, a deal or a payment, with the names already filled in.${ro}`;
     case 'people': return top ? `Everyone in the group, team by team. Add a person, choose their access level, set a new password, or switch a login off. Nobody is ever erased: a removed person moves to the Staff register.${ro}`

@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS = {
     bank: 'Account name : AALI CONSSULTANCY\nBank : ICICI Bank\nAccount no. : \nIFSC : \nUPI : ',
     quoteTerms: '1. 50% advance to start work; balance on delivery.\n2. Hosting, domain and third-party fees are extra unless listed.\n3. GST as applicable.\n4. Timeline starts after advance and all content are received.\n5. Work outside this scope is quoted separately.',
     receiptTerms: '1. This receipt is valid subject to realisation of payment.\n2. All disputes are subject to Guntur jurisdiction.',
+    receiptIntro: 'Thank you for your payment. We have received your payment successfully.', receiptBank: '', stamp: '',
     quotePrefix: 'AC', receiptPrefix: 'ACY', invoicePrefix: 'AI', signName: '', signRole: '',
   },
   pipeline: [

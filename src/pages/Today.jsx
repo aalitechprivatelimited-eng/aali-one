@@ -60,7 +60,8 @@ function Hero({ slim, title }) {
   const rep = list('report').find((r) => r.owner === me.id && r.date === t), caller = me.team === 'sales' && level('leads') === 'own';
   const won = can('leads') ? list('deal').filter((d) => d.stage === 'won' && (d.wonAt || '').startsWith(month)).reduce((s, d) => s + (+d.value || 0), 0) : 0;
   const target = can('leads') ? list('target').filter((x) => x.month === month).reduce((s, x) => s + (+x.amount || 0), 0) : 0;
-  const next = !writes ? 'Here is how the group is doing today.' : !rep ? 'Your day has not started yet. Start it and add each task as you take it up.' : rep.status === 'submitted' ? 'Your report for today is submitted. Well done.' : 'Your day is running. Keep adding each task as you take it up.';
+  const late = new Date().getHours() >= 19;
+  const next = !writes ? 'Here is how the group is doing today.' : !rep ? 'Your day has not started yet. Start it and add each task as you take it up.' : rep.status !== 'submitted' && late ? 'It is past 7 pm: finish your day and submit it before you leave. A day not ended is closed by Aali One at midnight.' : rep.status === 'submitted' ? 'Your report for today is submitted. Well done.' : 'Your day is running. Keep adding each task as you take it up.';
   return <m.section className={'hero' + (slim ? ' slim' : '')} data-guide="hero" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, ease: EASE }}>
     <button type="button" className="btn sm guide-btn" data-guide="guide-btn" onClick={openGuide} title="A guided walk through every section your login can open"><Ico k="help" size={16} />Guide</button>
     <div><h1>{title || <>Good {hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, {me.display || me.name.split(' ')[0]}</>}</h1>

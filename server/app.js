@@ -2,9 +2,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, isOldHash, passwordProblem, fakeCheck, sessionKey, createSession, sessionUser, dropSession, sessionCookie, readCookie, publicUser, IDLE_MIN } from './auth.js';
-import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
+import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, daySweep, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP, TITLES } from '../shared/defaults.js';
 import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE, SOUND_PEOPLE } from '../shared/access.js';
+import { generatorConnected, previewImport, runImport } from './receiptimport.js';
 import { hrmConnected, hrmMonth, hrmPeople, hrmEmailOf, hrmEnv, hrmFind } from './hrm.js';
 import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE, REPORT_BUTTON, TEMPLATE_SAMPLES } from './whatsapp.js';
 // WhatsApp sending: in the background on the VPS; waited for on Vercel, which may stop a function once it has answered (server/whatsapp.js).
@@ -213,6 +214,15 @@ export async function handle(req, res) {
     const seeUser = (u) => { const p = publicUser(u); if (!(admin || isTop(user) || u.id === user.id)) p.upiQr = ''; return admin || isTop(user) || u.id === user.id || (isManager(user) && u.team === user.team) ? p : { ...p, email: '', phone: '', personalEmail: '', removedReason: '', removedBy: null }; };
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
+    // Copying the old Receipt generator (admin or the Operations Manager): GET says what would happen, POST copies (server/receiptimport.js).
+    if (path === '/imports/receipts') {
+      if (!(user.is_admin || user.title === 'ops')) throw new Rule('Only the Operations Manager or an admin can copy the Receipt generator.', 403);
+      if (!generatorConnected()) return send(res, 200, { connected: false });
+      try {
+        if (method === 'GET') return send(res, 200, { connected: true, preview: await previewImport(db) });
+        if (method === 'POST') return send(res, 200, { connected: true, report: await runImport(db, user) });
+      } catch (e) { if (e instanceof Rule) throw e; throw new Rule(String(e.message || e).slice(0, 200), 502); }
+    }
     // My notification sound (only the people in SOUND_PEOPLE): a sound file they uploaded, and how loud. Saved here, so every device plays it.
     if (path === '/me/sound') {
       if (!SOUND_PEOPLE.includes(user.id)) throw new Rule('A notification sound of your own is not switched on for your login.', 403);
@@ -229,7 +239,7 @@ export async function handle(req, res) {
       }
     }
     // Deadline reminders: the first request of the day sends them (a quick check on every other request).
-    if (path === '/bootstrap' || path === '/changes') { await deadlineSweep(db).catch((e) => console.error('deadline reminders', e.message)); await sendWa(db); } // WhatsApp messages still waiting
+    if (path === '/bootstrap' || path === '/changes') { await deadlineSweep(db).catch((e) => console.error('deadline reminders', e.message)); await daySweep(db).catch((e) => console.error('end of day', e.message)); await sendWa(db); } // WhatsApp messages still waiting
     if (path === '/bootstrap' && method === 'GET') {
       const [users, recs, settings, now] = await Promise.all([
         db.query('select * from users order by name'), db.query('select * from records where deleted_at is null'), allSettings(db, user), db.query('select now() as t')]);
@@ -542,7 +552,7 @@ export async function handle(req, res) {
       await setSetting(db, m[1], b.value);
       if (before) { // what changed in the business details; the bank / UPI / GST details printed on papers are written out and management is told
         const nv = b.value || {}, keys = [...new Set([...Object.keys(before), ...Object.keys(nv)])].filter((k) => JSON.stringify(before[k] ?? '') !== JSON.stringify(nv[k] ?? ''));
-        const money = keys.filter((k) => ['bank', 'upi', 'gstin', 'pan'].includes(k)), flat = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+        const money = keys.filter((k) => ['bank', 'upi', 'gstin', 'pan', 'receiptBank', 'stamp'].includes(k)), flat = (v) => (/^data:image\//.test(String(v ?? '')) ? '(a picture)' : String(v ?? '').replace(/\s+/g, ' ').trim());
         await audit(db, user, null, 'settings', `business: ${keys.join(', ') || 'no change'}${money.length ? ' – ' + money.map((k) => `${k}: "${flat(before[k])}" → "${flat(nv[k])}"`).join('; ') : ''}`.slice(0, 1500));
         if (money.length) for (const x of (await db.query("select id from users where active and removed_at is null and title in ('ops', 'cs', 'chairman') and id <> $1", [user.id])).rows)
           await notify(db, x.id, `${user.name} changed the company's ${money.join(', ')} that quotations, invoices and receipts show. Check it in Settings → Business details.`, '', '', user);

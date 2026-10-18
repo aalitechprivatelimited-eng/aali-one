@@ -38,6 +38,8 @@ export const ACCESS = {
   support:   { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all', bde: 'own', itmgr: 'all', itlead: 'all', dev: 'own' },
   assets:    { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all', bde: 'own', itmgr: 'team', itlead: 'own', dev: 'own' },
   money:     { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all' },
+  // Tax invoices, an app of their own since 18 Oct 2026 – the same people as payments and receipts.
+  invoices:  { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'all' },
   collab:    { chairman: 'all:view', ops: 'all', cs: 'all' },
   messages:  { chairman: 'all', ops: 'all', cs: 'all' },
   people:    { chairman: 'all:view', ops: 'all', cs: 'all', salesmgr: 'team', itmgr: 'team' },
@@ -51,7 +53,7 @@ export const SECTIONS = [
   ['today', 'Home', '/', ''], ['daily', 'Daily reports', '/daily', ''], ['tasks', 'Tasks', '/tasks', ''], ['bills', 'Bills', '/bills', ''], ['inbox', 'Notifications', '/inbox', ''], ['approvals', 'Approvals', '/approvals', ''],
   ['leads', 'Leads & enquiries', '/leads', 'Sales'], ['calls', 'Call register', '/calls', 'Sales'], ['deals', 'Deals pipeline', '/deals', 'Sales'], ['clients', 'Clients', '/clients', 'Sales'], ['quotes', 'Quotations', '/quotes', 'Sales'], ['agreements', 'Agreements', '/agreements', 'Sales'],
   ['projects', 'Projects', '/projects', 'Delivery'], ['support', 'Support', '/support', 'Delivery'], ['assets', 'Client assets', '/assets', 'Delivery'],
-  ['money', 'Payments & receipts', '/payments', 'Money'], ['payroll', 'Payroll', '/payroll', 'Money'], ['clientpay', 'Client payroll', '/client-payroll', 'Money'],
+  ['money', 'Payments & receipts', '/payments', 'Money'], ['invoices', 'Tax invoices', '/invoices', 'Money'], ['payroll', 'Payroll', '/payroll', 'Money'], ['clientpay', 'Client payroll', '/client-payroll', 'Money'],
   ['collab', 'Collaborations', '/collab', 'Management'], ['messages', 'WhatsApp messages', '/messages', 'Management'], ['people', 'People & teams', '/settings/people', 'Management'],
   ['calendar', 'Calendar', '/calendar', 'Overview'], ['reports', 'Reports', '/reports', 'Overview'], ['settings', 'Settings', '/settings', 'Account'],
 ];
@@ -100,7 +102,7 @@ export const canEdit = (u, section) => { const l = levelOf(u, section); return !
 export const canClose = (u) => !!u && u.title === 'ops';
 
 // Which section a kind of record belongs to.
-export const SECTION_OF = { lead: 'leads', deal: 'deals', client: 'clients', quote: 'quotes', invoice: 'money', receipt: 'money', payment: 'money',
+export const SECTION_OF = { lead: 'leads', deal: 'deals', client: 'clients', quote: 'quotes', invoice: 'invoices', receipt: 'money', payment: 'money',
   project: 'projects', ticket: 'support', collab: 'collab', prospect: 'calls', asset: 'assets', bill: 'bills', agreement: 'agreements',
   salary: 'payroll', payrun: 'payroll', loan: 'payroll', payee: 'payroll', pclient: 'payroll', pemp: 'payroll' };
 // Kinds of item that only the people of their section may know exist: not in the recycle bin, the audit log, the list of deleted

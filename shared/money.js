@@ -29,12 +29,14 @@ export function docTotals(q) {
 
 // Receipt: each line is either before GST, or a GST-inclusive round figure (incl) with tax divided out.
 export function receiptTotals(r) {
-  const rate = num(r.taxRate ?? 18), taxed = r.taxMode === 'intra' || r.taxMode === 'inter', f = 1 + rate / 100;
+  const rate = num(r.taxRate ?? 18), taxed = r.currency !== 'USD' && (r.taxMode === 'intra' || r.taxMode === 'inter'), f = 1 + rate / 100;
   const parts = (r.items || []).map((it) => {
     if (it.incl && taxed) { const gross = round2(num(it.amount)), taxable = round2(gross / f); return { taxable, tax: gross - taxable }; }
     const taxable = num(it.amount); return { taxable, tax: taxed ? taxable * rate / 100 : 0 };
   });
-  const subtotal = parts.reduce((a, p) => a + p.taxable, 0), tax = parts.reduce((a, p) => a + p.tax, 0);
+  let subtotal = parts.reduce((a, p) => a + p.taxable, 0), tax = parts.reduce((a, p) => a + p.tax, 0);
+  // A receipt copied from the Receipt generator keeps the figures it was printed with.
+  if (r.printed) { subtotal = num(r.printed.subtotal); tax = num(r.printed.tax); }
   const cgst = r.taxMode === 'intra' ? round2(tax / 2) : 0;
   const sgst = r.taxMode === 'intra' ? round2(round2(tax) - cgst) : 0;
   const igst = r.taxMode === 'inter' ? round2(tax) : 0;
@@ -46,7 +48,8 @@ const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'
 const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
 const two = (n) => n < 20 ? ONES[n] : TENS[Math.floor(n / 10)] + (n % 10 ? ' ' + ONES[n % 10] : '');
 const three = (n) => { const h = Math.floor(n / 100), r = n % 100; return (h ? ONES[h] + ' Hundred' + (r ? ' ' : '') : '') + (r ? two(r) : ''); };
-export function inWords(amount) {
+export function inWords(amount, currency = 'INR') {
+  if (currency === 'USD') return usdWords(amount);
   let n = Math.floor(Math.abs(amount)); const paise = Math.round((Math.abs(amount) - n) * 100);
   if (!n && !paise) return 'Rupees Zero Only';
   let out = '';
@@ -59,3 +62,13 @@ export function inWords(amount) {
 export const inr = (v) => '₹' + Math.round(num(v)).toLocaleString('en-IN');
 export const inr2 = (v) => '₹' + num(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const mobile10 = (m) => String(m || '').replace(/\D/g, '').slice(-10);
+
+// US dollars in words (receipts in USD): millions, thousands, cents.
+function usdWords(amount) {
+  let n = Math.floor(Math.abs(amount)); const cents = Math.round((Math.abs(amount) - n) * 100);
+  if (!n && !cents) return 'US Dollars Zero Only';
+  const m = Math.floor(n / 1e6); n %= 1e6; const th = Math.floor(n / 1e3); n %= 1e3;
+  let out = ''; if (m) out += three(m) + ' Million '; if (th) out += three(th) + ' Thousand '; if (n) out += three(n);
+  out = 'US Dollars ' + (out.trim() || 'Zero'); if (cents) out += ' and ' + two(cents) + ' Cents';
+  return out + ' Only';
+}
