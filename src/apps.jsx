@@ -22,7 +22,11 @@ export const APPS = [
 export const SEC = Object.fromEntries(SECTIONS.map(([k, label, to]) => [k, { label, to }]));
 export const secLabel = (k) => (k === 'people' && !isTop() ? 'My team members' : SEC[k].label);
 // The apps this person has, each with only the sections they may open.
-export const myApps = () => APPS.map((a) => ({ ...a, items: a.items.filter((k) => can(k)) })).filter((a) => a.items.length);
+export const myApps = () => APPS.map((a) => ({ ...a, all: a.items.length, items: a.items.filter((k) => can(k)) })).filter((a) => a.items.length);
+// What a card says the app is for: its own words when the person has all of it; otherwise only the pages they can open (18 Oct 2026 –
+// a BDE who has Bills but not Payments & receipts sees "Bills", not "Payments, receipts and bills").
+const words = (xs) => xs.map((x, i) => (i ? x.charAt(0).toLowerCase() + x.slice(1) : x)).join(', ').replace(/, ([^,]*)$/, ' and $1');
+export const aboutOf = (a) => (a.items.length < a.all ? words(a.items.map(secLabel)) : a.about);
 // Which app a page belongs to (none for the launcher and Settings). Delivery sign-off pages belong to Projects.
 const EXTRA = { projects: ['/signoff'] };
 // An app opens on the page this person last used in it (kept on this device only); the first time, on its first page.
@@ -41,8 +45,9 @@ export function AppLauncher() {
         <span className="tile-ico"><Ico k="today" size={24} /></span><span className="tile-body"><span className="tile-t">Overview</span><span className="tile-a">Today’s work: what is due, your numbers, what needs attention</span></span>
         {cnt.today ? <span className="cnt" title={`${cnt.today} late`}>{cnt.today}</span> : null}<span className="tile-go" aria-hidden="true">→</span></Link>
       {apps.map((a) => { const n = a.items.reduce((s, k) => s + (cnt[k] || 0), 0);
-      return <Link key={a.k} to={appStart(a)} className="tile" aria-label={`${a.name}: ${a.about}${n ? `, ${n} waiting` : ''}`}>
-        <span className="tile-ico"><Ico k={a.icon} size={24} /></span><span className="tile-body"><span className="tile-t">{a.name}</span><span className="tile-a">{a.about}</span>
-        <span className="tile-s">{a.items.map(secLabel).join(' · ')}</span></span>{n ? <span className="cnt" title={`${n} waiting`}>{n}</span> : null}<span className="tile-go" aria-hidden="true">→</span></Link>; })}</div>
+      const about = aboutOf(a), part = a.items.length < a.all;
+      return <Link key={a.k} to={appStart(a)} className="tile" aria-label={`${a.name}: ${about}${n ? `, ${n} waiting` : ''}`}>
+        <span className="tile-ico"><Ico k={a.icon} size={24} /></span><span className="tile-body"><span className="tile-t">{a.name}</span><span className="tile-a">{about}</span>
+        {!part && <span className="tile-s">{a.items.map(secLabel).join(' · ')}</span>}</span>{n ? <span className="cnt" title={`${n} waiting`}>{n}</span> : null}<span className="tile-go" aria-hidden="true">→</span></Link>; })}</div>
   </section>;
 }
