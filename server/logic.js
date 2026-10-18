@@ -152,10 +152,12 @@ function cleanReceipt(d) {
   for (const k of ['payerName', 'payerPhone', 'payerGstin', 'payerEmail', 'payerContact', 'mode', 'reference', 'against', 'forText']) if (k in d) d[k] = cut(d[k], 200);
   for (const k of ['payerAddress', 'description', 'intro', 'terms', 'bank']) if (k in d) d[k] = cut(d[k], 2000);
   let tot = receiptTotals(d);
-  if (d.paid !== undefined && d.paid !== '' && d.paid !== null) { d.balance = round2(Math.max(0, tot.total - num(d.paid))); tot = receiptTotals(d); }
+  if (d.paid === '' || d.paid === null) { d.balance = 0; tot = receiptTotals(d); } // the box emptied: paid in full
+  else if (d.paid !== undefined) { d.balance = round2(Math.max(0, tot.total - num(d.paid))); tot = receiptTotals(d); }
   delete d.paid;
   if (!RECEIPT_STATUS.includes(d.status)) d.status = tot.balance > 0 ? 'partial' : 'received';
   if (d.status === 'received' && tot.balance > 0) d.status = 'partial'; // a part payment never prints as settled
+  if (d.status === 'partial' && !(tot.balance > 0)) d.status = 'received'; // and nothing owing is not a part payment
   d.totals = tot;
 }
 
@@ -184,10 +186,11 @@ export async function beforeCreate(t, type, data, user, sample) {
     case 'receipt': {
       data.date ||= today(); const day = dayLabel(data.date), b = await brandSetting(t);
       data.seq = await counter(t, 'receipt:' + day); data.number = `${b.receiptPrefix || 'ACY'}-${day}/${String(data.seq).padStart(3, '0')}`;
+      delete data.printed; delete data.imported; // only the Receipt generator import sets these (server/receiptimport.js)
       data.fy = fyLabel(data.date); cleanReceipt(data);
       if (!(data.totals.total > 0)) throw new Rule('Enter the amount received.');
       // Record balance: this receipt brings in what an earlier one left owing. The number it prints is taken from that receipt here.
-      if (data.settlesId) { const s = await getRec(t, String(data.settlesId), 'receipt'); if (!s) throw new Rule('The receipt this one settles was not found.'); data.settlesId = s.id; data.settlesNo = s.data.number; }
+      if (data.settlesId) { const s = await getRec(t, String(data.settlesId), 'receipt'); if (!s) throw new Rule('The receipt this one settles was not found.'); data.settlesId = s.id; data.settlesNo = s.data.number; if (!data.paymentId && s.data.paymentId) data.paymentId = s.data.paymentId; }
       else { delete data.settlesId; delete data.settlesNo; }
       break;
     }
@@ -729,8 +732,9 @@ export async function deadlineSweep(db, force = false) {
 // Like the deadline reminders, this runs on the requests the open app makes anyway; one request does the work, however many arrive.
 const istHour = () => new Date(Date.now() + 5.5 * 3600e3).getUTCHours();
 const at8pm = (date) => new Date(Date.parse(date + 'T20:00:00+05:30')).toISOString();
+// Kept in counters, not settings: a settings change makes every open app fetch all settings again.
 async function claimOnce(db, key, day) {
-  return (await db.query('insert into settings (key, value) values ($1, $2) on conflict (key) do update set value = $2, updated_at = now() where settings.value <> $2::jsonb returning key', [key, JSON.stringify(day)])).rowCount > 0;
+  return (await db.query('insert into counters (key, n) values ($1, 1) on conflict (key) do nothing returning key', [`claim:${key}:${day}`])).rowCount > 0;
 }
 let remindedDay = '', closedDay = '';
 export async function daySweep(db, { force = false, hour = istHour() } = {}) {
@@ -743,7 +747,7 @@ export async function daySweep(db, { force = false, hour = istHour() } = {}) {
   if (force || closedDay !== day) { closedDay = day;
     if (force || await claimOnce(db, 'dayClose', day)) {
       const left = (await db.query("select id, data, sample from records where type = 'report' and deleted_at is null and data->>'date' < $1 and data->>'status' = 'open'", [day])).rows;
-      const forgot = new Map(); // manager → names
+      const forgot = new Map(), told = new Map(), week = addDays(day, -7); // manager → names; person → days; older days close quietly (the first run after the update)
       for (const r of left) {
         const d = r.data; if ((d.log || []).some((l) => /^Sent back/.test(l.text || ''))) continue;
         const stop = at8pm(d.date);
@@ -753,18 +757,22 @@ export async function daySweep(db, { force = false, hour = istHour() } = {}) {
         d.dayEnd = d.entries.map((e) => e.end || '').sort().pop() || stop;
         log(d, null, 'Closed by Aali One after midnight – the day was not ended' + (d.entries.some((e) => e.stoppedByAaliOne) ? '; the running task was stopped at 8 pm' : ''));
         await db.query('update records set data = $2, updated_at = now() where id = $1', [r.id, JSON.stringify(d)]); n++;
-        await notify(db, d.owner, `You did not end your day of ${inDate(d.date)}, so Aali One closed it after midnight${d.entries.some((e) => e.stoppedByAaliOne) ? ' and stopped the running task at 8 pm' : ''}. Ask your manager to send it back if it needs a change.`, 'report', r.id, null, r.sample);
+        if (d.date < week) continue;
+        if (!told.has(d.owner)) told.set(d.owner, { days: [], id: r.id, sample: r.sample }); told.get(d.owner).days.push(inDate(d.date));
         const who = (await db.query('select name from users where id = $1', [d.owner])).rows[0]?.name || 'Someone';
-        for (const m of await reportWatchers(db, d)) { if (!forgot.has(m)) forgot.set(m, { names: [], date: d.date, id: r.id, sample: r.sample }); forgot.get(m).names.push(who); }
+        for (const m of await reportWatchers(db, d)) { if (!forgot.has(m)) forgot.set(m, { names: new Set(), id: r.id, sample: r.sample }); forgot.get(m).names.add(who); }
       }
-      for (const [m, f] of forgot) await notify(db, m, `Forgot to end the day (${inDate(f.date)}): ${f.names.join(', ')}. Aali One closed ${f.names.length === 1 ? 'it' : 'them'} after midnight.`, 'report', f.id, null, f.sample);
+      for (const [owner, x] of told) await notify(db, owner, `You did not end your day (${x.days.join(', ')}), so Aali One closed it after midnight; a task left running was stopped at 8 pm. Ask your manager to send it back if it needs a change.`, 'report', x.id, null, x.sample);
+      for (const [m, f] of forgot) await notify(db, m, `Forgot to end the day: ${[...f.names].join(', ')}. Aali One closed it after midnight; you can send it back from Daily reports.`, 'report', f.id, null, f.sample);
     } }
   return n;
 }
 
 // A receipt settles its payment reminder; an advance unlocks the project.
+// Money that really arrived, in rupees: not a cheque still clearing, not a refund, not a receipt in dollars.
+const COUNTS = (r) => !['pending', 'refunded'].includes(r.status) && r.currency !== 'USD';
 async function applyReceipt(t, id, r, user) {
-  if (!r.paymentId) return;
+  if (!r.paymentId || !COUNTS(r)) return;
   const p = await getRec(t, r.paymentId, 'payment'); if (!p) return;
   const d = p.data, got = r.totals.received;
   d.receipts = [{ id, number: r.number, at: r.date, amount: got }, ...(d.receipts || [])];
@@ -840,10 +848,13 @@ export async function beforeUpdate(t, rec, next, user) {
     case 'receipt':
       if (next.date !== prev.date) throw new Rule(`The date is part of receipt number ${prev.number} and can't change. Delete it with a reason and make a new one.`);
       next.number = prev.number; next.seq = prev.seq;
-      for (const k of ['settlesId', 'settlesNo', 'imported']) if (k in prev) next[k] = prev[k]; else delete next[k];
+      for (const k of ['settlesId', 'settlesNo', 'imported', 'printed']) if (k in prev) next[k] = prev[k]; else delete next[k];
       // A receipt copied from the Receipt generator stays exactly as it was printed; only the client it belongs to can change (merging duplicates).
       if (prev.imported) { const clientId = next.clientId; for (const k of Object.keys(next)) delete next[k]; Object.assign(next, prev, { clientId }); break; }
-      cleanReceipt(next); break;
+      cleanReceipt(next);
+      // A cheque that has now cleared: the money reaches its payment reminder at this point (pending receipts did not count).
+      if (!COUNTS(prev) && COUNTS(next)) await applyReceipt(t, rec.id, next, user);
+      break;
     case 'signoff': throw new Rule('A signed certificate cannot be changed.');
     case 'agreement': {
       // Kept by the server: the kind, the number, the date in the number, who signed – and the history, which only Aali One writes.

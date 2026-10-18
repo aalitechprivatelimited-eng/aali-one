@@ -718,6 +718,22 @@ test('receipts work as the Receipt generator did: status, amount paid, a balance
   const u = (await mk({ currency: 'USD', taxMode: 'intra', items: [{ desc: 'Consulting', amount: 500 }] })).body.record; assert.equal(u.taxMode, 'none'); assert.equal(u.totals.tax, 0); assert.equal(u.totals.total, 500);
   const { inWords } = await import('../shared/money.js'); assert.equal(inWords(1250.5, 'USD'), 'US Dollars One Thousand Two Hundred Fifty and Fifty Cents Only');
   assert.equal((await mk({ status: 'refunded', items: [{ desc: 'Refund', amount: 1000 }] })).body.record.status, 'refunded');
+  // Review 18 Oct: figures from the browser are never trusted; an emptied "Amount paid" means paid in full.
+  const fake = (await mk({ items: [{ desc: 'Small job', amount: 100 }], printed: { subtotal: 100000, tax: 0, total: 100000 }, imported: { from: 'receipt-generator', id: 'x' } })).body.record;
+  assert.equal(fake.totals.total, 118); assert.equal(fake.printed, undefined); assert.equal(fake.imported, undefined);
+  const part = (await mk({ items: [{ desc: 'Job', amount: 1000 }], paid: 500 })).body.record; assert.equal(part.totals.balance, 680);
+  const full = await call('PATCH', '/records/' + part.id, { data: { ...part, paid: '' } }, O); assert.equal(full.body.record.totals.balance, 0); assert.equal(full.body.record.status, 'received');
+  // A balance receipt brings its money to the payment reminder too; a cheque still clearing does not count until it clears.
+  const pay = await call('POST', '/records', { type: 'payment', data: { title: 'Website', amount: 2000, due: '2026-06-01', kind: 'other' } }, O);
+  const first = (await mk({ paymentId: pay.body.record.id, taxMode: 'none', items: [{ desc: 'Website', amount: 2000 }], paid: 1200 })).body.record;
+  const bal = (await mk({ taxMode: 'none', items: [{ desc: 'Balance', amount: 800 }], settlesId: first.id })).body.record; assert.equal(bal.paymentId, pay.body.record.id);
+  const paid = async () => (await db.query('select data from records where id = $1', [pay.body.record.id])).rows[0].data;
+  assert.equal((await paid()).status, 'paid', 'both receipts together paid it');
+  const pay2 = await call('POST', '/records', { type: 'payment', data: { title: 'Renewal', amount: 500, due: '2026-06-01', kind: 'other' } }, O);
+  const chq = (await mk({ paymentId: pay2.body.record.id, taxMode: 'none', status: 'pending', mode: 'Cheque', items: [{ desc: 'Renewal', amount: 500 }] })).body.record;
+  const p2 = async () => (await db.query('select data from records where id = $1', [pay2.body.record.id])).rows[0].data;
+  assert.equal(+((await p2()).paid || 0), 0, 'a cheque still clearing is not money received');
+  await call('PATCH', '/records/' + chq.id, { data: { ...chq, status: 'received', paid: '' } }, O); assert.equal((await p2()).status, 'paid', 'it counts once it clears');
 });
 
 test('Receipt generator import: numbers and printed figures kept, counters raised, balance links, deleted kept deleted, raw backup, safe to repeat', async () => {

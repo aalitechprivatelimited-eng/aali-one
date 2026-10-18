@@ -1,7 +1,7 @@
 // Aali Invoices (the user, 18 Oct 2026): tax invoices are their own app, apart from payments and receipts. The kind is chosen before an
 // invoice is started – "+ B2B invoice" or "+ B2C invoice" – instead of being switched inside the maker.
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { useStore, list, get, create, update } from '../api.js';
 import { settings, fmtDate, today, addDays, inr, canMoney, canEdit, csvCell } from '../lib.js';
 import { fyLabel } from '../../shared/money.js';
@@ -15,10 +15,10 @@ export const gstrType = (r) => (kindOf(r) === 'b2b' ? 'B2B' : r.taxMode === 'int
 const KIND = { b2b: 'B2B', b2c: 'B2C' };
 
 export default function Invoices() {
-  useStore(); const id = useParams()['*']?.split('/')[0] || '';
+  useStore(); const id = useParams()['*']?.split('/')[0] || '', { search } = useLocation();
   if (!canMoney()) return <Empty>Tax invoices are handled by the Sales Manager and management.</Empty>;
   if (id === 'new' && !canEdit('invoices')) return <Empty>Your access to tax invoices is view only. <Link to="/invoices">Back</Link></Empty>;
-  if (id) return <InvoiceEditor key={id} id={id === 'new' ? null : id} />;
+  if (id) return <InvoiceEditor key={id + search} id={id === 'new' ? null : id} />; // a new search (copy from quotation, other kind) starts a fresh maker
   return <Register />;
 }
 

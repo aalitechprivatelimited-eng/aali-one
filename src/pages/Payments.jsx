@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Link, Navigate, useNavigate, useSearchParams, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { useStore, list, get, create, update, store, http, poll } from '../api.js';
 import { settings, uname, fmtDate, today, addDays, inr, clientName, diff, canMoney, canEdit, csvCell } from '../lib.js';
 import { receiptTotals } from '../../shared/money.js';
@@ -7,11 +7,11 @@ import { Modal, Field, In, Sel, Pick, Area, Pill, Due, Empty, Sample, DeleteButt
 import { ReceiptSheet } from '../doc.jsx';
 
 export default function Payments() {
-  useStore(); const p = useParams()['*'] || '', [kind, id] = p.split('/');
+  useStore(); const p = useParams()['*'] || '', [kind, id] = p.split('/'), { search } = useLocation();
   if (!canMoney()) return <Empty>Quotations, receipts and payments are handled by the Sales Manager and management.</Empty>;
   if (id === 'new' && !canEdit('money')) return <Empty>Your access to payments is view only. <Link to="/payments">Back</Link></Empty>;
   if (kind === 'receipt' && id) return <ReceiptEditor id={id === 'new' ? null : id} />;
-  if (kind === 'invoice') return <Navigate to={'/invoices/' + (id || '')} replace />; // tax invoices moved to Aali Invoices (18 Oct 2026)
+  if (kind === 'invoice') return <Navigate to={'/invoices/' + (id || '') + search} replace />; // tax invoices moved to Aali Invoices (18 Oct 2026)
   return <Home />;
 }
 
@@ -25,7 +25,7 @@ function Home() {
   const bal = (p) => Math.max(0, (+p.amount || 0) - (+p.paid || 0));
   const groups = [['Overdue', open.filter((p) => p.due < t)], ['Rest of this month', open.filter((p) => p.due >= t && p.due.slice(0, 7) === month)], ['Later', open.filter((p) => p.due.slice(0, 7) > month)]];
   const receipts = list('receipt').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
-  const gotMonth = receipts.filter((r) => r.date.slice(0, 7) === month).reduce((s, r) => s + (r.totals?.received || 0), 0);
+  const gotMonth = receipts.filter((r) => r.date.slice(0, 7) === month && r.currency !== 'USD' && !['pending', 'refunded'].includes(r.status)).reduce((s, r) => s + (r.totals?.received || 0), 0);
   return <>
     <div className="topbar"><h1>Payments & receipts <ViewOnly when={!edit} /></h1>{edit && <div className="row"><button className="btn" type="button" onClick={() => setAdd(true)}>+ Payment to collect</button><Link className="btn primary" to="/payments/receipt/new">+ Receipt</Link></div>}</div>
     <div className="stats">
@@ -109,13 +109,13 @@ function ReceiptRegister() {
   const stOf = (r) => r.status || (r.totals?.balance > 0 ? 'partial' : 'received');
   const rows = all.filter((r) => (!st || stOf(r) === st) && (!fy || r.fy === fy)
     && (!text || `${r.number} ${r.payerName} ${r.forText || ''} ${r.description || ''} ${(r.items || []).map((x) => x.desc).join(' ')} ${r.reference || ''}`.toLowerCase().includes(text)));
-  const inrRows = rows.filter((r) => r.currency !== 'USD'), sum = (f) => inrRows.reduce((s, r) => s + (f(r) || 0), 0);
+  const inrRows = rows.filter((r) => r.currency !== 'USD'), sum = (f) => inrRows.reduce((s, r) => s + (f(r) || 0), 0), arrived = (r) => !['pending', 'refunded'].includes(r.status);
   const money = (r, n) => (r.currency === 'USD' ? usdFmt(n) : inr(n)), out = sum((r) => owing(r, settled));
   return <div className="stack">
     <div className="stats">
       <div className="stat"><span className="l">Receipts</span><span className="v">{rows.length}</span></div>
-      <div className="stat"><span className="l">Total amount</span><span className="v">{inr(sum((r) => r.totals?.total))}</span></div>
-      <div className="stat"><span className="l">Cash received</span><span className="v">{inr(sum((r) => r.totals?.received))}</span></div>
+      <div className="stat"><span className="l">Total amount</span><span className="v">{inr(sum((r) => !r.settlesId && r.status !== 'refunded' && r.totals?.total))}</span><span className="small muted">balance receipts not counted twice</span></div>
+      <div className="stat"><span className="l">Cash received</span><span className="v">{inr(sum((r) => arrived(r) && r.totals?.received))}</span></div>
       <div className={'stat' + (out ? ' warm' : '')}><span className="l">Still outstanding</span><span className="v">{inr(out)}</span></div>
     </div>
     {imp && <ImportGenerator onClose={() => setImp(false)} />}
@@ -140,9 +140,9 @@ function ReceiptEditor({ id }) {
     const fresh = { date: today(), status: 'received', currency: 'INR', taxMode: 'intra', taxRate: 18, mode: 'UPI', reference: '', against: '', forText: '', description: '', payerEmail: '', payerContact: '', paid: '',
       intro: b.receiptIntro || 'Thank you for your payment. We have received your payment successfully.', terms: b.receiptTerms || '', bank: b.receiptBank || b.bank || '' };
     const s = get(sp.get('settles')), c0 = get(sp.get('copy'));
-    if (s) return { ...fresh, settlesId: s.id, clientId: s.clientId || '', payerName: s.payerName, payerPhone: s.payerPhone || '', payerAddress: s.payerAddress || '', payerGstin: s.payerGstin || '', payerEmail: s.payerEmail || '', payerContact: s.payerContact || '',
+    if (s) return { ...fresh, settlesId: s.id, paymentId: s.paymentId || '', clientId: s.clientId || '', payerName: s.payerName, payerPhone: s.payerPhone || '', payerAddress: s.payerAddress || '', payerGstin: s.payerGstin || '', payerEmail: s.payerEmail || '', payerContact: s.payerContact || '',
       taxMode: s.taxMode, taxRate: s.taxRate, currency: s.currency || 'INR', items: [{ desc: `Balance against receipt ${s.number}`, note: '', amount: owing(s, settled), incl: true }] };
-    if (c0) { const c = { ...c0 }; ['id', 'type', 'number', 'seq', 'fy', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample', 'settlesId', 'settlesNo', 'imported', 'balance', 'status', 'reference', 'paymentId'].forEach((k) => delete c[k]); return { ...fresh, ...c, date: today(), status: 'received', paid: '' }; }
+    if (c0) { const c = { ...c0 }; ['id', 'type', 'number', 'seq', 'fy', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample', 'settlesId', 'settlesNo', 'imported', 'printed', 'notes', 'preparedBy', 'receivedBy', 'balance', 'status', 'reference', 'paymentId'].forEach((k) => delete c[k]); return { ...fresh, ...c, date: today(), status: 'received', paid: '' }; }
     const p = get(sp.get('payment')), cl = p && get(p.clientId), d = p && get(p.dealId), bal = p ? Math.max(0, (+p.amount || 0) - (+p.paid || 0)) : 0;
     return { ...fresh, paymentId: p?.id || '', clientId: p?.clientId || '', dealId: p?.dealId || '', payerName: cl?.name || d?.contactName || '', payerPhone: cl?.phone || d?.phone || '', payerAddress: cl?.address || '', payerGstin: cl?.gstin || '',
       items: [{ desc: p ? p.title + (d ? ' – ' + d.title : '') : '', note: '', amount: bal || '', incl: true }], against: d?.quoteNo || '' };
@@ -160,7 +160,7 @@ function ReceiptEditor({ id }) {
   const left = saved ? owing(saved, settled) : 0, cur = (n) => (usd ? usdFmt(n) : inr(n));
   async function save() {
     const data = { ...r, items: r.items.map((x) => ({ ...x, amount: +x.amount || 0 })), paid: r.paid === '' || r.paid == null ? '' : +r.paid };
-    ['id', 'type', 'number', 'seq', 'fy', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample', 'balance', 'settlesNo', 'imported'].forEach((k) => delete data[k]);
+    ['id', 'type', 'number', 'seq', 'fy', 'totals', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'sample', 'balance', 'settlesNo', 'imported', 'printed'].forEach((k) => delete data[k]);
     const res = saved ? await attempt(() => update(id, data), 'Saved.') : await attempt(() => create('receipt', data));
     if (!res) return; const rec = saved ? res : res.record; setR({ ...rec, paid: r2(rec.totals.total - rec.totals.balance) });
     if (!saved) { toast(`Receipt ${rec.number} saved. ${r.paymentId ? 'The payment balance was updated.' : ''}`); nav('/payments/receipt/' + rec.id, { replace: true }); }
@@ -245,6 +245,7 @@ function ImportGenerator({ onClose }) {
         <div className="stats"><div className="stat"><span className="l">In the generator</span><span className="v">{p.total}</span></div><div className="stat"><span className="l">New to copy</span><span className="v">{p.fresh}</span></div>
           <div className="stat"><span className="l">Already here</span><span className="v">{p.already}</span></div><div className="stat"><span className="l">Deleted there</span><span className="v">{p.deleted}</span><span className="small muted">copied as deleted</span></div></div>
         <p className="small muted" style={{ margin: 0 }}>From {p.first ? fmtDate(p.first) : '—'} to {p.last ? fmtDate(p.last) : '—'}. Each receipt keeps its own number and printed figures and cannot be changed here. Numbers already in Aali One are skipped, so this can be run again safely. A full copy of the generator's data is saved first.</p>
+        {p.clash?.length > 0 && <div className="banner">{p.clash.length} receipt number{p.clash.length === 1 ? '' : 's'} in the generator {p.clash.length === 1 ? 'is' : 'are'} already used by a different receipt made in Aali One: {p.clash.slice(0, 12).join(', ')}{p.clash.length > 12 ? '…' : ''}. {p.clash.length === 1 ? 'It' : 'They'} will not be copied (kept in the backup file) – check {p.clash.length === 1 ? 'it' : 'them'} with your CA.</div>}
         {p.lastNumbers?.length > 0 && <p className="small" style={{ margin: 0 }}>Last numbers: {p.lastNumbers.map((x) => x.number).join(', ')}</p>}</div>}
   </Modal>;
 }

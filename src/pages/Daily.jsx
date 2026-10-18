@@ -655,7 +655,7 @@ export function ReportView({ r, me, inTeam }) {
       <input className="in grow" style={{ minWidth: 180 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Write a remark for them (optional)" maxLength={500} />
       <button className="btn sm" type="button" disabled={!note.trim()} onClick={() => act({ _remark: note }, 'Remark sent.')}>Send remark</button>
       {sub && !r.reviewed && isManager(me) && <button className="btn primary sm" type="button" onClick={() => act({ _reviewed: true, ...(note.trim() ? { _remark: note } : {}) }, 'Marked as reviewed.')}>Mark reviewed</button>}
-      {sub && canRun(me, r) && <button className="btn sm" type="button" disabled={!note.trim()} title="Write what must change in the remark box first" onClick={() => act({ status: 'open', _remark: note }, 'Sent back to be corrected.')}>Send back</button>}
+      {(sub || r.status === 'closed') && canRun(me, r) && <button className="btn sm" type="button" disabled={!note.trim()} title="Write what must change in the remark box first" onClick={() => act({ status: 'open', _remark: note }, 'Sent back to be corrected.')}>Send back</button>}
       {canRun(me, r) && <DeleteButton id={r.id} label="Delete" />}</div>}
   </>;
 }

@@ -261,7 +261,7 @@ function Business() {
 function Stamp({ value, onChange }) {
   async function pick(e) { const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     if (!/^image\/(png|jpeg|webp)$/.test(f.type)) return toast('Choose a PNG or JPG picture of the stamp.', true);
-    if (f.size > 400_000) return toast('That picture is too large (max 400 KB). Crop it to the stamp.', true);
+    if (f.size > 200_000) return toast('That picture is too large (max 200 KB). Crop it to the stamp.', true);
     onChange(await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(f); })); }
   return <div className="row" style={{ gap: 14 }}>{value ? <img src={value} alt="Company stamp" style={{ height: 80, maxWidth: 160, objectFit: 'contain', background: '#fff', borderRadius: 8, border: '1px solid var(--line)' }} /> : null}
     <div className="stack gap4"><b>Company stamp</b><span className="small muted">A scan of the real stamp (PNG with a clear background is best). Printed on receipts. Press Save after choosing it.</span>
