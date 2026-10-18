@@ -35,7 +35,7 @@ export function ReceiptLedger({ rows, owing }) {
           <tbody>{xs.map((r) => { const st = r.status || (r.totals?.balance > 0 ? 'partial' : 'received'), usd = r.currency === 'USD', o = owing(r);
             const what = r.forText || (r.items || []).map((x) => x.desc).filter(Boolean).join(', ');
             return <tr key={r.id} className={'ink st-' + st} tabIndex={0} onClick={() => nav('/payments/receipt/' + r.id)} onKeyDown={(e) => e.key === 'Enter' && nav('/payments/receipt/' + r.id)}>
-              <td className="d">{day(r.date)}</td><td className="no">{r.number}</td>
+              <td className="d">{day(r.date)}</td><td className="no">{r.number}{r.numberClash && <span className="stamp red" title="Two receipts carry this number">twice</span>}</td>
               <td><span className="who">{r.payerName}</span>{what && <span className="for"> – {what}</span>}{r.settlesNo && <span className="for"> (against {r.settlesNo})</span>}
                 {st === 'partial' && <span className="stamp">Part paid</span>}{st === 'pending' && <span className="pencil">awaiting clearance</span>}{st === 'refunded' && <span className="stamp red">Refunded</span>}</td>
               <td className="md">{r.mode}</td><td className="n">{amt(r.totals?.received, usd)}</td><td className="n">{o ? amt(o, usd) : (r.totals?.balance > 0 ? <span className="settled">settled</span> : '')}</td></tr>; })}</tbody>

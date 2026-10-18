@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Link, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useStore, store, http, saveSetting, setMe, upsertUser, poll, upload } from '../api.js';
-import { settings, isTop, TEAMS, uname, fmtDT, fmtDate, today, addDays, parse, waLink, myJuniors, canAddPeople, COMPANIES, GROUP, desig } from '../lib.js';
-import { SECTIONS, ROLES, ROLE_NAME, ADMIN_TITLES, levelOf, levelText, HR_TITLE } from '../../shared/access.js';
-import { Field, In, Sel, Seg, Area, Pill, Empty, Modal, Avatar, attempt, toast } from '../ui.jsx';
+import { settings, isTop, TEAMS, uname, fmtDT, fmtDate, today, addDays, parse, waLink, myJuniors, canAddPeople, COMPANIES, GROUP, desig, activeUsers, user } from '../lib.js';
+import { SECTIONS, ROLES, ROLE_NAME, ADMIN_TITLES, levelOf, levelText, HR_TITLE, isAccessManager, roleLevel } from '../../shared/access.js';
+import { Field, In, Sel, Seg, Area, Pill, Empty, Modal, Avatar, attempt, toast, PersonSearch } from '../ui.jsx';
 import { TITLE_TEAM } from '../../shared/defaults.js';
 import { ThemeToggle } from '../theme.jsx';
 import { displayOk, displayChoices } from '../../shared/names.js';
@@ -48,7 +48,7 @@ function Me() {
   async function pick(e) { const file = e.target.files[0]; e.target.value = ''; if (!file) return; setBusy(true);
     await attempt(async () => { const up = await upload(await squarePhoto(file)); setMe((await http('PATCH', '/users/' + me.id, { photo: up.id })).user); }, 'Photo saved. Everyone sees it now.'); setBusy(false); }
   // Left: what I can change. Right: what I can only read, so a wide screen is used and the page is short.
-  return <div className="profile-cols"><div className="card stack"><h2>My profile</h2>
+  return <div className="profile-cols"><div className="card stack"><h2>My profile{isAccessManager(me) && <> <Pill k="gold">Accounts & permissions manager</Pill></>}</h2>
     <div className="row" style={{ gap: 14 }}>{me.photo ? <img className="photo-big" src={'/api/files/' + me.photo} alt="My photo" /> : <span className="photo-big" aria-hidden="true">{(full || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>}
       <div className="stack gap4"><b>My photo</b><span className="small muted">Shown beside your name everywhere, instead of your initials.</span>
         <div className="row"><label className="btn sm primary" style={{ cursor: 'pointer' }}>{busy ? 'Saving…' : me.photo ? 'Change photo' : 'Add my photo'}<input type="file" accept="image/*" hidden disabled={busy} onChange={pick} /></label>
@@ -78,9 +78,40 @@ function Me() {
 }
 
 // The whole access table on one screen: every section against every role.
+// One person's access, section by section – only for the accounts & permissions manager (the user, 18 Oct 2026). Untouched sections follow
+// the person's role; a level chosen here wins over it. The server enforces it on the person's next request and tells them what changed.
+const LEVEL_OPTS = [['all', 'Full'], ['all:view', 'View only'], ['team', 'Own team'], ['own', 'Own only'], ['own:view', 'Own, view only'], ['', 'No access']];
+const levelWord = (l) => (LEVEL_OPTS.find((x) => x[0] === l) || [l, l])[1];
+function PersonAccess() {
+  const me = store.me, [who, setWho] = useState(''), u = who ? user(who) : null, [draft, setDraft] = useState({}), [busy, setBusy] = useState(false);
+  useEffect(() => { setDraft({ ...(u?.access || {}) }); }, [who, JSON.stringify(u?.access || {})]); // eslint-disable-line react-hooks/exhaustive-deps
+  const changedPeople = activeUsers().filter((x) => x.id !== me.id && x.access && Object.keys(x.access).length);
+  const diff = u ? SECTIONS.map(([k]) => k).filter((k) => (u.access || {})[k] !== draft[k]) : [];
+  async function save() {
+    const body = Object.fromEntries(diff.map((k) => [k, k in draft ? draft[k] : null]));
+    setBusy(true); const r = await attempt(() => http('PUT', `/users/${u.id}/access`, { access: body }), `Saved. ${u.name.split(' ')[0]} sees the change at once.`); setBusy(false);
+    if (r) upsertUser(r.user);
+  }
+  return <div className="card stack"><div className="row between"><h3 style={{ margin: 0 }}>Set one person's access</h3><Pill k="gold">Only you can change this</Pill></div>
+    <p className="small muted" style={{ margin: 0 }}>Pick a person. Every section shows what their role gives them; choose another level to change it for this person only. “No access” hides the section from their menu and the server refuses its data.</p>
+    <div className="row"><PersonSearch value={who} onChange={setWho} filter={(x) => x.id !== me.id} blank="Choose a person" />
+      {changedPeople.length > 0 && <span className="small muted">Changed for: {changedPeople.map((x) => <button key={x.id} type="button" className="btn ghost sm" onClick={() => setWho(x.id)}>{x.name} ({Object.keys(x.access).length})</button>)}</span>}</div>
+    {u && <><div className="tbl"><table><thead><tr><th>Section</th><th>Their role gives</th><th>For {u.name.split(' ')[0]}</th></tr></thead><tbody>
+      {SECTIONS.map(([k, label]) => { const role = roleLevel(u, k), set = k in draft;
+        return <tr key={k} className={(u.access || {})[k] !== draft[k] ? 'acc-changed' : set ? 'acc-own' : ''}><td><b>{label}</b></td><td className="muted">{levelWord(role)}</td>
+          <td><Sel value={set ? draft[k] : '__role'} onChange={(v) => { const n = { ...draft }; if (v === '__role') delete n[k]; else n[k] = v; setDraft(n); }} aria-label={`${label} for ${u.name}`}
+            options={[['__role', `As their role (${levelWord(role)})`], ...LEVEL_OPTS]} style={{ width: 'auto' }} /></td></tr>; })}</tbody></table></div>
+      <div className="row"><span className="small muted grow">{diff.length ? `${diff.length} change${diff.length === 1 ? '' : 's'} not saved yet.` : 'No changes.'}</span>
+        <button className="btn" type="button" disabled={!diff.length || busy} onClick={() => setDraft({ ...(u.access || {}) })}>Undo</button>
+        <button className="btn primary" type="button" disabled={!diff.length || busy} onClick={save}>{busy ? 'Saving…' : 'Save access'}</button></div></>}
+  </div>;
+}
+
 function AccessChart() {
   const tone = (l) => (!l ? '' : l.endsWith(':view') ? 'info' : l === 'all' ? 'ok' : 'gold');
   return <div className="stack">
+    {isAccessManager(store.me) && <PersonAccess />}
+    {!isAccessManager(store.me) && <div className="banner info">Who can see what is decided by Nikhil, the accounts & permissions manager. Ask him for a change.</div>}
     <p className="small muted" style={{ margin: 0 }}>This is the rule the whole system follows. A section marked “No access” does not appear in that person’s sidebar, its data is never sent to their screen, and the server refuses it even with a typed link.</p>
     <div className="row small"><Pill k="ok">Full</Pill><span className="muted">sees and changes everything</span><Pill k="gold">Own team / Own only</Pill><span className="muted">limited to their department or to what is theirs</span><Pill k="info">View only</Pill><span className="muted">can look, cannot change</span></div>
     <div className="tbl"><table className="chart"><thead><tr><th>Section</th>{ROLES.map((r) => <th key={r}>{ROLE_NAME[r]}</th>)}</tr></thead><tbody>
@@ -129,7 +160,7 @@ function RolePicker({ roles, value, onChange }) {
 // People are added here, team by team. Nothing needs to be done in the database.
 function People() {
   const [add, setAdd] = useState(null), [pw, setPw] = useState(null), [made, setMade] = useState(null), [busy, setBusy] = useState(false), [edit, setEdit] = useState(null);
-  const me = store.me, adm = me.isAdmin, jun = myJuniors(), can = (u) => adm || (u.id !== me.id && jun.includes(u.title) && !u.isAdmin);
+  const me = store.me, adm = me.isAdmin, mgr = isAccessManager(me), jun = myJuniors(), can = (u) => adm || (u.id !== me.id && jun.includes(u.title) && !u.isAdmin);
   if (!canAddPeople() && !isTop()) return <Empty>Only management or a department manager can open this page.</Empty>;
   const patch = (u, data, ok) => attempt(async () => upsertUser((await http('PATCH', '/users/' + u.id, data)).user), ok);
   const rolesFor = (team) => (adm ? TEAM_ROLES[team] : jun);
@@ -154,7 +185,7 @@ function People() {
     if (r) { upsertUser(r.user); setMade({ ...r.user, password: add.password }); setAdd(null); }
   }
   async function saveEdit() {
-    setBusy(true); const ok = await patch(edit.u, { title: edit.title, company: edit.company, designation: edit.designation, firstName: edit.firstName, surname: edit.surname, ...(adm && edit.u.id !== me.id ? { isAdmin: edit.isAdmin } : {}) }, 'Access changed.'); setBusy(false); if (ok) setEdit(null);
+    setBusy(true); const ok = await patch(edit.u, { ...(mgr ? { title: edit.title } : {}), company: edit.company, designation: edit.designation, firstName: edit.firstName, surname: edit.surname, ...(mgr && edit.u.id !== me.id ? { isAdmin: edit.isAdmin } : {}) }, 'Saved.'); setBusy(false); if (ok) setEdit(null);
   }
   const loginText = (u) => `Hi ${u.name.split(' ')[0]}, your Aali One login:\n${location.origin}\nEmail: ${u.email}\nPassword: ${u.password}\nPlease change the password after you sign in (Settings → My profile).`;
   return <div className="stack gap16">
@@ -201,9 +232,10 @@ function People() {
         <Field label="Surname"><In value={edit.surname} maxLength={60} onChange={(e) => setEdit({ ...edit, surname: e.target.value })} /></Field></div>
         <Field label="Designation" hint="Leave empty to show the access level's name."><In value={edit.designation} maxLength={80} autoComplete="off" onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
         <div><span className="lbl">Company</span><CompanyPicker team={TITLE_TEAM[edit.title]} value={edit.company} onChange={(v) => setEdit({ ...edit, company: v })} /></div>
-        {(adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">Access level · {TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)}
+        {mgr ? (adm ? Object.keys(TEAMS) : [edit.u.team]).map((t) => <div key={t}><span className="lbl">Access level · {TEAMS[t]} team</span><RolePicker roles={rolesFor(t)} value={edit.title} onChange={(v) => setEdit({ ...edit, title: v })} /></div>)
+          : <div className="banner info">Role: <b>{ROLE_NAME[edit.u.title] || edit.u.title}</b>. Only Nikhil, the accounts & permissions manager, changes a person's role, admin switch or access.</div>}
         {TITLE_TEAM[edit.title] !== edit.u.team && <div className="banner">This moves {edit.u.name.split(' ')[0]} from the {TEAMS[edit.u.team]} team to the {TEAMS[TITLE_TEAM[edit.title]]} team.</div>}
-        {adm && <label className="check"><input type="checkbox" checked={!!edit.isAdmin || ADMIN_TITLES.includes(edit.title)} disabled={edit.u.id === me.id || ADMIN_TITLES.includes(edit.title)} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{ADMIN_TITLES.includes(edit.title) ? <span className="small muted"> (the Operations Manager and Company Secretary are always admins)</span> : edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}
+        {mgr && <label className="check"><input type="checkbox" checked={!!edit.isAdmin || ADMIN_TITLES.includes(edit.title)} disabled={edit.u.id === me.id || ADMIN_TITLES.includes(edit.title)} onChange={(e) => setEdit({ ...edit, isAdmin: e.target.checked })} /> <span><b>Admin</b>{ADMIN_TITLES.includes(edit.title) ? <span className="small muted"> (the Operations Manager and Company Secretary are always admins)</span> : edit.u.id === me.id && <span className="small muted"> (you cannot remove your own admin right)</span>}<br /><span className="small muted">{ADMIN_ACCESS}</span></span></label>}
         <PersonalEmail u={edit.u} busy={busy} save={async (v) => { if (await patch(edit.u, { personalEmail: v }, 'Personal email saved.')) setEdit({ ...edit, u: { ...edit.u, personalEmail: v } }); }} />
         {adm && edit.u.id !== me.id && (edit.u.title === HR_TITLE || edit.u.hr) && <div className="row" style={{ alignItems: 'center' }}><span className="grow"><b>HR & payroll</b> <Pill k={edit.u.hr ? 'ok' : ''}>{edit.u.hr ? 'On' : 'Off'}</Pill><br /><span className="small muted">Enters salaries, loans and advances, and makes the monthly payroll. The Operations Manager reviews payroll; nobody else sees it.</span></span>
           {edit.u.hr ? <button className="btn sm" type="button" disabled={busy} onClick={async () => { if (await patch(edit.u, { hr: false }, `${edit.u.name} no longer has payroll.`)) setEdit({ ...edit, u: { ...edit.u, hr: false } }); }}>Switch off</button>

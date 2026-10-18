@@ -802,3 +802,7 @@ input.in.live{background:var(--gold-50);color:var(--ink-soft)}
 @media print{.ledger{box-shadow:none;background:#fff}.ledger::after{display:none}}
 
 .ledger-table td.n{font-family:inherit}.ledger-table tr.ink td.n{font-size:20px;letter-spacing:.01em}
+/* the access editor: a row changed but not saved yet, and a row set for this person */
+tr.acc-changed td{background:color-mix(in srgb,var(--warn-bg) 70%,transparent)!important}
+tr.acc-own td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
+

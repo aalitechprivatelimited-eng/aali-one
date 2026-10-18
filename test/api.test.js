@@ -774,8 +774,16 @@ test('Receipt generator import: numbers and printed figures kept, counters raise
     // The raw backup holds every source row.
     const f = await call('GET', '/files/' + rep.backup.id, null, O); assert.equal(f.status, 200);
     assert.equal(f.body.receipts.length, 4); assert.equal(f.body.business.default_bank.startsWith('Account name'), true);
+    // A generator receipt whose number Aali One also used (both number by the day) is copied too, marked, and linked to what it settles.
+    rows.push({ ...base, id: 'g5', receipt_no: next.body.record.number, seq: 3, payment_date: '2026-03-15', items: [{ desc: 'Balance', amount: 5000 }], subtotal: 5000, tax_amount: 0, total: 5000, balance: 0, tax_mode: 'none', settles_id: 'g2', settles_no: 'ACY-150326/002' });
+    const pv2 = (await call('GET', '/imports/receipts', null, O)).body.preview; assert.deepEqual(pv2.clash, [next.body.record.number]); assert.equal(pv2.fresh, 1);
+    const rep2 = (await call('POST', '/imports/receipts', null, O)).body.report; assert.equal(rep2.copied, 1); assert.deepEqual(rep2.clashes, [next.body.record.number]);
+    const cl = (await db.query("select data from records where type = 'receipt' and data->'imported'->>'id' = 'g5'")).rows[0].data;
+    assert.equal(cl.numberClash, true); assert.equal(cl.settlesId, by['ACY-150326/002'].id);
+    rows.pop();
     // Safe to repeat: everything is skipped the second time.
-    const again = (await call('POST', '/imports/receipts', null, O)).body.report; assert.equal(again.copied, 0); assert.equal(again.skipped.length, 4);
+    rows.push({ ...base, id: 'g5', receipt_no: 'X', seq: 3, payment_date: '2026-03-15', items: [], subtotal: 0, tax_amount: 0, total: 0, balance: 0 });
+    const again = (await call('POST', '/imports/receipts', null, O)).body.report; assert.equal(again.copied, 0); assert.equal(again.skipped.length, 5, 'the clashing one too, by its generator id');
   } finally { delete process.env.RECEIPTS_SUPABASE_URL; delete process.env.RECEIPTS_SUPABASE_KEY; }
 });
 
@@ -815,6 +823,63 @@ test('old project-template steps nobody took up are moved to the recycle bin onc
   assert.equal(await clearOldTemplateSteps(db, true), 1);
   const gone = Object.fromEntries((await db.query("select id, deleted_at is not null d from records where id like 't_tpl%' or id = 't_own'")).rows.map((r) => [r.id, r.d]));
   assert.deepEqual(gone, { t_tpl1: true, t_tpl2: false, t_tpl3: false, t_own: false });
+});
+
+test('Nikhil, the accounts & permissions manager, sets one person\'s access; the server follows it at once; nobody else can', async () => {
+  const db = await getDb();
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_nikhil','nikhil@test.in','Nikhil','ops','management',$1) on conflict (id) do nothing", [hashPassword('password123')]);
+  for (const [id, title, team] of [['u_acc_b', 'bde', 'sales'], ['u_acc_cs', 'cs', 'management']])
+    await db.query('insert into users (id,email,name,title,team,pass_hash) values ($1,$2,$3,$4,$5,$6)', [id, id + '@test.in', 'Acc ' + title, title, team, hashPassword('password123')]);
+  const login = async (e) => (await call('POST', '/auth/login', { email: e, password: 'password123' })).cookie;
+  const N = await login('nikhil@test.in'), B = await login('u_acc_b@test.in'), CS = await login('u_acc_cs@test.in');
+  // A BDE sees the call register by role; Nikhil takes it away and gives Payments & receipts as view only.
+  await db.query("insert into records (id, type, data) values ('pr_acc', 'prospect', $1)", [JSON.stringify({ name: 'Acc Shop', phone: '9000012345', phone10: '9000012345', owner: 'u_acc_b' })]);
+  assert.ok((await call('GET', '/bootstrap', null, B)).body.records.some((x) => x.id === 'pr_acc'), 'by role the BDE sees their call register');
+  assert.equal((await call('PUT', '/users/u_acc_b/access', { access: { calls: '' } }, CS)).status, 403, 'the Company Secretary (an admin) cannot change access');
+  assert.equal((await call('PUT', '/users/u_nikhil/access', { access: { calls: '' } }, N)).status, 400, 'not his own');
+  assert.equal((await call('PUT', '/users/u_acc_b/access', { access: { calls: 'superuser' } }, N)).status, 400);
+  const r = await call('PUT', '/users/u_acc_b/access', { access: { calls: '', money: 'all:view' } }, N); assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.user.access, { calls: '', money: 'all:view' });
+  const boot = (await call('GET', '/bootstrap', null, B)).body;
+  assert.ok(!boot.records.some((x) => x.id === 'pr_acc'), 'no call register data any more');
+  assert.equal(boot.me.access.money, 'all:view');
+  const pay = await call('POST', '/records', { type: 'payment', data: { title: 'x', amount: 1, due: '2026-12-01' } }, B); assert.equal(pay.status, 403, 'view only cannot make a payment');
+  assert.ok((await db.query("select 1 from records where type = 'notice' and data->>'to' = 'u_acc_b' and data->>'text' like '%changed your access%'")).rowCount, 'the person is told');
+  assert.ok((await db.query("select 1 from audit where summary like 'Access of Acc bde:%'")).rowCount);
+  // Back to the role's level for one section.
+  assert.deepEqual((await call('PUT', '/users/u_acc_b/access', { access: { calls: null } }, N)).body.user.access, { money: 'all:view' });
+  // Roles and the admin switch: only Nikhil.
+  assert.equal((await call('PATCH', '/users/u_acc_b', { title: 'salesmgr' }, CS)).status, 403);
+  assert.equal((await call('PATCH', '/users/u_acc_b', { title: 'salesmgr' }, N)).status, 200);
+  // Others never see someone's access settings; Nikhil does.
+  const seen = (await call('GET', '/bootstrap', null, CS)).body.users.find((x) => x.id === 'u_acc_b'); assert.deepEqual(seen.access, {});
+  assert.deepEqual((await call('GET', '/bootstrap', null, N)).body.users.find((x) => x.id === 'u_acc_b').access, { money: 'all:view' });
+});
+
+test('clients from receipt payers: grouped by GSTIN, mobile or name, matched to an existing client first, receipts linked', async () => {
+  const db = await getDb();
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_cfr_ops','cfrops@test.in','cfrops','ops','management',$1)", [hashPassword('password123')]);
+  await db.query("insert into users (id,email,name,title,team,pass_hash) values ('u_cfr_b','cfrb@test.in','cfrb','bde','sales',$1)", [hashPassword('password123')]);
+  const O = (await call('POST', '/auth/login', { email: 'cfrops@test.in', password: 'password123' })).cookie, B = (await call('POST', '/auth/login', { email: 'cfrb@test.in', password: 'password123' })).cookie;
+  // Start clean: earlier tests left receipts without a client.
+  await db.query("update records set data = jsonb_set(data, '{clientId}', '\"c_old\"') where type = 'receipt' and coalesce(data->>'clientId', '') = ''");
+  const existing = (await call('POST', '/records', { type: 'client', data: { name: 'Sri Lakshmi Traders', phone: '9876500001' } }, O)).body.record;
+  const put = (id, d) => db.query("insert into records (id, type, data) values ($1, 'receipt', $2)", [id, JSON.stringify({ number: 'ACY-' + id, date: '2026-09-01', totals: { total: 1000 }, ...d })]);
+  await put('r_cf1', { payerName: 'MODERN FURNITURE AND MODERN MATTRESS', payerPhone: '9000011111' });
+  await put('r_cf2', { payerName: 'Modern Furniture & Modern Mattress', payerPhone: '+91 90000 11111', date: '2026-10-17' });
+  await put('r_cf3', { payerName: 'Lakshmi (shop)', payerPhone: '98765 00001' }); // same mobile as an existing client
+  await put('r_cf4', { payerName: 'Green Valley School', payerGstin: '37aaacl1234m1z2' });
+  assert.equal((await call('GET', '/clients/from-receipts', null, B)).status, 403);
+  const pv = (await call('GET', '/clients/from-receipts', null, O)).body;
+  assert.deepEqual(pv.make.map((x) => x.name).sort(), ['Green Valley School', 'Modern Furniture & Modern Mattress']);
+  assert.deepEqual(pv.join.map((x) => x.client), ['Sri Lakshmi Traders']); assert.equal(pv.receipts, 4);
+  const run = await call('POST', '/clients/from-receipts', null, O); assert.equal(run.status, 200, JSON.stringify(run.body));
+  const cid = async (id) => (await db.query('select data from records where id = $1', [id])).rows[0].data.clientId;
+  assert.equal(await cid('r_cf1'), await cid('r_cf2'), 'both Modern Furniture receipts belong to one client'); assert.equal(await cid('r_cf3'), existing.id);
+  const mf = (await db.query("select data from records where type = 'client' and data->>'name' = 'Modern Furniture & Modern Mattress'")).rows[0].data;
+  assert.equal(mf.mobile10, '9000011111'); assert.equal(mf.source, 'Receipt generator');
+  assert.equal((await db.query("select data->>'gstin' g from records where type = 'client' and data->>'name' = 'Green Valley School'")).rows[0].g, '37AAACL1234M1Z2');
+  assert.equal((await call('GET', '/clients/from-receipts', null, O)).body.receipts, 0, 'nothing left');
 });
 
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {
@@ -1451,7 +1516,7 @@ test('Security review 10 Oct 2026: every reproduced attack is now refused', asyn
   await call('POST', '/auth/login', { email: 'password123', password: 'x' });
   assert.ok((await db.query("select 1 from audit where action = 'loginfail' and type = '(not an email address)'")).rowCount && !(await db.query("select 1 from audit where type = 'password123'")).rowCount, 'a password in the email box is not logged');
   // M1: a refused change saves nothing; a change says what changed.
-  assert.equal((await call('PATCH', '/users/u_xb1', { isAdmin: true, password: 'x' }, C.u_xops)).status, 400);
+  assert.equal((await call('PATCH', '/users/u_xb1', { isAdmin: true, password: 'x' }, C.u_xops)).status, 403, 'since 18 Oct only Nikhil, the accounts & permissions manager, changes the admin switch');
   assert.equal((await db.query("select is_admin from users where id = 'u_xb1'")).rows[0].is_admin, false);
   assert.equal((await call('PATCH', '/users/u_xb1', { designation: 'Senior BDE' }, C.u_xops)).status, 200);
   assert.ok((await db.query("select 1 from audit where action = 'user' and summary like 'u_xb1@test.in: designation – → Senior BDE%'")).rowCount);

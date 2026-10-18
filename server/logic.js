@@ -773,6 +773,37 @@ export async function clearOldTemplateSteps(db, force = false) {
   return rows.length;
 }
 
+// Clients from receipt payers (the user, 18 Oct 2026: "make the concerned person in the receipt a client", so each client's history is in
+// one place). Receipts with no client are grouped by payer – the same GSTIN, else the same mobile, else the same name – and each group is
+// matched to an existing client first (GSTIN → mobile → name); only the rest become new clients. With apply = false nothing is written.
+const nameKey = (s) => String(s || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
+export async function clientsFromReceipts(t, user, apply = false) {
+  const recs = (await t.query("select id, data from records where type = 'receipt' and deleted_at is null and coalesce(data->>'clientId', '') = ''")).rows;
+  const clients = (await t.query("select id, data from records where type = 'client' and deleted_at is null")).rows;
+  const byG = new Map(), byM = new Map(), byN = new Map();
+  for (const c of clients) { const d = c.data || {}; if (d.gstin) byG.set(String(d.gstin).toUpperCase(), c); for (const m of [d.mobile10, ...(d.contacts || []).map((x) => x.mobile10 || mobile10(x.phone))]) if (m) byM.set(m, c); if (d.name) byN.set(nameKey(d.name), c); }
+  const groups = new Map();
+  for (const r of recs.sort((a, b) => String(b.data.date).localeCompare(String(a.data.date)))) { // newest first: its details are the freshest
+    const d = r.data, g = String(d.payerGstin || '').toUpperCase(), m = mobile10(d.payerPhone), n = nameKey(d.payerName); if (!n) continue;
+    const match = (g && byG.get(g)) || (m && byM.get(m)) || byN.get(n) || null;
+    const key = match ? 'c:' + match.id : g ? 'g:' + g : m ? 'm:' + m : 'n:' + n;
+    if (!groups.has(key)) groups.set(key, { match, name: String(d.payerName).trim(), phone: d.payerPhone || '', gstin: g, email: d.payerEmail || '', address: d.payerAddress || '', contact: d.payerContact || '', ids: [], total: 0 });
+    const x = groups.get(key); x.ids.push(r.id); x.total = round2(x.total + num(d.totals?.total));
+  }
+  const all = [...groups.values()], make = all.filter((x) => !x.match), join = all.filter((x) => x.match);
+  const out = { make: make.map((x) => ({ name: x.name, phone: x.phone, gstin: x.gstin, receipts: x.ids.length, total: x.total })),
+    join: join.map((x) => ({ client: x.match.data.name, receipts: x.ids.length, total: x.total })), receipts: all.reduce((s, x) => s + x.ids.length, 0) };
+  if (!apply) return out;
+  for (const x of make) {
+    const data = { name: x.name.slice(0, 200), phone: String(x.phone).slice(0, 40), mobile10: mobile10(x.phone), email: String(x.email).slice(0, 200), address: String(x.address).slice(0, 2000), gstin: x.gstin,
+      owner: user.id, source: 'Receipt generator', contacts: x.contact || x.phone ? [{ name: String(x.contact || x.name).slice(0, 200), phone: String(x.phone).slice(0, 40), mobile10: mobile10(x.phone), email: String(x.email).slice(0, 200), role: '' }] : [] };
+    log(data, user.id, `Client made from ${x.ids.length} receipt${x.ids.length === 1 ? '' : 's'}`);
+    x.match = { id: await insertRec(t, 'client', data, user) };
+  }
+  for (const x of all) await t.query("update records set data = jsonb_set(data, '{clientId}', to_jsonb($2::text)), updated_at = now() where id = any($1)", [x.ids, x.match.id]);
+  return out;
+}
+
 // A receipt settles its payment reminder; an advance unlocks the project.
 // Money that really arrived, in rupees: not a cheque still clearing, not a refund, not a receipt in dollars.
 const COUNTS = (r) => !['pending', 'refunded'].includes(r.status) && r.currency !== 'USD';

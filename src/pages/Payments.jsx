@@ -26,18 +26,23 @@ function Home() {
   const bal = (p) => Math.max(0, (+p.amount || 0) - (+p.paid || 0));
   const groups = [['Overdue', open.filter((p) => p.due < t)], ['Rest of this month', open.filter((p) => p.due >= t && p.due.slice(0, 7) === month)], ['Later', open.filter((p) => p.due.slice(0, 7) > month)]];
   const receipts = list('receipt').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
+  // Money still owed on receipts that no payment reminder holds (e.g. receipts copied from the Receipt generator): counted here too
+  // (the user, 18 Oct 2026 – "this hasn't updated"). A receipt tied to a payment is not counted again.
+  const settled = settledBy(receipts), owed = receipts.filter((r) => !r.paymentId && r.currency !== 'USD' && r.status !== 'refunded' && owing(r, settled) > 0)
+    .sort((a, b) => a.date.localeCompare(b.date)), ow = (xs) => xs.reduce((s, r) => s + owing(r, settled), 0);
+  const owedOld = owed.filter((r) => r.date.slice(0, 7) < month), owedNow = owed.filter((r) => r.date.slice(0, 7) === month);
   const gotMonth = receipts.filter((r) => r.date.slice(0, 7) === month && r.currency !== 'USD' && !['pending', 'refunded'].includes(r.status)).reduce((s, r) => s + (r.totals?.received || 0), 0);
   return <>
     <div className="topbar"><h1>Payments & receipts <ViewOnly when={!edit} /></h1>{edit && <div className="row"><button className="btn" type="button" onClick={() => setAdd(true)}>+ Payment to collect</button><Link className="btn primary" to="/payments/receipt/new">+ Receipt</Link></div>}</div>
     <div className="stats">
       <div className="stat"><span className="l">Received this month</span><span className="v">{inr(gotMonth)}</span></div>
-      <div className={'stat' + (groups[0][1].length ? ' hot' : '')}><span className="l">Overdue</span><span className="v">{inr(groups[0][1].reduce((s, p) => s + bal(p), 0))}</span><span className="small muted">{groups[0][1].length} items</span></div>
-      <div className="stat"><span className="l">Due this month</span><span className="v">{inr(groups[1][1].reduce((s, p) => s + bal(p), 0))}</span></div>
-      <div className="stat"><span className="l">Total still to collect</span><span className="v">{inr(open.reduce((s, p) => s + bal(p), 0))}</span></div>
+      <div className={'stat' + (groups[0][1].length || owedOld.length ? ' hot' : '')}><span className="l">Overdue</span><span className="v">{inr(groups[0][1].reduce((s, p) => s + bal(p), 0) + ow(owedOld))}</span><span className="small muted">{groups[0][1].length + owedOld.length} items</span></div>
+      <div className="stat"><span className="l">Due this month</span><span className="v">{inr(groups[1][1].reduce((s, p) => s + bal(p), 0) + ow(owedNow))}</span></div>
+      <div className="stat"><span className="l">Total still to collect</span><span className="v">{inr(open.reduce((s, p) => s + bal(p), 0) + ow(owed))}</span>{owed.length > 0 && <span className="small muted">incl. {inr(ow(owed))} owed on {owed.length} receipt{owed.length === 1 ? '' : 's'}</span>}</div>
     </div>
     <Tabs value={tab} onChange={setTab} tabs={[['collect', 'To collect'], ['receipts', `Receipts (${receipts.length})`], ['clients', 'Who owes what'], ['export', 'Export for Tally / accounts']]} />
     {tab === 'collect' && <div className="stack"><div className="row"><TeamFilter value={tf} onChange={setTf} /><span className="small muted">Each BDE collects from their own clients. Record payment makes the receipt and updates the balance.</span></div>
-      {!open.length && <Empty>Nothing to collect. Add payments from a won deal, or with “+ Payment to collect”.</Empty>}
+      {!open.length && !owed.length && <Empty>Nothing to collect. Add payments from a won deal, or with “+ Payment to collect”.</Empty>}
       {groups.map(([title, rows]) => rows.length ? <section key={title}><h2 style={{ marginBottom: 8 }}>{title} <span className="num small muted">{inr(rows.reduce((s, p) => s + bal(p), 0))}</span></h2>
         <div className="list">{rows.map((p) => <div className="li" key={p.id}>
           <div className="grow"><div className="t">{p.title}{p.clientId ? ' – ' + clientName(p.clientId) : ''}</div>
@@ -45,7 +50,14 @@ function Home() {
               <span className="muted">{uname(p.owner)}</span>{+p.paid > 0 && <span className="muted">paid {inr(p.paid)} so far</span>}<Sample on={p.sample} /></div></div>
           <b className="num">{inr(bal(p))}</b>
           {edit && <button className="btn sm" type="button" onClick={() => setRemind(p)}>Remind client</button>}
-          {edit && <Link className="btn sm primary" to={`/payments/receipt/new?payment=${p.id}`}>Record payment</Link>}</div>)}</div></section> : null)}</div>}
+          {edit && <Link className="btn sm primary" to={`/payments/receipt/new?payment=${p.id}`}>Record payment</Link>}</div>)}</div></section> : null)}
+      {owed.length > 0 && <section><h2 style={{ marginBottom: 8 }}>Balance owed on receipts <span className="num small muted">{inr(ow(owed))}</span></h2>
+        <p className="small muted" style={{ margin: '0 0 8px' }}>Part payments whose balance is not in a payment reminder – for example receipts from the Receipt generator. “Record balance” makes the receipt for the rest.</p>
+        <div className="list">{owed.map((r) => <div className="li" key={r.id}>
+          <div className="grow"><Link className="t" to={'/payments/receipt/' + r.id} style={{ color: 'inherit' }}>{r.payerName}{r.clientId ? '' : ''}</Link>
+            <div className="row small"><span className="num">{r.number}</span><span className="muted">{fmtDate(r.date)}</span>{r.date.slice(0, 7) < month && <Pill k="over">from an earlier month</Pill>}{!r.clientId && <Pill>no client yet</Pill>}</div></div>
+          <b className="num">{inr(owing(r, settled))}</b>
+          {edit && <Link className="btn sm primary" to={'/payments/receipt/new?settles=' + r.id}>Record balance</Link>}</div>)}</div></section>}</div>}
     {tab === 'receipts' && <ReceiptRegister />}
     {tab === 'clients' && <Owes />}
     {tab === 'export' && <Export />}
@@ -69,8 +81,10 @@ export function PaymentModal({ onClose, preset = {} }) {
 }
 
 function Owes() {
+  const recs = list('receipt'), settled = settledBy(recs);
+  const onReceipts = (c) => recs.filter((r) => r.clientId === c.id && !r.paymentId && r.currency !== 'USD' && r.status !== 'refunded').reduce((s, r) => s + owing(r, settled), 0);
   const rows = list('client').map((c) => { const pays = list('payment').filter((p) => p.clientId === c.id && p.status !== 'paid');
-    return { c, due: pays.reduce((s, p) => s + Math.max(0, (+p.amount || 0) - (+p.paid || 0)), 0), over: pays.filter((p) => diff(p.due) < 0).reduce((s, p) => s + Math.max(0, (+p.amount || 0) - (+p.paid || 0)), 0),
+    return { c, due: pays.reduce((s, p) => s + Math.max(0, (+p.amount || 0) - (+p.paid || 0)), 0) + onReceipts(c), over: pays.filter((p) => diff(p.due) < 0).reduce((s, p) => s + Math.max(0, (+p.amount || 0) - (+p.paid || 0)), 0),
       got: list('receipt').filter((r) => r.clientId === c.id).reduce((s, r) => s + (r.totals?.received || 0), 0) }; }).filter((r) => r.due || r.got).sort((a, b) => b.over - a.over || b.due - a.due);
   return rows.length ? <div className="tbl"><table><thead><tr><th>Client</th><th className="n">Received so far</th><th className="n">Still due</th><th className="n">Overdue</th><th>BDE</th></tr></thead><tbody>
     {rows.map(({ c, due, over, got }) => <tr key={c.id}><td><Link to={'/clients/' + c.id}>{c.name}</Link></td><td className="n">{inr(got)}</td><td className="n">{inr(due)}</td><td className="n" style={{ color: over ? 'var(--bad)' : '' }}>{over ? inr(over) : '—'}</td><td>{uname(c.owner)}</td></tr>)}
@@ -104,10 +118,10 @@ export const owing = (r, m) => Math.max(0, r2((r.totals?.balance || 0) - (m.get(
 const usdFmt = (n) => '$' + (+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function ReceiptRegister() {
-  const nav = useNavigate(), [q, setQ] = useState(''), [st, setSt] = useState(''), [fy, setFy] = useState(''), [imp, setImp] = useState(false), me = store.me, [view, setView] = useState(readView);
+  const nav = useNavigate(), [q, setQ] = useState(''), [st, setSt] = useState(''), [fy, setFy] = useState(''), [imp, setImp] = useState(false), me = store.me, [view, setView] = useState(readView), [mk, setMk] = useState(false);
   const all = list('receipt').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number)), settled = settledBy(all);
   const years = [...new Set(all.map((r) => r.fy))].filter(Boolean).sort().reverse(), text = q.trim().toLowerCase();
-  const stOf = (r) => r.status || (r.totals?.balance > 0 ? 'partial' : 'received');
+  const stOf = (r) => r.status || (r.totals?.balance > 0 ? 'partial' : 'received'), noClient = all.filter((r) => !r.clientId).length;
   const rows = all.filter((r) => (!st || stOf(r) === st) && (!fy || r.fy === fy)
     && (!text || `${r.number} ${r.payerName} ${r.forText || ''} ${r.description || ''} ${(r.items || []).map((x) => x.desc).join(' ')} ${r.reference || ''}`.toLowerCase().includes(text)));
   const inrRows = rows.filter((r) => r.currency !== 'USD'), sum = (f) => inrRows.reduce((s, r) => s + (f(r) || 0), 0), arrived = (r) => !['pending', 'refunded'].includes(r.status);
@@ -120,6 +134,9 @@ function ReceiptRegister() {
       <div className={'stat' + (out ? ' warm' : '')}><span className="l">Still outstanding</span><span className="v">{inr(out)}</span></div>
     </div>
     {imp && <ImportGenerator onClose={() => setImp(false)} />}
+    {mk && <ClientsFromReceipts onClose={() => setMk(false)} />}
+    {(me.isAdmin || me.title === 'ops') && noClient > 0 && <div className="banner info row between"><span>{noClient} receipt{noClient === 1 ? ' has' : 's have'} no client yet, so {noClient === 1 ? 'it does' : 'they do'} not show in the client's history or in “Who owes what”.</span>
+      <button className="btn sm primary" type="button" onClick={() => setMk(true)}>Make clients from the payers</button></div>}
     <div className="row"><In placeholder="Search number, payer, purpose or UTR" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 300 }} />
       <Sel value={st} onChange={setSt} options={RSTATUS} blank="Every status" style={{ width: 'auto' }} aria-label="Status" />
       <Sel value={fy} onChange={setFy} options={years.map((y) => [y, 'FY ' + y])} blank="All years" style={{ width: 'auto' }} aria-label="Financial year" />
@@ -127,7 +144,7 @@ function ReceiptRegister() {
       {(me.isAdmin || me.title === 'ops') && <><span className="grow" /><button className="btn sm" type="button" onClick={() => setImp(true)}>Import from Receipt generator</button></>}</div>
     {view === 'ledger' ? <ReceiptLedger rows={rows} owing={(r) => owing(r, settled)} /> : rows.length ? <div className="tbl cards"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Status</th><th className="n">Total</th><th className="n">Paid</th><th className="n">Balance due</th><th>Mode</th><th>By</th></tr></thead><tbody>
       {rows.map((r) => { const o = owing(r, settled), stl = (r.totals?.balance || 0) > 0 && !o;
-        return <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b>{r.settlesNo && <div className="small muted">against {r.settlesNo}</div>}</td><td>{fmtDate(r.date)}</td>
+        return <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b>{r.numberClash && <div><Pill k="bad">number used twice</Pill></div>}{r.settlesNo && <div className="small muted">against {r.settlesNo}</div>}</td><td>{fmtDate(r.date)}</td>
           <td>{r.payerName}<Sample on={r.sample} />{r.imported && <div className="small muted">from the Receipt generator</div>}</td>
           <td><Pill k={{ received: 'ok', partial: 'warn', pending: 'info', refunded: 'bad' }[stOf(r)]}>{RSTATUS.find((x) => x[0] === stOf(r))[1]}</Pill></td>
           <td className="n">{money(r, r.totals?.total || 0)}</td><td className="n">{money(r, r.totals?.received || 0)}</td><td className="n">{stl ? <Pill k="ok">settled</Pill> : o ? money(r, o) : '—'}</td><td>{r.mode}</td><td>{r.imported ? '—' : uname(r.createdBy)}</td></tr>; })}</tbody></table></div>
@@ -174,6 +191,7 @@ function ReceiptEditor({ id }) {
       {saved && canEdit('money') && left > 0 && <Link className="btn" to={'/payments/receipt/new?settles=' + saved.id}>Record balance ({cur(left)})</Link>}
       {edit && <button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
     {saved?.imported && <div className="banner info no-print" style={{ marginBottom: 12 }}>Copied from the Receipt generator on {fmtDate(saved.imported.at.slice(0, 10))}. It is kept exactly as it was printed, so it cannot be changed; if it is wrong, delete it with a reason and make a new one.</div>}
+    {saved?.numberClash && <div className="banner bad no-print" style={{ marginBottom: 12 }}>Two receipts carry the number {saved.number}: this one from the Receipt generator, and one made in Aali One on the same day. Both were given to clients, so neither number was changed. Check with your CA how to note it.</div>}
     {r.settlesId && !saved && <div className="banner info no-print" style={{ marginBottom: 12 }}>This receipt brings in the balance of receipt {get(r.settlesId)?.number}. It prints “Against Receipt No. …”, and the register then shows the earlier one as settled.</div>}
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
       <RO when={!edit}><div className="stack"><div className="card form">
@@ -236,7 +254,7 @@ function ImportGenerator({ onClose }) {
       : !s.connected ? <div className="stack"><p style={{ margin: 0 }}>Aali One is not connected to the Receipt generator yet.</p>
         <p className="small muted" style={{ margin: 0 }}>In Coolify, add two environment variables to the Aali One app, then restart it: <b>RECEIPTS_SUPABASE_URL</b> (the generator's Supabase address, https://….supabase.co) and <b>RECEIPTS_SUPABASE_KEY</b> (its publishable key). Aali One only reads from it.</p></div>
       : rep ? <div className="stack">
-        <div className="banner ok">{rep.copied} receipts copied{rep.copied ? ` (${rep.first} … ${rep.last})` : ''}. {rep.skipped.length} skipped. {rep.linked} balance receipts linked. Counters raised for {rep.counters} days.{rep.letterhead.length ? ` Letterhead: ${rep.letterhead.join(' and ')} copied.` : ''}</div>
+        <div className="banner ok">{rep.copied} receipts copied{rep.copied ? ` (${rep.first} … ${rep.last})` : ''}. {rep.skipped.length} skipped. {rep.linked} balance receipts linked.{rep.clashes?.length ? ` ${rep.clashes.length} marked “number used twice”: ${rep.clashes.join(', ')}.` : ''} Counters raised for {rep.counters} days.{rep.letterhead.length ? ` Letterhead: ${rep.letterhead.join(' and ')} copied.` : ''}</div>
         <p style={{ margin: 0 }}>The untouched copy of everything in the generator: <a href={'/api/files/' + rep.backup.id} download={rep.backup.name}>{rep.backup.name}</a>. Keep it.</p>
         {rep.skipped.length > 0 && <details><summary>Skipped ({rep.skipped.length})</summary><ul className="small">{rep.skipped.slice(0, 200).map((x, i) => <li key={i}>{x.number}: {x.why}</li>)}</ul></details>}
         <h3 style={{ margin: '8px 0 0' }}>Before you delete the old Receipt generator</h3>
@@ -247,8 +265,27 @@ function ImportGenerator({ onClose }) {
         <div className="stats"><div className="stat"><span className="l">In the generator</span><span className="v">{p.total}</span></div><div className="stat"><span className="l">New to copy</span><span className="v">{p.fresh}</span></div>
           <div className="stat"><span className="l">Already here</span><span className="v">{p.already}</span></div><div className="stat"><span className="l">Deleted there</span><span className="v">{p.deleted}</span><span className="small muted">copied as deleted</span></div></div>
         <p className="small muted" style={{ margin: 0 }}>From {p.first ? fmtDate(p.first) : '—'} to {p.last ? fmtDate(p.last) : '—'}. Each receipt keeps its own number and printed figures and cannot be changed here. Numbers already in Aali One are skipped, so this can be run again safely. A full copy of the generator's data is saved first.</p>
-        {p.clash?.length > 0 && <div className="banner">{p.clash.length} receipt number{p.clash.length === 1 ? '' : 's'} in the generator {p.clash.length === 1 ? 'is' : 'are'} already used by a different receipt made in Aali One: {p.clash.slice(0, 12).join(', ')}{p.clash.length > 12 ? '…' : ''}. {p.clash.length === 1 ? 'It' : 'They'} will not be copied (kept in the backup file) – check {p.clash.length === 1 ? 'it' : 'them'} with your CA.</div>}
+        {p.clash?.length > 0 && <div className="banner">{p.clash.length} receipt number{p.clash.length === 1 ? '' : 's'} in the generator {p.clash.length === 1 ? 'is' : 'are'} also used by a different receipt made in Aali One: {p.clash.slice(0, 12).join(', ')}{p.clash.length > 12 ? '…' : ''}. {p.clash.length === 1 ? 'It is' : 'They are'} copied anyway with the printed number (the client already has {p.clash.length === 1 ? 'it' : 'them'}) and marked “number used twice” – check with your CA.</div>}
         {p.lastNumbers?.length > 0 && <p className="small" style={{ margin: 0 }}>Last numbers: {p.lastNumbers.map((x) => x.number).join(', ')}</p>}</div>}
+  </Modal>;
+}
+
+// Receipt payers become clients (18 Oct 2026): what will happen, then Create. Matching uses GSTIN, mobile, then name.
+function ClientsFromReceipts({ onClose }) {
+  const [p, setP] = useState(null), [busy, setBusy] = useState(false), [done, setDone] = useState(null);
+  useEffect(() => { http('GET', '/clients/from-receipts').then(setP, (e) => setP({ error: e.message })); }, []);
+  async function go() { setBusy(true); const r = await attempt(() => http('POST', '/clients/from-receipts')); setBusy(false); if (r) { setDone(r); await poll(); } }
+  return <Modal title="Make clients from receipt payers" wide onClose={onClose} footer={<><button className="btn" type="button" onClick={onClose}>{done ? 'Close' : 'Cancel'}</button>
+    {p && !p.error && !done && <button className="btn primary" type="button" disabled={busy || !p.receipts} onClick={go}>{busy ? 'Making…' : `Make ${p.make.length} client${p.make.length === 1 ? '' : 's'} and link ${p.receipts} receipt${p.receipts === 1 ? '' : 's'}`}</button>}</>}>
+    {!p ? <p className="muted">Looking at the receipts…</p> : p.error ? <div className="banner bad">{p.error}</div>
+      : done ? <div className="banner ok">{done.make.length} clients made, {done.join.length} payers matched to existing clients, {done.receipts} receipts linked. Each client's page now shows its receipts.</div>
+      : <div className="stack">
+        <p className="small muted" style={{ margin: 0 }}>Receipts with no client are grouped by payer – the same GSTIN, else the same mobile number, else the same name – and matched to an existing client first. Only the rest become new clients (with you as the person in charge; change it on the client's page).</p>
+        {p.make.length > 0 && <><h3 style={{ margin: 0 }}>New clients ({p.make.length})</h3><div className="tbl"><table><thead><tr><th>Name</th><th>Phone</th><th>GSTIN</th><th className="n">Receipts</th><th className="n">Total</th></tr></thead>
+          <tbody>{p.make.map((x, i) => <tr key={i}><td>{x.name}</td><td>{x.phone || '—'}</td><td className="num">{x.gstin || '—'}</td><td className="n">{x.receipts}</td><td className="n">{inr(x.total)}</td></tr>)}</tbody></table></div></>}
+        {p.join.length > 0 && <><h3 style={{ margin: 0 }}>Matched to clients already in Aali One ({p.join.length})</h3><div className="tbl"><table><thead><tr><th>Client</th><th className="n">Receipts</th><th className="n">Total</th></tr></thead>
+          <tbody>{p.join.map((x, i) => <tr key={i}><td>{x.client}</td><td className="n">{x.receipts}</td><td className="n">{inr(x.total)}</td></tr>)}</tbody></table></div></>}
+        {!p.receipts && <Empty>Every receipt already belongs to a client.</Empty>}</div>}
   </Modal>;
 }
 

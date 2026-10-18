@@ -93,8 +93,16 @@ export const HR_TITLE = 'cs';
 // device the person signs in on.
 export const SOUND_PEOPLE = ['u_nikhil'];
 export const isHr = (u) => !!u && !!u.hr && u.title === HR_TITLE;
-export const levelOf = (u, section) => (!u || !ACCESS[section] ? '' : (section === 'payroll' || section === 'clientpay') && isHr(u) ? 'all'
+// The accounts & permissions manager (the user, 18 Oct 2026: "I get to decide who has which access and who doesn't"): only he sets a
+// person's access section by section, and changes anyone's role or admin switch. Admins still add people and reset passwords.
+export const ACCESS_MANAGERS = ['u_nikhil'];
+export const isAccessManager = (u) => !!u && ACCESS_MANAGERS.includes(u.id);
+export const LEVELS = ['all', 'all:view', 'team', 'own', 'own:view', ''];
+// What a person's role gives in a section, before any change made for that person.
+export const roleLevel = (u, section) => (!u || !ACCESS[section] ? '' : (section === 'payroll' || section === 'clientpay') && isHr(u) ? 'all'
   : isAdminUser(u) && !STRICT.includes(section) ? 'all' : ACCESS[section][u.title] || '');
+// A level set for this person wins over the role (even an admin's, even a STRICT section); '' there means No access.
+export const levelOf = (u, section) => { const own = u?.access?.[section]; return !u || !ACCESS[section] ? '' : typeof own === 'string' && LEVELS.includes(own) ? own : roleLevel(u, section); };
 export const scopeOf = (u, section) => levelOf(u, section).split(':')[0];
 export const canSee = (u, section) => !!levelOf(u, section);
 export const canEdit = (u, section) => { const l = levelOf(u, section); return !!l && !l.endsWith(':view'); };

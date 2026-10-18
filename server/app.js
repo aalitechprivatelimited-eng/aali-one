@@ -2,9 +2,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, isOldHash, passwordProblem, fakeCheck, sessionKey, createSession, sessionUser, dropSession, sessionCookie, readCookie, publicUser, IDLE_MIN } from './auth.js';
-import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, daySweep, clearOldTemplateSteps, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
+import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, daySweep, clearOldTemplateSteps, clientsFromReceipts, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP, TITLES } from '../shared/defaults.js';
-import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE, SOUND_PEOPLE } from '../shared/access.js';
+import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE, SOUND_PEOPLE, isAccessManager, LEVELS, ACCESS as ROLE_TABLE, roleLevel, SECTIONS } from '../shared/access.js';
 import { generatorConnected, previewImport, runImport } from './receiptimport.js';
 import { hrmConnected, hrmMonth, hrmPeople, hrmEmailOf, hrmEnv, hrmFind } from './hrm.js';
 import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, checkTemplate, REPORT_TEMPLATE, REPORT_BUTTON, TEMPLATE_SAMPLES } from './whatsapp.js';
@@ -211,9 +211,39 @@ export async function handle(req, res) {
     const shown = (acc, r) => { const a = acc.read(r); return a === true ? toClient(r) : a === 'card' ? clientCard(r) : null; };
     // Other people's login email and mobile go only to management, to their own manager, and to themselves.
     // A person's UPI QR code (for paying their bills back) goes only to themselves, management and the admin.
-    const seeUser = (u) => { const p = publicUser(u); if (!(admin || isTop(user) || u.id === user.id)) p.upiQr = ''; return admin || isTop(user) || u.id === user.id || (isManager(user) && u.team === user.team) ? p : { ...p, email: '', phone: '', personalEmail: '', removedReason: '', removedBy: null }; };
+    // A person's own access settings go only to themselves and to the accounts & permissions manager.
+    const seeUser = (u) => { const p = publicUser(u); if (!(admin || isTop(user) || u.id === user.id)) p.upiQr = ''; if (!(u.id === user.id || isAccessManager(user))) p.access = {}; return admin || isTop(user) || u.id === user.id || (isManager(user) && u.team === user.team) ? p : { ...p, email: '', phone: '', personalEmail: '', removedReason: '', removedBy: null }; };
 
     if (path === '/me') return send(res, 200, { user: publicUser(user) });
+    // A person's access, section by section (only the accounts & permissions manager). Body { access: { section: level | null } }:
+    // a level replaces the role's for that person, null goes back to the role's. The person is told what changed.
+    m = path.match(/^\/users\/([\w-]+)\/access$/);
+    if (m && method === 'PUT') {
+      if (!isAccessManager(user)) throw new Rule('Only Nikhil, the accounts & permissions manager, changes who can see what.', 403);
+      if (m[1] === user.id) throw new Rule("You can't change your own access – that way you can never lock yourself out.");
+      const u = (await db.query('select * from users where id = $1 and removed_at is null', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
+      const b = await readBody(req), want = b.access && typeof b.access === 'object' ? b.access : {}, cur = u.access && typeof u.access === 'object' ? u.access : {}, next = { ...cur }, said = [];
+      const word = { all: 'Full', 'all:view': 'View only', team: 'Own team', own: 'Own only', 'own:view': 'Own, view only', '': 'No access' };
+      const label = Object.fromEntries(SECTIONS.map(([k, l]) => [k, l]));
+      for (const [k, v] of Object.entries(want)) {
+        if (!ROLE_TABLE[k]) throw new Rule('Unknown section: ' + String(k).slice(0, 40));
+        if (v === null) { if (k in next) { delete next[k]; said.push(`${label[k] || k}: back to the role's (${word[roleLevel(u, k)] ?? roleLevel(u, k)})`); } continue; }
+        if (!LEVELS.includes(v)) throw new Rule('Unknown access level.');
+        if (next[k] !== v) { next[k] = v; said.push(`${label[k] || k}: ${word[v]}`); }
+      }
+      if (!said.length) return send(res, 200, { user: publicUser({ ...u, access: next }) });
+      await db.query('update users set access = $2, updated_at = now() where id = $1', [u.id, JSON.stringify(next)]);
+      await audit(db, user, null, 'user', `Access of ${u.name}: ${said.join('; ')}`.slice(0, 1500));
+      await notify(db, u.id, `${user.name} changed your access: ${said.join('; ')}.`.slice(0, 480), '', '', user);
+      return send(res, 200, { user: publicUser({ ...u, access: next }) });
+    }
+    // Clients from receipt payers (admin or the Operations Manager): GET shows what would happen, POST makes the clients and links the receipts.
+    if (path === '/clients/from-receipts') {
+      if (!(user.is_admin || user.title === 'ops')) throw new Rule('Only the Operations Manager or an admin can make clients from receipts.', 403);
+      if (method === 'GET') return send(res, 200, await clientsFromReceipts(db, user, false));
+      if (method === 'POST') { const r = await db.tx((t) => clientsFromReceipts(t, user, true));
+        await audit(db, user, null, 'client', `Clients from receipts: ${r.make.length} made, ${r.join.length} matched to existing clients, ${r.receipts} receipts linked`); return send(res, 200, r); }
+    }
     // Copying the old Receipt generator (admin or the Operations Manager): GET says what would happen, POST copies (server/receiptimport.js).
     if (path === '/imports/receipts') {
       if (!(user.is_admin || user.title === 'ops')) throw new Rule('Only the Operations Manager or an admin can copy the Receipt generator.', 403);
@@ -599,6 +629,7 @@ export async function handle(req, res) {
       // Chairman role are his alone – an admin can no longer make themselves (or a second login) Chairman, reset his password or switch him off.
       if (b.title !== undefined && !TITLE_TEAM[b.title]) throw new Rule('Choose a role from the list.');
       if (self && b.title !== undefined && b.title !== u.title) throw new Rule("You can't change your own role. Another admin can.", 403);
+      if (admin && ((b.title !== undefined && b.title !== u.title) || (b.isAdmin !== undefined && !!b.isAdmin !== !!u.is_admin)) && !isAccessManager(user)) throw new Rule('Only Nikhil, the accounts & permissions manager, changes a person\'s role or admin switch.', 403);
       if (b.title === 'chairman' && u.title !== 'chairman' && user.title !== 'chairman' && (await db.query("select 1 from users where title = 'chairman' and active and removed_at is null")).rowCount)
         throw new Rule('Only the Founder & Chairman can make someone Chairman.', 403);
       if (u.title === 'chairman' && !self && ['title', 'password', 'active', 'isAdmin', 'firstName', 'surname', 'name', 'phone', 'company', 'designation', 'photo', 'display', 'personalEmail', 'upiQr'].some((k) => b[k] !== undefined))

@@ -94,7 +94,7 @@ export function readCookie(req, name) {
   return m ? decodeURIComponent(m[1]) : '';
 }
 // name is what the screens show: the display name the person chose, or their full name. fullName is always the real name.
-export const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.display || u.name, fullName: u.name, display: u.display || '', photo: u.photo || '', upiQr: u.upi_qr || '', title: u.title, team: u.team, phone: u.phone, isAdmin: isAdminUser(u), hr: !!u.hr, personalEmail: u.personal_email || '', active: u.active, designation: u.designation || '', createdAt: u.created_at, removedAt: u.removed_at || null, removedReason: u.removed_reason || '', removedBy: u.removed_by || null,
+export const publicUser = (u) => u && ({ id: u.id, email: u.email, name: u.display || u.name, fullName: u.name, display: u.display || '', photo: u.photo || '', upiQr: u.upi_qr || '', title: u.title, team: u.team, phone: u.phone, isAdmin: isAdminUser(u), hr: !!u.hr, access: u.access && typeof u.access === 'object' ? u.access : {}, personalEmail: u.personal_email || '', active: u.active, designation: u.designation || '', createdAt: u.created_at, removedAt: u.removed_at || null, removedReason: u.removed_reason || '', removedBy: u.removed_by || null,
   surname: u.surname && u.name.endsWith(u.surname) ? u.surname : '', firstName: u.surname && u.name.endsWith(u.surname) ? u.name.slice(0, -u.surname.length).trim() : u.name,
   company: u.team === 'management' ? 'Aali Group' : u.company || 'Aali Conssultancy' });
 

@@ -51,6 +51,10 @@ export async function poll() {
     if (grew && Date.now() - lastBoot > 60000) { polling = false; return void boot(); }
     c.records.forEach(put);
     if (c.users.length) { const m = new Map(S.users.map((u) => [u.id, u])); c.users.forEach((u) => m.set(u.id, u)); S.users = [...m.values()].sort((a, b) => a.name.localeCompare(b.name)); }
+    // My own access, role or admin switch changed (the accounts & permissions manager, 18 Oct 2026): load everything again, so the menu,
+    // the apps and the data I may see follow at once.
+    const meNow = c.users.find((u) => u.id === S.me.id);
+    if (meNow && (JSON.stringify(meNow.access || {}) !== JSON.stringify(S.me.access || {}) || meNow.title !== S.me.title || meNow.isAdmin !== S.me.isAdmin)) { polling = false; return void boot(); }
     if (c.settings && !!c.settings.leadSeesReports !== !!S.settings.leadSeesReports && S.me.title === 'itlead') { polling = false; return void boot(); } // what I may read changed
     if (c.settings) S.settings = c.settings;
     S.serverTime = c.serverTime; if (c.records.length || c.users.length || c.settings) emit();

@@ -55,10 +55,10 @@ export function mapReceipt(x, user, at) {
 // What would happen: counts only, nothing written.
 export async function previewImport(db) {
   const { receipts } = await readGenerator(), have = await numbersInAaliOne(db), done = await copiedIds(db);
-  const fresh = receipts.filter((x) => !done.has(String(x.id)) && !have.has(String(x.receipt_no)));
-  const clash = receipts.filter((x) => !done.has(String(x.id)) && have.has(String(x.receipt_no))).map((x) => String(x.receipt_no));
+  const fresh = receipts.filter((x) => !done.has(String(x.id))); // a number Aali One also used is copied too, marked (it is already in the client's hands)
+  const clash = fresh.filter((x) => have.has(String(x.receipt_no))).map((x) => String(x.receipt_no));
   const dates = receipts.map((x) => String(x.payment_date)).filter(Boolean).sort();
-  return { total: receipts.length, fresh: fresh.length, already: receipts.length - fresh.length - clash.length, clash, deleted: receipts.filter((x) => x.deleted_at).length,
+  return { total: receipts.length, fresh: fresh.length, already: receipts.length - fresh.length, clash, deleted: receipts.filter((x) => x.deleted_at).length,
     zero: receipts.filter((x) => !(num(x.total) > 0)).length, first: dates[0] || '', last: dates[dates.length - 1] || '',
     lastNumbers: lastPerDay(receipts).slice(-5) };
 }
@@ -76,7 +76,7 @@ export async function runImport(db, user) {
   const src = await readGenerator(), at = new Date().toISOString();
   return db.tx(async (t) => {
     await t.query('select pg_advisory_xact_lock(724113)'); // two imports at once: the second waits, then finds everything copied
-    const have = await numbersInAaliOne(t), done = await copiedIds(t), byGen = new Map(), skipped = [], copied = [];
+    const have = await numbersInAaliOne(t), done = await copiedIds(t), byGen = new Map(), skipped = [], copied = [], copiedGen = new Set(), clashes = [];
     for (const r of (await t.query("select id, data->'imported'->>'id' g from records where type = 'receipt' and data->'imported'->>'from' = 'receipt-generator'")).rows) byGen.set(r.g, r.id);
     // The untouched source first, so nothing is lost when the old app is deleted.
     const raw = Buffer.from(JSON.stringify({ exportedAt: at, from: env().url, receipts: src.receipts, business: src.business }, null, 1));
@@ -87,16 +87,17 @@ export async function runImport(db, user) {
       const no = String(x.receipt_no || '');
       if (!no) { skipped.push({ number: '(none)', why: 'no receipt number' }); continue; }
       if (done.has(String(x.id))) { skipped.push({ number: no, why: 'already copied' }); continue; }
-      if (have.has(no)) { skipped.push({ number: no, why: 'number clash: Aali One already has a different receipt with this number – this one is kept only in the backup file', clash: true }); continue; }
-      const d = mapReceipt(x, user, at), id = newId('re_');
+      // The same number made in Aali One too (both apps numbered by the day): copied anyway with its printed number, and marked, so the
+      // money is recorded; the register and the receipt say two receipts carry this number (the user, 18 Oct 2026 – Modern Furniture).
+      const d = mapReceipt(x, user, at), id = newId('re_'); if (have.has(no)) { d.numberClash = true; clashes.push(no); }
       await t.query('insert into records (id, type, data, created_by, updated_by, created_at, deleted_at, deleted_by, delete_reason) values ($1,$2,$3,$4,$4,$5,$6,$7,$8)',
         [id, 'receipt', JSON.stringify(d), user.id, x.created_at || at, x.deleted_at || null, x.deleted_at ? user.id : null, x.deleted_at ? S(x.delete_reason, 500) || 'Deleted in the Receipt generator' : null]);
-      have.add(no); byGen.set(String(x.id), id); copied.push(no);
+      have.add(no); byGen.set(String(x.id), id); copied.push(no); copiedGen.add(String(x.id));
       const pt = partsOf(no) || { day: dayLabel(d.date), seq: d.seq }; maxSeq.set(pt.day, Math.max(maxSeq.get(pt.day) || 0, pt.seq));
     }
     // A balance receipt points at the receipt it clears: link it to that receipt's new record.
     let linked = 0;
-    for (const x of src.receipts) if (x.settles_id && copied.includes(String(x.receipt_no)) && byGen.has(String(x.id)) && byGen.has(String(x.settles_id))) {
+    for (const x of src.receipts) if (x.settles_id && copiedGen.has(String(x.id)) && byGen.has(String(x.settles_id))) {
       await t.query("update records set data = jsonb_set(data, '{settlesId}', to_jsonb($2::text)) where id = $1", [byGen.get(String(x.id)), byGen.get(String(x.settles_id))]); linked++; }
     // Each day's counter goes past the highest copied number, so the next receipt Aali One makes that day is new.
     for (const [day, n] of maxSeq) await t.query('insert into counters (key, n) values ($1, $2) on conflict (key) do update set n = greatest(counters.n, excluded.n)', ['receipt:' + day, n]);
@@ -111,7 +112,7 @@ export async function runImport(db, user) {
     }
     await t.query('insert into audit (user_id, record_id, type, action, summary) values ($1,$2,$3,$4,$5)', [user.id, fileId, 'receipt', 'receipt-import',
       `Receipt generator: ${copied.length} receipts copied, ${skipped.length} skipped${letterhead.length ? ', letterhead ' + letterhead.join(' and ') : ''}. Backup file ${fileId}.`.slice(0, 1500)]);
-    return { copied: copied.length, skipped, linked, counters: maxSeq.size, letterhead, backup: { id: fileId, name: `receipt-generator-backup-${at.slice(0, 10)}.json` },
+    return { copied: copied.length, clashes, skipped, linked, counters: maxSeq.size, letterhead, backup: { id: fileId, name: `receipt-generator-backup-${at.slice(0, 10)}.json` },
       first: copied[0] || '', last: copied[copied.length - 1] || '' };
   });
 }
