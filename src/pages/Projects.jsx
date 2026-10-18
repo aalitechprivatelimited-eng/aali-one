@@ -52,10 +52,9 @@ function Board() {
 }
 
 function NewProject({ onClose }) {
-  const nav = useNavigate(), [f, setF] = useState({ name: '', clientId: '', deadline: addDays(today(), 30), template: '' });
+  const nav = useNavigate(), [f, setF] = useState({ name: '', clientId: '', deadline: addDays(today(), 30) });
   async function go() {
-    const tpl = settings().projectTemplates.find((t) => t.id === f.template);
-    const r = await attempt(() => create('project', { name: f.name, clientId: f.clientId, clientName: clientName(f.clientId), stage: 'planning', deadline: f.deadline, start: today(), lead: '', people: [store.me.id], template: tpl?.name || '', templateId: tpl?.id || '' }));
+    const r = await attempt(() => create('project', { name: f.name, clientId: f.clientId, clientName: clientName(f.clientId), stage: 'planning', deadline: f.deadline, start: today(), lead: '', people: [store.me.id] }));
     if (!r) return;
     onClose(); nav('/projects/' + r.record.id);
   }
@@ -63,7 +62,6 @@ function NewProject({ onClose }) {
     <div className="form"><Field label="Project name *" full><In value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
       <Field label="Client (blank for internal work)"><Pick value={f.clientId} onChange={(v) => setF({ ...f, clientId: v })} options={list('client').map((c) => [c.id, c.name, c.city])} blank="Internal" /></Field>
       <Field label="Deadline"><In type="date" value={f.deadline} onChange={(e) => setF({ ...f, deadline: e.target.value })} /></Field>
-      <Field label="Start from template" full><Sel value={f.template} onChange={(v) => setF({ ...f, template: v })} options={settings().projectTemplates.map((t) => [t.id, `${t.name} (${t.tasks.length} tasks)`])} blank="Empty project" /></Field>
       <p className="small muted full" style={{ margin: 0 }}>Client projects normally come from a won deal (Deal → Handoff), which also brings the advance rule.</p></div></Modal>;
 }
 

@@ -2,7 +2,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getDb } from './db.js';
 import { newId, hashPassword, checkPassword, isOldHash, passwordProblem, fakeCheck, sessionKey, createSession, sessionUser, dropSession, sessionCookie, readCookie, publicUser, IDLE_MIN } from './auth.js';
-import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, daySweep, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
+import { beforeCreate, afterCreate, beforeUpdate, insertRec, notify, deadlineSweep, daySweep, clearOldTemplateSteps, refreshDrafts, cleanRules, getSetting, setSetting, isManager, isTop, canEditCollab, MONEY, canMoney, Rule, NEEDS_REASON, ADMIN_ONLY_DELETE, canSeeReport, canDeleteReport } from './logic.js';
 import { DEFAULT_SETTINGS, TITLE_TEAM, MANAGER_ADDS, COMPANIES, GROUP, TITLES } from '../shared/defaults.js';
 import { isAdminUser, canEdit, canSee, hiddenFrom, SECRET, HR_TITLE, SOUND_PEOPLE } from '../shared/access.js';
 import { generatorConnected, previewImport, runImport } from './receiptimport.js';
@@ -239,7 +239,7 @@ export async function handle(req, res) {
       }
     }
     // Deadline reminders: the first request of the day sends them (a quick check on every other request).
-    if (path === '/bootstrap' || path === '/changes') { await deadlineSweep(db).catch((e) => console.error('deadline reminders', e.message)); await daySweep(db).catch((e) => console.error('end of day', e.message)); await sendWa(db); } // WhatsApp messages still waiting
+    if (path === '/bootstrap' || path === '/changes') { await deadlineSweep(db).catch((e) => console.error('deadline reminders', e.message)); await daySweep(db).catch((e) => console.error('end of day', e.message)); await clearOldTemplateSteps(db).catch((e) => console.error('template steps', e.message)); await sendWa(db); } // WhatsApp messages still waiting
     if (path === '/bootstrap' && method === 'GET') {
       const [users, recs, settings, now] = await Promise.all([
         db.query('select * from users order by name'), db.query('select * from records where deleted_at is null'), allSettings(db, user), db.query('select now() as t')]);

@@ -21,11 +21,11 @@ export default function Settings() {
   return <>
     <div className="topbar"><h1>Settings</h1></div>
     <div className="row" style={{ marginBottom: 16 }}><L to="me">My profile</L>{people && <L to="people">{top ? 'People & teams' : 'My team members'}</L>}{top && <L to="access">Who can see what</L>}{admin && <L to="business">Letterhead & documents</L>}{admin && <L to="sales">Sales & report setup</L>}
-      {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{admin && <L to="projects">Project templates</L>}{top && <L to="connections">Connections</L>}
+      {admin && <L to="templates">Message templates</L>}{admin && <L to="plans">Follow-up plans & quick actions</L>}{top && <L to="connections">Connections</L>}
       {top && <L to="audit">Audit log</L>}{top && <L to="staff">Staff register</L>}{admin && <L to="trash">Recycle bin</L>}{admin && <L to="data">Sample data</L>}<L to="help">Help</L></div>
     <Routes>
       <Route path="me" element={<Me />} /><Route path="people" element={only(people, <People />)} /><Route path="access" element={only(top, <AccessChart />)} /><Route path="business" element={only(admin, <Business />)} /><Route path="sales" element={only(admin, <Sales />)} />
-      <Route path="templates" element={only(admin, <Templates />)} /><Route path="plans" element={only(admin, <Plans />)} /><Route path="projects" element={only(admin, <ProjTemplates />)} /><Route path="connections" element={only(top, <Connections />)} />
+      <Route path="templates" element={only(admin, <Templates />)} /><Route path="plans" element={only(admin, <Plans />)} /><Route path="connections" element={only(top, <Connections />)} />
       <Route path="audit" element={only(top, <Audit />)} /><Route path="staff" element={only(top, <Staff />)} /><Route path="trash" element={only(admin, <Trash />)} /><Route path="data" element={only(admin, <Data />)} /><Route path="help" element={<Help />} /><Route path="payslip/:month" element={<MyPayslip />} /><Route path="*" element={<Navigate to="me" replace />} />
     </Routes>
   </>;
@@ -326,16 +326,6 @@ function Plans() {
         <Field label="Note written in history" full><In value={x.note || ''} onChange={(e) => up('note', e.target.value)} /></Field></div>; })}
       <div className="row"><button className="btn sm" type="button" onClick={() => setM([...m, { id: 'mc-' + Date.now().toString(36), name: 'New action', followDays: 1, note: '' }])}>+ Quick action</button><button className="btn primary sm" type="button" onClick={saveM}>Save quick actions</button></div></div>
   </div>;
-}
-
-function ProjTemplates() {
-  const [p, setP, save] = useDraft('projectTemplates');
-  const toText = (ts) => ts.map((t) => `${t.days} | ${t.title}${t.milestone ? ' | milestone' : ''}`).join('\n');
-  const fromText = (txt) => txt.split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((x) => x[1]).map(([d, title, m]) => ({ days: +d || 0, title, milestone: /mile/i.test(m || '') }));
-  return <div className="card stack" style={{ maxWidth: 820 }}><h2>Project templates</h2><p className="small muted" style={{ margin: 0 }}>Each line: <code>day from start | task | milestone (optional)</code>. Picked at handoff; tasks are created with due dates.</p>
-    {p.map((x, i) => <div key={x.id} className="stack gap4"><In value={x.name} onChange={(e) => setP(p.map((y, j) => (j === i ? { ...y, name: e.target.value } : y)))} />
-      <Area defaultValue={toText(x.tasks)} onBlur={(e) => setP(p.map((y, j) => (j === i ? { ...y, tasks: fromText(e.target.value) } : y)))} style={{ fontFamily: 'var(--num)', fontSize: 12, minHeight: 140 }} /></div>)}
-    <div className="row"><button className="btn sm" type="button" onClick={() => setP([...p, { id: 'pt-' + Date.now().toString(36), name: 'New template', tasks: [{ days: 1, title: 'First task' }] }])}>+ Template</button><button className="btn primary" type="button" onClick={save}>Save</button></div></div>;
 }
 
 const CONNECT = [

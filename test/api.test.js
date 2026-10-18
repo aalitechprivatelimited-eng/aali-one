@@ -87,7 +87,7 @@ test('advance gate, receipt unlocks project, sign-off makes it live', async () =
   const deal = (await add(bde1, 'deal', { title: 'App – Kaveri', stage: 'won', handoff: { advance: false } })).record;
   const proj = (await add(bde1, 'project', { name: 'App – Kaveri', dealId: deal.id, stage: 'awaiting', deadline: '2026-11-30', templateId: 'pt-amc' })).record;
   const recs0 = (await call('GET', '/bootstrap', null, it0)).body.records;
-  assert.equal(recs0.filter((r) => r.type === 'task' && r.projectId === proj.id).length, 2, 'the template tasks are made at handoff');
+  assert.equal(recs0.filter((r) => r.type === 'task' && r.projectId === proj.id).length, 0, 'no template tasks any more: IT writes its own (18 Oct 2026)');
   assert.ok(!recs0.some((r) => r.id === deal.id), 'the IT team cannot open the deal');
   assert.equal((await patch(bde1, proj.id, { stage: 'planning' })).status, 403, 'the BDE only views the project after handing it over');
   const blocked = await patch(it0, proj.id, { stage: 'planning' }); assert.equal(blocked.status, 400); assert.match(blocked.body.error, /No advance/);
@@ -803,6 +803,18 @@ test('forgetting to end the day: a 7 pm reminder; after midnight the day is clos
   const B = (await call('POST', '/auth/login', { email: 'eodb@test.in', password: 'password123' })).cookie;
   assert.equal((await call('PATCH', '/records/rp_eod_old', { data: { ...old, plan: 'x', entries: [...old.entries, { id: 'e9', text: 'more' }] } }, B)).status, 400);
   assert.equal((await call('PATCH', '/records/rp_eod_old', { data: { ...old, status: 'submitted' } }, B)).status, 400);
+});
+
+test('old project-template steps nobody took up are moved to the recycle bin once; steps someone took up stay', async () => {
+  const db = await getDb(), { clearOldTemplateSteps } = await import('../server/logic.js');
+  const put = (id, data) => db.query("insert into records (id, type, data) values ($1, 'task', $2)", [id, JSON.stringify({ projectId: 'pr_tpl', team: 'it', priority: 'medium', ...data })]);
+  await put('t_tpl1', { title: 'Design home page', status: 'todo' });
+  await put('t_tpl2', { title: 'Build all pages', status: 'todo', owner: 'u_dev' });
+  await put('t_tpl3', { title: 'Testing on mobile and desktop', status: 'doing' });
+  await put('t_own', { title: 'Our own task', status: 'todo' });
+  assert.equal(await clearOldTemplateSteps(db, true), 1);
+  const gone = Object.fromEntries((await db.query("select id, deleted_at is not null d from records where id like 't_tpl%' or id = 't_own'")).rows.map((r) => [r.id, r.d]));
+  assert.deepEqual(gone, { t_tpl1: true, t_tpl2: false, t_tpl3: false, t_own: false });
 });
 
 test('payroll: HR keeps salaries and runs the month from Aali HRM attendance; the Operations Manager reviews and remarks; nobody else sees it', async () => {

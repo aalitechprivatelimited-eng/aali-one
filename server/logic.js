@@ -408,17 +408,7 @@ export async function afterCreate(t, type, id, data, user, sample) {
     if (deal && type === 'quote') { deal.data.quoteNo = data.number; deal.data.quoteId = id; deal.data.value = data.totals.total; log(deal.data, me, `Quotation ${data.number} made (${data.totals.total})`); await putRec(t, deal, user); }
   }
   if (type === 'receipt') await applyReceipt(t, id, data, user);
-  // Starting from a template: the server makes the tasks, so a BDE handing a deal over needs no access to IT's tasks.
-  if (type === 'project' && data.templateId) {
-    const tpl = (await getSetting(t, 'projectTemplates', DEFAULT_SETTINGS.projectTemplates)).find((x) => x.id === data.templateId);
-    // A template's day counts are for a typical project. The steps are spread between the start and the delivery date in the same order
-    // and proportions, so the last one falls on the delivery date and no step ever lands after it (the user's report: Guntur 99 Store was
-    // due on 10 October, and its template steps ran to 21 October). Without a delivery date the day counts are used as they are.
-    const steps = tpl?.tasks || [], start = data.start || today(), end = data.deadline && data.deadline > start ? data.deadline : '';
-    const last = Math.max(1, ...steps.map((k) => +k.days || 0)), span = end ? Math.round((Date.parse(end) - Date.parse(start)) / 864e5) : 0;
-    for (const k of steps) await insertRec(t, 'task', { title: k.title, projectId: id, due: end ? addDays(start, Math.round(span * (+k.days || 0) / last)) : addDays(start, +k.days || 0),
-      milestone: !!k.milestone, team: 'it', status: 'todo', priority: 'medium' }, user, { sample });
-  }
+  // Project templates are gone (the user, 17–18 Oct 2026): a new project starts empty and the IT team writes its own tasks.
   if (type === 'signoff') {
     const p = await getRec(t, data.projectId, 'project');
     if (p) { const go = p.data.stage !== 'live'; p.data.signoffId = id; if (go) { p.data.stage = 'live'; p.data.liveAt = today(); }
@@ -766,6 +756,21 @@ export async function daySweep(db, { force = false, hour = istHour() } = {}) {
       for (const [m, f] of forgot) await notify(db, m, `Forgot to end the day: ${[...f.names].join(', ')}. Aali One closed it after midnight; you can send it back from Daily reports.`, 'report', f.id, null, f.sample);
     } }
   return n;
+}
+
+// The steps the old project templates made – only to recognise them. Once (the user, 18 Oct 2026: "we are still seeing the tasks that
+// aren't manually added by the team") every such step that nobody took up – still To do, nobody given it – goes to the recycle bin.
+// A step someone was given or started stays. An admin can restore any of them from Settings → Recycle bin.
+export const OLD_TEMPLATE_STEPS = new Set(['Collect content and logo from client', 'Design home page', 'Design approved by client', 'Build all pages', 'Contact form + WhatsApp button',
+  'Testing on mobile and desktop', 'Website ready for client review', 'Go live + domain connect', ...(DEFAULT_SETTINGS.projectTemplates || []).flatMap((x) => (x.tasks || []).map((k) => k.title))]);
+export async function clearOldTemplateSteps(db, force = false) {
+  if (!force && !(await db.query("insert into counters (key, n) values ('claim:templateCleanup', 1) on conflict (key) do nothing returning key")).rowCount) return 0;
+  const rows = (await db.query("select id, data from records where type = 'task' and deleted_at is null and data->>'projectId' is not null and coalesce(data->>'status', 'todo') = 'todo'")).rows
+    .filter((r) => OLD_TEMPLATE_STEPS.has(r.data.title) && !r.data.owner && !(r.data.people || []).length);
+  if (!rows.length) return 0;
+  await db.query("update records set deleted_at = now(), delete_reason = 'Old project-template step nobody had taken up – removed by Aali One' where id = any($1)", [rows.map((r) => r.id)]);
+  await db.query('insert into audit (user_id, record_id, type, action, summary) values ($1,$2,$3,$4,$5)', [null, null, 'task', 'delete', `${rows.length} old project-template steps nobody had taken up were moved to the recycle bin`]);
+  return rows.length;
 }
 
 // A receipt settles its payment reminder; an advance unlocks the project.
