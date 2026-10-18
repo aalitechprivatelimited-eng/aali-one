@@ -854,6 +854,19 @@ test('Nikhil, the accounts & permissions manager, sets one person\'s access; the
   // Others never see someone's access settings; Nikhil does.
   const seen = (await call('GET', '/bootstrap', null, CS)).body.users.find((x) => x.id === 'u_acc_b'); assert.deepEqual(seen.access, {});
   assert.deepEqual((await call('GET', '/bootstrap', null, N)).body.users.find((x) => x.id === 'u_acc_b').access, { money: 'all:view' });
+  // Security review 18 Oct: Nikhil's account is his alone; admins cannot hand out the admin switch; "No access" closes title-ruled kinds too.
+  assert.equal((await call('PATCH', '/users/u_nikhil', { password: 'taken-over-123' }, CS)).status, 403, 'an admin cannot reset his password');
+  assert.equal((await call('PATCH', '/users/u_nikhil', { active: false }, CS)).status, 403);
+  assert.equal((await call('DELETE', '/users/u_nikhil', { reason: 'take over' }, CS)).status, 403);
+  assert.equal((await call('POST', '/users/u_nikhil/signout', null, CS)).status, 403);
+  assert.equal((await call('POST', '/users', { name: 'Sneaky', email: 'sneaky@test.in', password: 'password123', title: 'bde', designation: 'BDE', isAdmin: true, company: 'Aali Conssultancy' }, CS)).status, 403);
+  assert.equal((await call('PUT', '/users/u_acc_cs/access', { access: { constructor: 'all' } }, N)).status, 400, 'only real section names');
+  await db.query("insert into records (id, type, data) values ('bl_acc', 'bill', $1)", [JSON.stringify({ owner: 'u_acc_b', amount: 100, number: 'B-9001' })]);
+  assert.ok((await call('GET', '/bootstrap', null, CS)).body.records.some((x) => x.id === 'bl_acc'), 'by role the Company Secretary sees every bill');
+  await call('PUT', '/users/u_acc_cs/access', { access: { bills: '' } }, N);
+  assert.ok(!(await call('GET', '/bootstrap', null, CS)).body.records.some((x) => x.id === 'bl_acc'), 'No access closes bills too');
+  await db.query("update records set deleted_at = now() where id = 'bl_acc'");
+  assert.ok(!(await call('GET', '/trash', null, CS)).body.records.some((x) => x.id === 'bl_acc'), 'and its deleted copy in the recycle bin');
 });
 
 test('clients from receipt payers: grouped by GSTIN, mobile or name, matched to an existing client first, receipts linked', async () => {

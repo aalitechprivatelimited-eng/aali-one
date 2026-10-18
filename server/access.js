@@ -13,6 +13,17 @@ export const loadIndex = async (db) => (await db.query(`select id, type, created
 const CREATABLE = new Set(['lead', 'deal', 'client', 'quote', 'invoice', 'receipt', 'payment', 'project', 'task', 'ticket', 'activity', 'comment', 'approval', 'target', 'signoff', 'asset', 'bill', 'collab', 'report', 'prospect', 'agreement', 'salary', 'payrun', 'loan', 'payee', 'pclient', 'pemp']);
 const LABEL = { assets: 'client assets', calls: 'the call register', leads: 'leads', deals: 'deals', clients: 'clients', quotes: 'quotations', money: 'receipts and payments', invoices: 'tax invoices', projects: 'projects', support: 'support requests', collab: 'collaborations', agreements: 'agreements', payroll: 'payroll' };
 
+// "No access" set for one person by the accounts & permissions manager (security review 18 Oct 2026): it closes every kind of record of that
+// section – also the kinds whose normal rule goes by title (bills, assets, approvals, tasks, daily reports) – and the comments and
+// activities on them, and their deleted copies in the recycle bin. Only an explicit '' does this; the role table itself is unchanged.
+const SECTION_OF_TYPE = { ...SECTION_OF, task: 'tasks', report: 'daily', approval: 'approvals', signoff: 'projects', target: 'deals' };
+export function closedFor(user, type, d = {}) {
+  const off = (sec) => !!sec && user?.access?.[sec] === '';
+  if (off(SECTION_OF_TYPE[type])) return true;
+  if (type === 'comment' || type === 'activity') return off(SECTION_OF_TYPE[d.relType]) || (d.leadId && off('leads')) || (d.dealId && off('deals'));
+  return false;
+}
+
 // rows: every live record (or the light index). canSeeReport: the daily-report rule, passed in from logic.js.
 export function buildAccess(user, rows, canSeeReport) {
   const uid = user.id, top = isTop(user), sc = (s) => scopeOf(user, s), by = new Map(rows.map((r) => [r.id, r]));
@@ -35,6 +46,7 @@ export function buildAccess(user, rows, canSeeReport) {
   // true = may read · false = may not · 'card' = only the client's name (IT needs the name on a project, nothing else).
   function read(r) {
     const d = r.data || {};
+    if (closedFor(user, r.type, d)) return false;
     switch (r.type) {
       case 'notice': return d.to === uid;
       case 'report': return canSeeReport(user, d);

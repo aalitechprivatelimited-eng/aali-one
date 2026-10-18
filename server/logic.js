@@ -784,7 +784,7 @@ export async function clientsFromReceipts(t, user, apply = false) {
   for (const c of clients) { const d = c.data || {}; if (d.gstin) byG.set(String(d.gstin).toUpperCase(), c); for (const m of [d.mobile10, ...(d.contacts || []).map((x) => x.mobile10 || mobile10(x.phone))]) if (m) byM.set(m, c); if (d.name) byN.set(nameKey(d.name), c); }
   const groups = new Map();
   for (const r of recs.sort((a, b) => String(b.data.date).localeCompare(String(a.data.date)))) { // newest first: its details are the freshest
-    const d = r.data, g = String(d.payerGstin || '').toUpperCase(), m = mobile10(d.payerPhone), n = nameKey(d.payerName); if (!n) continue;
+    const d = r.data, g = String(d.payerGstin || '').toUpperCase().replace(/\s/g, '').slice(0, 15), m = mobile10(d.payerPhone), n = nameKey(d.payerName); if (!n) continue;
     const match = (g && byG.get(g)) || (m && byM.get(m)) || byN.get(n) || null;
     const key = match ? 'c:' + match.id : g ? 'g:' + g : m ? 'm:' + m : 'n:' + n;
     if (!groups.has(key)) groups.set(key, { match, name: String(d.payerName).trim(), phone: d.payerPhone || '', gstin: g, email: d.payerEmail || '', address: d.payerAddress || '', contact: d.payerContact || '', ids: [], total: 0 });

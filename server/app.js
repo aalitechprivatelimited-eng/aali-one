@@ -11,7 +11,7 @@ import { waReady, waTemplate, waNumber, kickOutbox, waitForSending, queueTest, c
 // WhatsApp sending: in the background on the VPS; waited for on Vercel, which may stop a function once it has answered (server/whatsapp.js).
 const sendWa = async (db, now) => { const k = kickOutbox(db, now); if (waitForSending()) await k; };
 import { attendanceDays, onBasis, clientPay } from '../shared/payroll.js';
-import { buildAccess, loadIndex } from './access.js';
+import { buildAccess, loadIndex, closedFor } from './access.js';
 import { checkCalls, rebuild, dropList } from './prospects.js';
 import { displayOk } from '../shared/names.js';
 
@@ -226,7 +226,7 @@ export async function handle(req, res) {
       const word = { all: 'Full', 'all:view': 'View only', team: 'Own team', own: 'Own only', 'own:view': 'Own, view only', '': 'No access' };
       const label = Object.fromEntries(SECTIONS.map(([k, l]) => [k, l]));
       for (const [k, v] of Object.entries(want)) {
-        if (!ROLE_TABLE[k]) throw new Rule('Unknown section: ' + String(k).slice(0, 40));
+        if (!Object.hasOwn(ROLE_TABLE, k)) throw new Rule('Unknown section: ' + String(k).slice(0, 40));
         if (v === null) { if (k in next) { delete next[k]; said.push(`${label[k] || k}: back to the role's (${word[roleLevel(u, k)] ?? roleLevel(u, k)})`); } continue; }
         if (!LEVELS.includes(v)) throw new Rule('Unknown access level.');
         if (next[k] !== v) { next[k] = v; said.push(`${label[k] || k}: ${word[v]}`); }
@@ -239,14 +239,14 @@ export async function handle(req, res) {
     }
     // Clients from receipt payers (admin or the Operations Manager): GET shows what would happen, POST makes the clients and links the receipts.
     if (path === '/clients/from-receipts') {
-      if (!(user.is_admin || user.title === 'ops')) throw new Rule('Only the Operations Manager or an admin can make clients from receipts.', 403);
+      if (!(user.is_admin || user.title === 'ops') || !canSee(user, 'money') || !canEdit(user, 'clients')) throw new Rule('Only the Operations Manager or an admin who handles receipts and clients can make clients from receipts.', 403);
       if (method === 'GET') return send(res, 200, await clientsFromReceipts(db, user, false));
       if (method === 'POST') { const r = await db.tx((t) => clientsFromReceipts(t, user, true));
         await audit(db, user, null, 'client', `Clients from receipts: ${r.make.length} made, ${r.join.length} matched to existing clients, ${r.receipts} receipts linked`); return send(res, 200, r); }
     }
     // Copying the old Receipt generator (admin or the Operations Manager): GET says what would happen, POST copies (server/receiptimport.js).
     if (path === '/imports/receipts') {
-      if (!(user.is_admin || user.title === 'ops')) throw new Rule('Only the Operations Manager or an admin can copy the Receipt generator.', 403);
+      if (!(user.is_admin || user.title === 'ops') || !canEdit(user, 'money')) throw new Rule('Only the Operations Manager or an admin who handles receipts can copy the Receipt generator.', 403);
       if (!generatorConnected()) return send(res, 200, { connected: false });
       try {
         if (method === 'GET') return send(res, 200, { connected: true, preview: await previewImport(db) });
@@ -371,7 +371,7 @@ export async function handle(req, res) {
     if (path === '/trash' && method === 'GET') {
       if (!admin) throw new Rule('Only an admin can open the recycle bin.', 403);
       const r = await db.query('select * from records where deleted_at is not null order by deleted_at desc limit 300');
-      return send(res, 200, { records: r.rows.filter((x) => !hiddenFrom(user, x.type)).map((x) => ({ ...toClient(x), deletedBy: x.deleted_by })) });
+      return send(res, 200, { records: r.rows.filter((x) => !hiddenFrom(user, x.type) && !closedFor(user, x.type, x.data || {})).map((x) => ({ ...toClient(x), deletedBy: x.deleted_by })) });
     }
     if (path === '/audit' && method === 'GET') {
       if (!isTop(user)) throw new Rule('Only management can see the audit log.', 403);
@@ -599,6 +599,7 @@ export async function handle(req, res) {
       if (b.title === 'chairman' && user.title !== 'chairman' && (await db.query("select 1 from users where title = 'chairman' and active and removed_at is null")).rowCount)
         throw new Rule('Only the Founder & Chairman can add a Chairman login.', 403);
       if (!admin && !(juniors.includes(b.title) && !b.isAdmin)) throw new Rule(juniors.length ? 'You can add members to your own team only.' : 'Only an admin or a department manager can add people.', 403);
+      if (b.isAdmin && !isAccessManager(user)) throw new Rule('Only Nikhil, the accounts & permissions manager, gives the admin switch. Add the person without it.', 403);
       // A department manager adds people into their own company; only management chooses or changes the company.
       const team = TITLE_TEAM[b.title] || 'sales', company = team === 'management' ? GROUP : admin ? b.company : COMPANIES.includes(user.company) ? user.company : COMPANIES[0];
       if (team !== 'management' && !COMPANIES.includes(company)) throw new Rule('Choose the company this person works for.');
@@ -632,6 +633,8 @@ export async function handle(req, res) {
       if (admin && ((b.title !== undefined && b.title !== u.title) || (b.isAdmin !== undefined && !!b.isAdmin !== !!u.is_admin)) && !isAccessManager(user)) throw new Rule('Only Nikhil, the accounts & permissions manager, changes a person\'s role or admin switch.', 403);
       if (b.title === 'chairman' && u.title !== 'chairman' && user.title !== 'chairman' && (await db.query("select 1 from users where title = 'chairman' and active and removed_at is null")).rowCount)
         throw new Rule('Only the Founder & Chairman can make someone Chairman.', 403);
+      if (isAccessManager(u) && !self && ['title', 'password', 'active', 'isAdmin', 'firstName', 'surname', 'name', 'phone', 'company', 'designation', 'photo', 'display', 'personalEmail', 'upiQr', 'hr'].some((k) => b[k] !== undefined))
+        throw new Rule('Only Nikhil changes his own account – it decides everyone\'s access.', 403); // security review 18 Oct 2026
       if (u.title === 'chairman' && !self && ['title', 'password', 'active', 'isAdmin', 'firstName', 'surname', 'name', 'phone', 'company', 'designation', 'photo', 'display', 'personalEmail', 'upiQr'].some((k) => b[k] !== undefined))
         throw new Rule('Only the Founder & Chairman changes his own account. If he forgets his password, it is reset on the server.', 403);
       let nSurname = u.surname || '';
@@ -725,6 +728,7 @@ export async function handle(req, res) {
     if (m && method === 'POST') {
       const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
       if (!admin && !(juniors.includes(u.title) && !u.is_admin)) throw new Rule('You can do this for members of your own team only.', 403);
+      if (isAccessManager(u) && u.id !== user.id) throw new Rule('Only Nikhil signs his own account out.', 403);
       await db.query('delete from sessions where user_id = $1', [u.id]); await audit(db, user, null, 'user', `Signed out ${u.email} everywhere`);
       return send(res, 200, { ok: true });
     }
@@ -744,6 +748,7 @@ export async function handle(req, res) {
       if (reason.length < 3) throw new Rule('Write why this person is being removed.');
       const u = (await db.query('select * from users where id = $1', [m[1]])).rows[0]; if (!u) throw new Rule('Person not found.', 404);
       if (u.title === 'chairman' && user.title !== 'chairman') throw new Rule('Only the Founder & Chairman changes the Chairman\'s account.', 403);
+      if (isAccessManager(u)) throw new Rule('Nikhil\'s account decides everyone\'s access, so it cannot be removed.', 403);
       await db.query('delete from sessions where user_id = $1', [u.id]);
       await db.query('update users set active = false, removed_at = now(), removed_by = $2, removed_reason = $3, updated_at = now() where id = $1', [u.id, user.id, reason]);
       await audit(db, user, null, 'user', `Removed ${u.email} (${u.name}) – ${reason}`);
