@@ -114,6 +114,9 @@ const netOf = (it, rate, taxed) => { const a = +it.amount || 0; return taxed && 
 const grossOf = (it, rate, taxed) => { const a = +it.amount || 0; return taxed && !it.incl ? r2(a * (1 + rate / 100)) : a; };
 // What later receipts brought in against each receipt they settle ("Record balance"). Built from every receipt, never a filtered list.
 export const settledBy = (all) => { const m = new Map(); for (const x of all) if (x.settlesId) m.set(x.settlesId, (m.get(x.settlesId) || 0) + (x.totals?.received || 0)); return m; };
+// "Number used twice" only while another receipt still alive carries the same number (19 Oct 2026: the user deleted the Aali One copies,
+// so the mark goes by itself; it comes back only if a real clash happens again).
+export const usedTwice = (r, all = list('receipt')) => !!r.numberClash && all.some((x) => x.id !== r.id && x.number === r.number);
 export const owing = (r, m) => Math.max(0, r2((r.totals?.balance || 0) - (m.get(r.id) || 0)));
 const usdFmt = (n) => '$' + (+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -129,7 +132,7 @@ function ReceiptRegister() {
   return <div className="stack">
     <div className="stats">
       <div className="stat"><span className="l">Receipts</span><span className="v">{rows.length}</span></div>
-      <div className="stat"><span className="l">Total amount</span><span className="v">{inr(sum((r) => !r.settlesId && r.status !== 'refunded' && r.totals?.total))}</span><span className="small muted">balance receipts not counted twice</span></div>
+      <div className="stat"><span className="l">Total amount</span><span className="v">{inr(sum((r) => !r.settlesId && r.status !== 'refunded' && r.totals?.total))}</span><span className="small muted">each bill counted once</span></div>
       <div className="stat"><span className="l">Cash received</span><span className="v">{inr(sum((r) => arrived(r) && r.totals?.received))}</span></div>
       <div className={'stat' + (out ? ' warm' : '')}><span className="l">Still outstanding</span><span className="v">{inr(out)}</span></div>
     </div>
@@ -144,7 +147,7 @@ function ReceiptRegister() {
       {(me.isAdmin || me.title === 'ops') && <><span className="grow" /><button className="btn sm" type="button" onClick={() => setImp(true)}>Import from Receipt generator</button></>}</div>
     {view === 'ledger' ? <ReceiptLedger rows={rows} owing={(r) => owing(r, settled)} /> : rows.length ? <div className="tbl cards"><table><thead><tr><th>Receipt</th><th>Date</th><th>From</th><th>Status</th><th className="n">Total</th><th className="n">Paid</th><th className="n">Balance due</th><th>Mode</th><th>By</th></tr></thead><tbody>
       {rows.map((r) => { const o = owing(r, settled), stl = (r.totals?.balance || 0) > 0 && !o;
-        return <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b>{r.numberClash && <div><Pill k="bad">number used twice</Pill></div>}{r.settlesNo && <div className="small muted">against {r.settlesNo}</div>}</td><td>{fmtDate(r.date)}</td>
+        return <tr key={r.id} className="click" onClick={() => nav('/payments/receipt/' + r.id)}><td className="num"><b>{r.number}</b>{usedTwice(r, all) && <div><Pill k="bad">number used twice</Pill></div>}{r.settlesNo && <div className="small muted">against {r.settlesNo}</div>}</td><td>{fmtDate(r.date)}</td>
           <td>{r.payerName}<Sample on={r.sample} />{r.imported && <div className="small muted">from the Receipt generator</div>}</td>
           <td><Pill k={{ received: 'ok', partial: 'warn', pending: 'info', refunded: 'bad' }[stOf(r)]}>{RSTATUS.find((x) => x[0] === stOf(r))[1]}</Pill></td>
           <td className="n">{money(r, r.totals?.total || 0)}</td><td className="n">{money(r, r.totals?.received || 0)}</td><td className="n">{stl ? <Pill k="ok">settled</Pill> : o ? money(r, o) : '—'}</td><td>{r.mode}</td><td>{r.imported ? '—' : uname(r.createdBy)}</td></tr>; })}</tbody></table></div>
@@ -191,7 +194,7 @@ function ReceiptEditor({ id }) {
       {saved && canEdit('money') && left > 0 && <Link className="btn" to={'/payments/receipt/new?settles=' + saved.id}>Record balance ({cur(left)})</Link>}
       {edit && <button className="btn primary" type="button" onClick={save}>{saved ? 'Save changes' : 'Save & get number'}</button>}</div></div>
     {saved?.imported && <div className="banner info no-print" style={{ marginBottom: 12 }}>Copied from the Receipt generator on {fmtDate(saved.imported.at.slice(0, 10))}. It is kept exactly as it was printed, so it cannot be changed; if it is wrong, delete it with a reason and make a new one.</div>}
-    {saved?.numberClash && <div className="banner bad no-print" style={{ marginBottom: 12 }}>Two receipts carry the number {saved.number}: this one from the Receipt generator, and one made in Aali One on the same day. Both were given to clients, so neither number was changed. Check with your CA how to note it.</div>}
+    {saved && usedTwice(saved) && <div className="banner bad no-print" style={{ marginBottom: 12 }}>Two receipts carry the number {saved.number}: this one from the Receipt generator, and one made in Aali One on the same day. Both were given to clients, so neither number was changed. Check with your CA how to note it.</div>}
     {r.settlesId && !saved && <div className="banner info no-print" style={{ marginBottom: 12 }}>This receipt brings in the balance of receipt {get(r.settlesId)?.number}. It prints “Against Receipt No. …”, and the register then shows the earlier one as settled.</div>}
     <div className="grid2 no-print" style={{ gridTemplateColumns: 'minmax(300px,1fr) minmax(0,1.4fr)', alignItems: 'start' }}>
       <RO when={!edit}><div className="stack"><div className="card form">
